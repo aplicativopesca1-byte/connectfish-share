@@ -1,5 +1,6 @@
 // app/login/page.tsx
 import { Suspense } from "react";
+import type { CSSProperties } from "react";
 import LoginClient from "./LoginClient";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,7 @@ export default function Page() {
   );
 }
 
-const fallbackStyle: React.CSSProperties = {
+const fallbackStyle: CSSProperties = {
   minHeight: "100vh",
   display: "grid",
   placeItems: "center",

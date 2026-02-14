@@ -1,5 +1,13 @@
+"use client";
+import type { CSSProperties, FormEvent } from "react";
+
 export default function Home() {
   const year = new Date().getFullYear();
+
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    alert("Cadastro recebido! (modo preview)");
+  };
 
   return (
     <main style={styles.page}>
@@ -13,7 +21,7 @@ export default function Home() {
               CF
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={styles.brandText}>
               <h1 style={styles.title}>ConnectFish</h1>
               <div style={styles.badges}>
                 <span style={styles.badge}>Private beta</span>
@@ -72,21 +80,14 @@ export default function Home() {
         </section>
 
         <section id="updates" style={styles.newsletter}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={styles.newsLeft}>
             <h3 style={styles.newsTitle}>Quer ser avisado quando abrir?</h3>
             <p style={styles.newsText}>
               Deixe seu e-mail e você recebe um aviso quando liberarmos o acesso.
             </p>
           </div>
 
-          <form
-            style={styles.form}
-            onSubmit={(e) => {
-              e.preventDefault();
-              // ✅ Por enquanto só não faz nada. Quando quiser, eu ligo isso no seu backend/Email service.
-              alert("Cadastro recebido! (modo preview)");
-            }}
-          >
+          <form style={styles.form} onSubmit={handleSubmit}>
             <input
               type="email"
               required
@@ -111,7 +112,7 @@ export default function Home() {
   );
 }
 
-const styles = {
+const styles: Record<string, CSSProperties> = {
   page: {
     minHeight: "100vh",
     background:
@@ -122,6 +123,7 @@ const styles = {
     position: "relative",
     overflow: "hidden",
   },
+
   bgGlow: {
     position: "absolute",
     inset: -200,
@@ -130,6 +132,7 @@ const styles = {
     filter: "blur(30px)",
     pointerEvents: "none",
   },
+
   container: {
     position: "relative",
     padding: 32,
@@ -148,12 +151,20 @@ const styles = {
     boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
     backdropFilter: "blur(10px)",
   },
+
   brandRow: {
     display: "flex",
     alignItems: "center",
     gap: 14,
     flexWrap: "wrap",
   },
+
+  brandText: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+
   logoMark: {
     width: 52,
     height: 52,
@@ -166,7 +177,9 @@ const styles = {
     background:
       "linear-gradient(135deg, rgba(45,212,191,1) 0%, rgba(56,189,248,1) 100%)",
     boxShadow: "0 16px 40px rgba(0,0,0,0.35)",
+    userSelect: "none",
   },
+
   title: {
     fontSize: 42,
     fontWeight: 950,
@@ -174,11 +187,13 @@ const styles = {
     lineHeight: 1.05,
     letterSpacing: -0.8,
   },
+
   badges: {
     display: "flex",
     gap: 8,
     flexWrap: "wrap",
   },
+
   badge: {
     fontSize: 12,
     fontWeight: 800,
@@ -188,6 +203,7 @@ const styles = {
     border: "1px solid rgba(45,212,191,0.28)",
     color: "#bff7ee",
   },
+
   badgeMuted: {
     fontSize: 12,
     fontWeight: 800,
@@ -197,6 +213,7 @@ const styles = {
     border: "1px solid rgba(255,255,255,0.10)",
     color: "rgba(230,246,247,0.75)",
   },
+
   subtitle: {
     marginTop: 14,
     marginBottom: 0,
@@ -212,6 +229,7 @@ const styles = {
     marginTop: 18,
     flexWrap: "wrap",
   },
+
   primaryCta: {
     display: "inline-flex",
     alignItems: "center",
@@ -225,6 +243,7 @@ const styles = {
       "linear-gradient(135deg, rgba(45,212,191,1) 0%, rgba(56,189,248,1) 100%)",
     boxShadow: "0 16px 40px rgba(0,0,0,0.35)",
   },
+
   secondaryCta: {
     display: "inline-flex",
     alignItems: "center",
@@ -244,6 +263,7 @@ const styles = {
     gap: 14,
     marginBottom: 18,
   },
+
   card: {
     padding: 18,
     borderRadius: 18,
@@ -251,6 +271,7 @@ const styles = {
     border: "1px solid rgba(255,255,255,0.10)",
     boxShadow: "0 16px 40px rgba(0,0,0,0.25)",
   },
+
   cardIcon: {
     width: 42,
     height: 42,
@@ -260,13 +281,16 @@ const styles = {
     background: "rgba(255,255,255,0.06)",
     border: "1px solid rgba(255,255,255,0.10)",
     marginBottom: 12,
+    userSelect: "none",
   },
+
   cardTitle: {
     margin: 0,
     fontSize: 16,
     fontWeight: 900,
     letterSpacing: -0.2,
   },
+
   cardText: {
     marginTop: 8,
     marginBottom: 0,
@@ -288,18 +312,27 @@ const styles = {
     justifyContent: "space-between",
     flexWrap: "wrap",
   },
+
+  newsLeft: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+
   newsTitle: {
     margin: 0,
     fontSize: 16,
     fontWeight: 950,
     letterSpacing: -0.2,
   },
+
   newsText: {
     margin: 0,
     fontSize: 14,
     lineHeight: 1.5,
     color: "rgba(230,246,247,0.75)",
   },
+
   form: {
     display: "flex",
     gap: 10,
@@ -307,6 +340,7 @@ const styles = {
     alignItems: "center",
     justifyContent: "flex-end",
   },
+
   input: {
     width: 280,
     maxWidth: "80vw",
@@ -318,6 +352,7 @@ const styles = {
     color: "#e6f6f7",
     fontWeight: 700,
   },
+
   button: {
     padding: "12px 14px",
     borderRadius: 12,
@@ -337,15 +372,20 @@ const styles = {
     alignItems: "center",
     flexWrap: "wrap",
   },
+
   footerText: {
     color: "rgba(230,246,247,0.70)",
     fontWeight: 800,
     fontSize: 13,
   },
+
   footerTextMuted: {
     color: "rgba(230,246,247,0.50)",
     fontWeight: 800,
     fontSize: 13,
   },
-  dot: { opacity: 0.5 },
+
+  dot: {
+    opacity: 0.5,
+  },
 };
