@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -34,6 +35,21 @@ async function ensurePersistence() {
   }
 }
 
+async function createServerSession(idToken: string) {
+  const r = await fetch("/api/sessionLogin", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken }),
+  });
+
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data?.error || "Falha ao criar sessão.");
+  }
+
+  return true;
+}
+
 export default function LoginClient() {
   const router = useRouter();
   const sp = useSearchParams();
@@ -61,11 +77,22 @@ export default function LoginClient() {
 
       await ensurePersistence();
       const fb = await loadFirebaseAuth();
-      await fb.signInWithEmailAndPassword(fb.auth, email.trim(), pass);
+
+      const cred = await fb.signInWithEmailAndPassword(
+        fb.auth,
+        email.trim(),
+        pass
+      );
+
+      // ✅ Cenário B: cria cookie de sessão no servidor
+      const idToken = await cred.user.getIdToken(true);
+      await createServerSession(idToken);
 
       router.replace(next);
-    } catch (e: any) {
-      const code = String(e?.code || "");
+    } catch (e: unknown) {
+      const code = String((e as any)?.code || "");
+      const message = String((e as any)?.message || "");
+
       if (
         code.includes("auth/invalid-credential") ||
         code.includes("auth/wrong-password")
@@ -75,6 +102,11 @@ export default function LoginClient() {
         setErr("Usuário não encontrado. Crie uma conta.");
       } else if (code.includes("auth/too-many-requests")) {
         setErr("Muitas tentativas. Aguarde um pouco e tente novamente.");
+      } else if (
+        message.toLowerCase().includes("sessão") ||
+        message.toLowerCase().includes("session")
+      ) {
+        setErr("Login ok, mas não conseguimos criar a sessão. Tente novamente.");
       } else {
         setErr("Não foi possível entrar. Tente novamente.");
       }
@@ -91,17 +123,33 @@ export default function LoginClient() {
 
       await ensurePersistence();
       const fb = await loadFirebaseAuth();
-      await fb.createUserWithEmailAndPassword(fb.auth, email.trim(), pass);
+
+      const cred = await fb.createUserWithEmailAndPassword(
+        fb.auth,
+        email.trim(),
+        pass
+      );
+
+      // ✅ Cenário B: cria cookie de sessão no servidor
+      const idToken = await cred.user.getIdToken(true);
+      await createServerSession(idToken);
 
       router.replace(next);
-    } catch (e: any) {
-      const code = String(e?.code || "");
+    } catch (e: unknown) {
+      const code = String((e as any)?.code || "");
+      const message = String((e as any)?.message || "");
+
       if (code.includes("auth/email-already-in-use")) {
         setErr("Esse e-mail já está em uso. Faça login.");
       } else if (code.includes("auth/weak-password")) {
         setErr("Senha fraca. Use pelo menos 6 caracteres (ideal 8+).");
       } else if (code.includes("auth/invalid-email")) {
         setErr("E-mail inválido.");
+      } else if (
+        message.toLowerCase().includes("sessão") ||
+        message.toLowerCase().includes("session")
+      ) {
+        setErr("Conta criada, mas não conseguimos criar a sessão. Tente entrar.");
       } else {
         setErr("Não foi possível criar a conta. Tente novamente.");
       }
@@ -122,8 +170,8 @@ export default function LoginClient() {
 
       setMsg("Enviamos um e-mail para redefinir sua senha.");
       setMode("login");
-    } catch (e: any) {
-      const code = String(e?.code || "");
+    } catch (e: unknown) {
+      const code = String((e as any)?.code || "");
       if (code.includes("auth/user-not-found")) {
         setErr("Não existe conta com esse e-mail.");
       } else if (code.includes("auth/invalid-email")) {
@@ -167,7 +215,10 @@ export default function LoginClient() {
           <div style={styles.pills}>
             <button
               type="button"
-              style={{ ...styles.pill, ...(mode === "login" ? styles.pillOn : {}) }}
+              style={{
+                ...styles.pill,
+                ...(mode === "login" ? styles.pillOn : {}),
+              }}
               onClick={() => {
                 setErr(null);
                 setMsg(null);
@@ -176,9 +227,13 @@ export default function LoginClient() {
             >
               Login
             </button>
+
             <button
               type="button"
-              style={{ ...styles.pill, ...(mode === "register" ? styles.pillOn : {}) }}
+              style={{
+                ...styles.pill,
+                ...(mode === "register" ? styles.pillOn : {}),
+              }}
               onClick={() => {
                 setErr(null);
                 setMsg(null);
@@ -193,28 +248,42 @@ export default function LoginClient() {
         {msg && <div style={styles.msg}>{msg}</div>}
         {err && <div style={styles.err}>{err}</div>}
 
-        <label style={styles.label}>E-mail</label>
+        <label style={styles.label} htmlFor="email">
+          E-mail
+        </label>
         <input
+          id="email"
+          type="email"
           style={styles.input}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="seu@email.com"
           inputMode="email"
+          autoComplete="email"
           autoCapitalize="none"
         />
 
         {mode !== "reset" && (
           <>
-            <label style={styles.label}>Senha</label>
+            <label style={styles.label} htmlFor="password">
+              Senha
+            </label>
             <input
+              id="password"
+              type="password"
               style={styles.input}
               value={pass}
               onChange={(e) => setPass(e.target.value)}
               placeholder="••••••••"
-              type="password"
+              autoComplete={
+                mode === "login" ? "current-password" : "new-password"
+              }
             />
+
             <div style={styles.hintRow}>
-              <span style={styles.hint}>Dica: use 8+ caracteres para ficar mais seguro.</span>
+              <span style={styles.hint}>
+                Dica: use 8+ caracteres para ficar mais seguro.
+              </span>
               <button
                 type="button"
                 style={styles.linkBtn}
@@ -232,7 +301,9 @@ export default function LoginClient() {
 
         {mode === "reset" && (
           <div style={styles.resetBox}>
-            <div style={styles.resetTxt}>Enviaremos um link de redefinição para seu e-mail.</div>
+            <div style={styles.resetTxt}>
+              Enviaremos um link de redefinição para seu e-mail.
+            </div>
             <button
               type="button"
               style={styles.linkBtn}
@@ -248,7 +319,11 @@ export default function LoginClient() {
         )}
 
         <button
-          style={{ ...styles.primaryBtn, ...(primaryDisabled ? styles.btnDisabled : {}) }}
+          type="button"
+          style={{
+            ...styles.primaryBtn,
+            ...(primaryDisabled ? styles.btnDisabled : {}),
+          }}
           onClick={primaryAction}
           disabled={primaryDisabled}
         >
@@ -262,14 +337,16 @@ export default function LoginClient() {
         </button>
 
         <div style={styles.footer}>
-          <div style={styles.footerTxt}>Próximo: adicionar Google Login e “continuar no app”.</div>
+          <div style={styles.footerTxt}>
+            Próximo: adicionar Google Login e “continuar no app”.
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-const styles: Record<string, import("react").CSSProperties> = {
+const styles: Record<string, CSSProperties> = {
   page: {
     minHeight: "100vh",
     display: "grid",
@@ -297,11 +374,17 @@ const styles: Record<string, import("react").CSSProperties> = {
     placeItems: "center",
     fontWeight: 900,
     letterSpacing: 1,
+    userSelect: "none",
   },
   brandTitle: { fontSize: 16, fontWeight: 900, color: "#0F172A" },
   brandSub: { fontSize: 12, fontWeight: 700, color: "#64748B", marginTop: 2 },
 
-  headerRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  headerRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
   h1: { fontSize: 16, fontWeight: 900, color: "#0F172A" },
 
   pills: { display: "flex", gap: 8 },
@@ -402,3 +485,4 @@ const styles: Record<string, import("react").CSSProperties> = {
   footer: { marginTop: 12, textAlign: "center" },
   footerTxt: { fontSize: 12, color: "#64748B", fontWeight: 700 },
 };
+

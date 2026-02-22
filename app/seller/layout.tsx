@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
@@ -13,15 +13,39 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
   const router = useRouter();
   const pathname = usePathname();
 
-  const IS_DEV = process.env.NODE_ENV !== "production";
+  // ✅ Em Vercel, NODE_ENV = "production". Mantemos sua regra,
+  // mas adicionamos logs + fallback pra não ficar infinito.
+  const IS_PROD = process.env.NODE_ENV === "production";
 
-  // ✅ Em produção: protege /seller
-  // ✅ Em dev: não bloqueia o render (para você conseguir desenvolver sem travar)
+  // ✅ evita loops de redirect
+  const redirectedRef = useRef(false);
+
+  // ✅ fallback: se ficar "loading" tempo demais, libera a UI e mostra botão de ir ao login
+  const startRef = useRef<number>(Date.now());
+  const stuck = useMemo(() => {
+    if (!IS_PROD) return false;
+    // se passou de 4s e ainda está loading => algo não montou (Provider/Auth listener)
+    return loading && Date.now() - startRef.current > 4000;
+  }, [loading, IS_PROD]);
+
   useEffect(() => {
-    if (!IS_DEV && !loading && !user) {
+    // 🔎 logs (abre o console do navegador)
+    console.log("[SellerLayout] env:", { NODE_ENV: process.env.NODE_ENV });
+    console.log("[SellerLayout] state:", { loading, hasUser: !!user, uid: user?.uid || null });
+  }, [loading, user]);
+
+  useEffect(() => {
+    if (!IS_PROD) return; // dev não bloqueia
+
+    // se já redirecionamos, não repete
+    if (redirectedRef.current) return;
+
+    // ✅ quando terminar loading e não tiver user, manda pro login
+    if (!loading && !user) {
+      redirectedRef.current = true;
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
     }
-  }, [IS_DEV, loading, user, router, pathname]);
+  }, [IS_PROD, loading, user, router, pathname]);
 
   async function doLogout() {
     try {
@@ -36,9 +60,9 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
     ? "Verificando sessão…"
     : user
     ? `Logado: ${user.email || user.uid}`
-    : IS_DEV
-    ? "Dev mode: sessão não confirmada"
-    : "Sessão expirada";
+    : IS_PROD
+    ? "Sessão expirada"
+    : "Dev mode: sessão não confirmada";
 
   return (
     <div style={styles.page}>
@@ -65,7 +89,10 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
               Sair
             </button>
           ) : (
-            <Link href={`/login?next=${encodeURIComponent(pathname)}`} style={styles.primaryBtn}>
+            <Link
+              href={`/login?next=${encodeURIComponent(pathname)}`}
+              style={styles.primaryBtn}
+            >
               Login
             </Link>
           )}
@@ -73,21 +100,43 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
       </header>
 
       <main style={styles.main}>
-        {/* ✅ PRODUÇÃO: bloqueia e redireciona quando necessário */}
-        {!IS_DEV && loading ? (
+        {/* ✅ PRODUÇÃO: tela de validação */}
+        {IS_PROD && loading ? (
           <div style={styles.card}>
             <div style={{ fontWeight: 900 }}>Carregando…</div>
             <div style={{ opacity: 0.75, marginTop: 6 }}>Estamos validando seu acesso.</div>
+
+            {/* ✅ fallback útil: se travar, mostra CTA */}
+            {stuck ? (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontWeight: 900, marginBottom: 8 }}>
+                  Parece que a sessão não carregou.
+                </div>
+                <div style={{ opacity: 0.8, marginBottom: 12, fontSize: 12 }}>
+                  Isso acontece quando o Provider/Auth listener não está montando no browser.
+                  Clique abaixo para ir ao login.
+                </div>
+
+                <Link
+                  href={`/login?next=${encodeURIComponent(pathname)}`}
+                  style={{ ...styles.primaryBtn, display: "inline-block" }}
+                >
+                  Ir para o Login
+                </Link>
+              </div>
+            ) : null}
           </div>
-        ) : !IS_DEV && !user ? (
+        ) : IS_PROD && !user ? (
           <div style={styles.card}>
             <div style={{ fontWeight: 900 }}>Redirecionando…</div>
-            <div style={{ opacity: 0.75, marginTop: 6 }}>Você precisa estar logado para acessar.</div>
+            <div style={{ opacity: 0.75, marginTop: 6 }}>
+              Você precisa estar logado para acessar.
+            </div>
           </div>
         ) : (
           <>
-            {/* ✅ DEV: se não tiver user, mostra um aviso mas não bloqueia o conteúdo */}
-            {IS_DEV && !user && (
+            {/* ✅ DEV: se não tiver user, mostra aviso mas não bloqueia */}
+            {!IS_PROD && !user && (
               <div style={{ ...styles.card, marginBottom: 14 }}>
                 <div style={{ fontWeight: 900 }}>Modo desenvolvimento</div>
                 <div style={{ opacity: 0.8, marginTop: 6 }}>
@@ -175,6 +224,11 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid rgba(15,23,42,0.10)",
     boxShadow: "0 12px 30px rgba(0,0,0,0.18)",
   },
-  footer: { width: "min(980px, 100%)", margin: "0 auto", opacity: 0.75, textAlign: "center" },
+  footer: {
+    width: "min(980px, 100%)",
+    margin: "0 auto",
+    opacity: 0.75,
+    textAlign: "center",
+  },
   footerTxt: { color: "#fff", fontSize: 12, fontWeight: 700 },
 };
