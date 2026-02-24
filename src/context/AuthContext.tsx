@@ -1,67 +1,51 @@
 "use client";
 
-import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 type AuthCtx = {
   uid: string | null;
+  email?: string | null;
   loading: boolean;
 };
 
-const Ctx = createContext<AuthCtx>({
-  uid: null,
-  loading: true,
-});
-
-async function checkSession(signal?: AbortSignal) {
-  const r = await fetch("/api/sessionCheck", {
-    method: "GET",
-    cache: "no-store",
-    signal,
-  });
-
-  if (!r.ok) return { ok: false, uid: null };
-
-  const data = await r.json();
-  return { ok: true, uid: data.uid ?? null };
-}
+const Ctx = createContext<AuthCtx>({ uid: null, email: null, loading: true });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [uid, setUid] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const ac = new AbortController();
     let alive = true;
 
-    (async () => {
+    async function run() {
       try {
-        const res = await checkSession(ac.signal);
-
+        const r = await fetch("/api/sessionCheck", { method: "GET" });
         if (!alive) return;
 
-        setUid(res.ok ? res.uid : null);
+        if (r.ok) {
+          const data = (await r.json()) as { uid?: string; email?: string | null };
+          setUid(data.uid || null);
+          setEmail(data.email ?? null);
+        } else {
+          setUid(null);
+          setEmail(null);
+        }
       } catch {
-        if (!alive) return;
         setUid(null);
+        setEmail(null);
       } finally {
-        if (!alive) return;
-        setLoading(false);
+        if (alive) setLoading(false);
       }
-    })();
+    }
 
+    run();
     return () => {
       alive = false;
-      ac.abort();
     };
   }, []);
 
-  const value = useMemo(() => ({ uid, loading }), [uid, loading]);
+  const value = useMemo(() => ({ uid, email, loading }), [uid, email, loading]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
