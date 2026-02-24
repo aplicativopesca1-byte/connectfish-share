@@ -2,7 +2,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { adminAuth } from "../../../../src/lib/firebaseAdminAuth";
+import { adminAuth } from "../../../src/lib/firebaseAdminAuth";
 
 const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
 
@@ -13,10 +13,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
     }
 
-    // checa token
     const decoded = await adminAuth().verifyIdToken(idToken, true);
 
-    // cria cookie de sessão
     const sessionCookie = await adminAuth().createSessionCookie(idToken, {
       expiresIn: FIVE_DAYS_MS,
     });
