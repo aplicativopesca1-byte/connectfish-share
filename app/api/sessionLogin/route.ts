@@ -2,7 +2,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { adminAuth } from "@/lib/firebaseAdminAuth";
+import { adminAuth } from "../../../../src/lib/firebaseAdminAuth";
 
 const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
 
@@ -13,7 +13,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
     }
 
-    // (Opcional) checa se token é recente (evita replay antigo)
+    // checa token
     const decoded = await adminAuth().verifyIdToken(idToken, true);
 
     // cria cookie de sessão
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
     const res = NextResponse.json({ ok: true, uid: decoded.uid });
 
     res.cookies.set({
-      name: "__session",              // nome padrão que a Vercel/CDN aceita bem
+      name: "__session",
       value: sessionCookie,
       httpOnly: true,
       secure: true,
