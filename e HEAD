@@ -16,12 +16,12 @@ function mustPublic(name: string) {
 }
 
 const firebaseConfig = {
-  apiKey: mustPublic("NEXT_PUBLIC_FIREBASE_API_KEY"),
-  authDomain: mustPublic("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"),
-  projectId: mustPublic("NEXT_PUBLIC_FIREBASE_PROJECT_ID"),
-  storageBucket: mustPublic("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET"),
-  messagingSenderId: mustPublic("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID"),
-  appId: mustPublic("NEXT_PUBLIC_FIREBASE_APP_ID"),
+  apiKey: mustPublic("AIzaSyCoV-Qwq-hQ8zALhWxrDv-go8s_MQBjjIY"),
+  authDomain: mustPublic("connectfish.firebaseapp.com"),
+  projectId: mustPublic("connectfish"),
+  storageBucket: mustPublic("connectfish.firebasestorage.app"),
+  messagingSenderId: mustPublic("1002946531833"),
+  appId: mustPublic("1:1002946531833:web:2e050c04233107dbaf2d28"),
 };
 
 // ✅ Singleton global (evita duplicação no dev/turbopack)
