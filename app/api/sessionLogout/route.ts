@@ -1,4 +1,4 @@
-// 📂 app/api/sessionLogout/route.ts
+﻿// 📂 app/api/sessionLogout/route.ts
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -6,7 +6,6 @@ import { NextResponse } from "next/server";
 export async function POST() {
   const res = NextResponse.json({ ok: true });
 
-  // remove cookie de sessão
   res.cookies.set({
     name: "__session",
     value: "",
@@ -19,3 +18,5 @@ export async function POST() {
 
   return res;
 }
+
+export {};
