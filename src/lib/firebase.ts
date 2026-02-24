@@ -1,15 +1,17 @@
-// src/lib/firebase.ts
+// 📂 src/lib/firebase.ts
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
-import { getAuth, setPersistence, browserLocalPersistence, type Auth } from "firebase/auth";
+import {
+  getAuth,
+  setPersistence,
+  browserLocalPersistence,
+  type Auth,
+} from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
 
 // ✅ No browser do Next, precisa ser NEXT_PUBLIC_*
 function mustPublic(name: string) {
   const v = process.env[name];
-  if (!v) {
-    // ajuda MUITO a debugar em produção
-    throw new Error(`[Firebase] Missing env: ${name}`);
-  }
+  if (!v) throw new Error(`[Firebase] Missing env: ${name}`);
   return v;
 }
 
@@ -37,7 +39,7 @@ export const app: FirebaseApp =
 export const auth: Auth = g.__cf_auth__ ?? (g.__cf_auth__ = getAuth(app));
 export const db: Firestore = g.__cf_db__ ?? (g.__cf_db__ = getFirestore(app));
 
-// ✅ persistence 1x (boa prática)
+// ✅ persistence 1x
 if (!g.__cf_persist__) {
   g.__cf_persist__ = true;
   setPersistence(auth, browserLocalPersistence).catch((err) => {
