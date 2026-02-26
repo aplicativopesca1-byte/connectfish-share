@@ -1,23 +1,33 @@
 ﻿// 📂 app/api/sessionLogout/route.ts
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-export async function POST(_req: NextRequest) {
-  const res = NextResponse.json({ ok: true });
-
-  // 🔥 apaga cookie __session corretamente
-  res.cookies.set({
-    name: "__session",
-    value: "",
+function clearSessionCookie(res: NextResponse) {
+  // remove cookie __session
+  res.cookies.set("__session", "", {
     httpOnly: true,
-    secure: true,        // obrigatório no Vercel (https)
+    secure: true,
     sameSite: "lax",
     path: "/",
     maxAge: 0,
-    expires: new Date(0),   // 👈 garante remoção em todos browsers
   });
-
   return res;
+}
+
+export async function GET() {
+  const res = NextResponse.json(
+    { ok: true },
+    { headers: { "Cache-Control": "no-store, private", Vary: "Cookie" } }
+  );
+  return clearSessionCookie(res);
+}
+
+export async function POST() {
+  const res = NextResponse.json(
+    { ok: true },
+    { headers: { "Cache-Control": "no-store, private", Vary: "Cookie" } }
+  );
+  return clearSessionCookie(res);
 }
