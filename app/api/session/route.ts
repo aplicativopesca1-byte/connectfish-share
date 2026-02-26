@@ -1,5 +1,6 @@
 // 📂 app/api/session/route.ts
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { adminAuth } from "../../../src/lib/firebaseAdminAuth";
@@ -9,7 +10,13 @@ export async function POST(req: Request) {
     const { idToken } = await req.json();
 
     if (!idToken) {
-      return NextResponse.json({ ok: false, reason: "missing_idToken" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, reason: "missing_idToken" },
+        {
+          status: 400,
+          headers: { "Cache-Control": "no-store, private", Vary: "Cookie" },
+        }
+      );
     }
 
     // 7 dias
@@ -19,11 +26,14 @@ export async function POST(req: Request) {
       expiresIn: expiresInMs,
     });
 
-    const res = NextResponse.json({ ok: true });
+    const res = NextResponse.json(
+      { ok: true },
+      { headers: { "Cache-Control": "no-store, private", Vary: "Cookie" } }
+    );
 
     res.cookies.set("__session", sessionCookie, {
       httpOnly: true,
-      secure: true,       // Vercel = HTTPS
+      secure: true, // Vercel = HTTPS
       sameSite: "lax",
       path: "/",
       maxAge: Math.floor(expiresInMs / 1000),
@@ -32,8 +42,15 @@ export async function POST(req: Request) {
     return res;
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, reason: "session_create_failed", error: String(e?.message || e) },
-      { status: 401 }
+      {
+        ok: false,
+        reason: "session_create_failed",
+        error: String(e?.message || e),
+      },
+      {
+        status: 401,
+        headers: { "Cache-Control": "no-store, private", Vary: "Cookie" },
+      }
     );
   }
 }
