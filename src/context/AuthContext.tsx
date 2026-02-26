@@ -1,6 +1,12 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 type AuthCtx = {
   uid: string | null;
@@ -8,7 +14,11 @@ type AuthCtx = {
   loading: boolean;
 };
 
-const Ctx = createContext<AuthCtx>({ uid: null, email: null, loading: true });
+const Ctx = createContext<AuthCtx>({
+  uid: null,
+  email: null,
+  loading: true,
+});
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [uid, setUid] = useState<string | null>(null);
@@ -20,18 +30,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     async function run() {
       try {
-        const r = await fetch("/api/sessionCheck", { method: "GET" });
+        const r = await fetch("/api/sessionCheck", {
+          method: "GET",
+          credentials: "include", // ✅ manda cookie de sessão
+        });
+
         if (!alive) return;
 
-        if (r.ok) {
-          const data = (await r.json()) as { uid?: string; email?: string | null };
-          setUid(data.uid || null);
-          setEmail(data.email ?? null);
-        } else {
+        // ✅ 401 = simplesmente não logado (normal no boot)
+        if (r.status === 401) {
           setUid(null);
           setEmail(null);
+          setLoading(false);
+          return;
         }
-      } catch {
+
+        if (!r.ok) {
+          console.warn("[sessionCheck] unexpected status:", r.status);
+          setUid(null);
+          setEmail(null);
+          setLoading(false);
+          return;
+        }
+
+        const data = (await r.json().catch(() => ({}))) as {
+          uid?: string;
+          email?: string | null;
+        };
+
+        setUid(data.uid || null);
+        setEmail(data.email ?? null);
+      } catch (err) {
+        console.warn("[sessionCheck] failed:", err);
         setUid(null);
         setEmail(null);
       } finally {
@@ -40,12 +70,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     run();
+
     return () => {
       alive = false;
     };
   }, []);
 
-  const value = useMemo(() => ({ uid, email, loading }), [uid, email, loading]);
+  const value = useMemo(() => ({ uid, email, loading }), [
+    uid,
+    email,
+    loading,
+  ]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

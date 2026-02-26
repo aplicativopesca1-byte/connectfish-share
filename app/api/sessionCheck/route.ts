@@ -1,26 +1,26 @@
 // 📂 app/api/sessionCheck/route.ts
 export const runtime = "nodejs";
 
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { adminAuth } from "../../../src/lib/firebaseAdminAuth";
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   try {
-    const cookie = req.headers.get("cookie") || "";
-    const m = cookie.match(/(?:^|;\s*)__session=([^;]+)/);
-    const sessionCookie = m?.[1];
+    const raw = req.cookies.get("__session")?.value;
 
-    if (!sessionCookie) {
-      return NextResponse.json({ ok: false }, { status: 401 });
+    if (!raw) {
+      return NextResponse.json({ ok: false, reason: "no_cookie" }, { status: 401 });
     }
 
-    // valida cookie
+    // Normalmente já vem pronto aqui; decode só se tiver % no valor
+    const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
+
     const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
 
-    return NextResponse.json({ ok: true, uid: decoded.uid });
+    return NextResponse.json({ ok: true, uid: decoded.uid }, { status: 200 });
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: e?.message || "invalid_session" },
+      { ok: false, reason: "invalid_cookie", error: String(e?.message || "invalid_session") },
       { status: 401 }
     );
   }

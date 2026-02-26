@@ -35,25 +35,52 @@ async function ensurePersistence() {
   }
 }
 
+/**
+ * ✅ Cria sessão no servidor (cookie httpOnly: __session)
+ * Requer endpoint:
+ *  - POST /api/session  { idToken }
+ * que responde 200 e seta Set-Cookie __session=...
+ */
 async function createServerSession(idToken: string) {
-  const r = await fetch("/api/sessionLogin", {
+  const r = await fetch("/api/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify({ idToken }),
   });
 
+  const data = await r.json().catch(() => ({}));
+
   if (!r.ok) {
-    const data = await r.json().catch(() => ({}));
-    throw new Error(data?.error || "Falha ao criar sessão.");
+    console.error("[/api/session] response:", data);
+    throw new Error(data?.error || `Falha ao criar sessão (${r.status}).`);
   }
 
   return true;
 }
 
+/**
+ * ✅ Confirma que o cookie está válido no servidor
+ * (evita redirect loop por cookie que não salvou)
+ */
+async function checkServerSession() {
+  const r = await fetch("/api/sessionCheck", {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok && data?.ok === true, data };
+}
+
 export default function LoginClient() {
   const router = useRouter();
   const sp = useSearchParams();
-  const next = sp.get("next") || "/seller";
+
+  // protege contra next vazio ou malicioso
+  const rawNext = sp.get("next") || "/seller";
+  const next = rawNext.startsWith("/") ? rawNext : "/seller";
 
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
@@ -84,11 +111,20 @@ export default function LoginClient() {
         pass
       );
 
-      // ✅ Cenário B: cria cookie de sessão no servidor
+      // ✅ cria cookie de sessão no servidor
       const idToken = await cred.user.getIdToken(true);
       await createServerSession(idToken);
 
+      // ✅ valida de verdade que o cookie ficou válido
+      const check = await checkServerSession();
+      if (!check.ok) {
+        console.error("[sessionCheck] after login:", check.data);
+        throw new Error("session_not_persisted");
+      }
+
+      // ✅ navega e força refresh do server component
       router.replace(next);
+      router.refresh();
     } catch (e: unknown) {
       const code = String((e as any)?.code || "");
       const message = String((e as any)?.message || "");
@@ -102,6 +138,10 @@ export default function LoginClient() {
         setErr("Usuário não encontrado. Crie uma conta.");
       } else if (code.includes("auth/too-many-requests")) {
         setErr("Muitas tentativas. Aguarde um pouco e tente novamente.");
+      } else if (message.includes("session_not_persisted")) {
+        setErr(
+          "Login ok, mas a sessão não ficou salva no site. Abra sempre pelo mesmo domínio (não misture vercel.app e domínio)."
+        );
       } else if (
         message.toLowerCase().includes("sessão") ||
         message.toLowerCase().includes("session")
@@ -130,11 +170,19 @@ export default function LoginClient() {
         pass
       );
 
-      // ✅ Cenário B: cria cookie de sessão no servidor
+      // ✅ cria cookie de sessão no servidor
       const idToken = await cred.user.getIdToken(true);
       await createServerSession(idToken);
 
+      // ✅ valida cookie
+      const check = await checkServerSession();
+      if (!check.ok) {
+        console.error("[sessionCheck] after register:", check.data);
+        throw new Error("session_not_persisted");
+      }
+
       router.replace(next);
+      router.refresh();
     } catch (e: unknown) {
       const code = String((e as any)?.code || "");
       const message = String((e as any)?.message || "");
@@ -145,6 +193,10 @@ export default function LoginClient() {
         setErr("Senha fraca. Use pelo menos 6 caracteres (ideal 8+).");
       } else if (code.includes("auth/invalid-email")) {
         setErr("E-mail inválido.");
+      } else if (message.includes("session_not_persisted")) {
+        setErr(
+          "Conta criada, mas a sessão não ficou salva no site. Abra sempre pelo mesmo domínio (não misture vercel.app e domínio)."
+        );
       } else if (
         message.toLowerCase().includes("sessão") ||
         message.toLowerCase().includes("session")
@@ -237,7 +289,7 @@ export default function LoginClient() {
               onClick={() => {
                 setErr(null);
                 setMsg(null);
-                setMode("register");
+                               setMode("register");
               }}
             >
               Criar
@@ -485,4 +537,3 @@ const styles: Record<string, CSSProperties> = {
   footer: { marginTop: 12, textAlign: "center" },
   footerTxt: { fontSize: 12, color: "#64748B", fontWeight: 700 },
 };
-

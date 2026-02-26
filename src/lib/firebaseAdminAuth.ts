@@ -1,66 +1,73 @@
 // 📂 src/lib/firebaseAdminAuth.ts
+import "server-only";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 
-function getServiceAccount() {
-  const json =
-    process.env.FIREBASE_ADMIN_JSON ||
-    process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
-    "";
+type ServiceAccount = {
+  project_id: string;
+  client_email: string;
+  private_key: string;
+};
 
-  if (!json) {
+function parseAdminJson(): ServiceAccount {
+  const rawJson = process.env.FIREBASE_ADMIN_JSON;
+  const b64 = process.env.FIREBASE_ADMIN_JSON_B64;
+
+  // Preferir JSON direto (menos chance de runtime pegar Buffer)
+  let raw = rawJson?.trim();
+
+  // Se só tiver B64, decodifica usando atob (funciona em runtimes web/edge também)
+  if (!raw && b64) {
+    // atob existe em runtimes web; no Node também funciona via global em Next (mas se não existir, caímos no fallback)
+    const decode =
+      typeof atob === "function"
+        ? atob
+        : (s: string) => Buffer.from(s, "base64").toString("utf8");
+    raw = decode(b64).trim();
+  }
+
+  if (!raw) {
     throw new Error(
-      "Missing FIREBASE_ADMIN_JSON in environment. Add it in Vercel Env Vars."
+      "Missing FIREBASE_ADMIN_JSON (preferred) or FIREBASE_ADMIN_JSON_B64 in environment."
     );
   }
 
-  let sa: any;
+  let parsed: any;
   try {
-    sa = JSON.parse(json);
-  } catch {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error("FIREBASE_ADMIN_JSON is not valid JSON (parse failed).");
+  }
+
+  const { project_id, client_email, private_key } = parsed || {};
+  if (!project_id || !client_email || !private_key) {
     throw new Error(
-      "FIREBASE_ADMIN_JSON is not valid JSON. Ensure it is a single-line JSON string with escaped \\n in private_key."
+      "FIREBASE_ADMIN_JSON is missing required fields (project_id/client_email/private_key)."
     );
   }
 
-  const projectId = sa.project_id || sa.projectId;
-  const clientEmail = sa.client_email || sa.clientEmail;
-
-  const privateKeyRaw = sa.private_key || sa.privateKey;
-  const privateKey =
-    typeof privateKeyRaw === "string"
-      ? privateKeyRaw.replace(/\\n/g, "\n")
-      : privateKeyRaw;
-
-  if (!projectId || !clientEmail || !privateKey) {
-    throw new Error(
-      "FIREBASE_ADMIN_JSON missing project_id/client_email/private_key"
-    );
-  }
-
-  return { projectId, clientEmail, privateKey };
+  return {
+    project_id,
+    client_email,
+    // importante: normalizar \n
+    private_key: String(private_key).replace(/\\n/g, "\n"),
+  };
 }
-
-// ✅ garante singleton no server (evita re-init)
-let _inited = false;
 
 function initAdmin() {
-  if (_inited) return;
-  if (getApps().length) {
-    _inited = true;
-    return;
-  }
+  if (getApps().length) return;
 
-  const { projectId, clientEmail, privateKey } = getServiceAccount();
+  const sa = parseAdminJson();
 
   initializeApp({
-    credential: cert({ projectId, clientEmail, privateKey }),
+    credential: cert({
+      projectId: sa.project_id,
+      clientEmail: sa.client_email,
+      privateKey: sa.private_key,
+    }),
   });
-
-  _inited = true;
 }
 
-// ✅ export exatamente como você está importando: { adminAuth }
 export function adminAuth() {
   initAdmin();
   return getAuth();
