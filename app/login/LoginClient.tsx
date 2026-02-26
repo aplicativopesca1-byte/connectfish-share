@@ -3,6 +3,7 @@
 import type { CSSProperties } from "react";
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 
 type Mode = "login" | "register" | "reset";
 
@@ -68,15 +69,23 @@ async function checkServerSession() {
     method: "GET",
     credentials: "include",
     cache: "no-store",
+    headers: { "Cache-Control": "no-cache" },
   });
 
   const data = await r.json().catch(() => ({}));
-  return { ok: r.ok && data?.ok === true, data };
+
+  // suporta 2 formatos comuns:
+  // 1) { ok: true }
+  // 2) { uid: "..." }
+  const ok = Boolean((data && data.ok === true) || (data && data.uid));
+
+  return { ok: r.ok && ok, data };
 }
 
 export default function LoginClient() {
   const router = useRouter();
   const sp = useSearchParams();
+  const { refresh } = useAuth();
 
   // protege contra next vazio ou malicioso
   const rawNext = sp.get("next") || "/seller";
@@ -95,6 +104,26 @@ export default function LoginClient() {
     [email, pass]
   );
   const canReset = useMemo(() => isValidEmail(email), [email]);
+
+  async function finishAuthAndGo() {
+    // ✅ 1) confirma server session
+    const check = await checkServerSession();
+    if (!check.ok) {
+      console.error("[sessionCheck] after auth:", check.data);
+      throw new Error("session_not_persisted");
+    }
+
+    // ✅ 2) IMPORTANTÍSSIMO: atualiza o AuthContext (uid/email)
+    const ok = await refresh();
+    if (!ok) {
+      console.error("[AuthContext.refresh] did not return logged user");
+      throw new Error("session_not_recognized");
+    }
+
+    // ✅ 3) navega
+    router.replace(next);
+    router.refresh();
+  }
 
   async function doLogin() {
     try {
@@ -115,16 +144,7 @@ export default function LoginClient() {
       const idToken = await cred.user.getIdToken(true);
       await createServerSession(idToken);
 
-      // ✅ valida de verdade que o cookie ficou válido
-      const check = await checkServerSession();
-      if (!check.ok) {
-        console.error("[sessionCheck] after login:", check.data);
-        throw new Error("session_not_persisted");
-      }
-
-      // ✅ navega e força refresh do server component
-      router.replace(next);
-      router.refresh();
+      await finishAuthAndGo();
     } catch (e: unknown) {
       const code = String((e as any)?.code || "");
       const message = String((e as any)?.message || "");
@@ -141,6 +161,10 @@ export default function LoginClient() {
       } else if (message.includes("session_not_persisted")) {
         setErr(
           "Login ok, mas a sessão não ficou salva no site. Abra sempre pelo mesmo domínio (não misture vercel.app e domínio)."
+        );
+      } else if (message.includes("session_not_recognized")) {
+        setErr(
+          "Sessão criada, mas não foi reconhecida no app. Recarregue a página e tente novamente."
         );
       } else if (
         message.toLowerCase().includes("sessão") ||
@@ -174,15 +198,7 @@ export default function LoginClient() {
       const idToken = await cred.user.getIdToken(true);
       await createServerSession(idToken);
 
-      // ✅ valida cookie
-      const check = await checkServerSession();
-      if (!check.ok) {
-        console.error("[sessionCheck] after register:", check.data);
-        throw new Error("session_not_persisted");
-      }
-
-      router.replace(next);
-      router.refresh();
+      await finishAuthAndGo();
     } catch (e: unknown) {
       const code = String((e as any)?.code || "");
       const message = String((e as any)?.message || "");
@@ -196,6 +212,10 @@ export default function LoginClient() {
       } else if (message.includes("session_not_persisted")) {
         setErr(
           "Conta criada, mas a sessão não ficou salva no site. Abra sempre pelo mesmo domínio (não misture vercel.app e domínio)."
+        );
+      } else if (message.includes("session_not_recognized")) {
+        setErr(
+          "Conta criada, mas a sessão não foi reconhecida no app. Recarregue a página e tente entrar."
         );
       } else if (
         message.toLowerCase().includes("sessão") ||
@@ -289,7 +309,7 @@ export default function LoginClient() {
               onClick={() => {
                 setErr(null);
                 setMsg(null);
-                               setMode("register");
+                setMode("register");
               }}
             >
               Criar
