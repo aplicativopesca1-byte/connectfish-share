@@ -1,11 +1,15 @@
 // 📂 middleware.ts
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
-export function middleware(_req: NextRequest) {
+export function middleware(req: NextRequest) {
+  // ✅ nunca mexe em /api
+  if (req.nextUrl.pathname.startsWith("/api")) {
+    return NextResponse.next();
+  }
   return NextResponse.next();
 }
 
+// ✅ IMPORTANTÍSSIMO: exclui /api do matcher
 export const config = {
-  matcher: ["/:path*"], // pode deixar assim ou remover o matcher
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
 };
