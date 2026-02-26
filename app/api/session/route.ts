@@ -1,56 +1,32 @@
-// 📂 app/api/session/route.ts
+// 📂 app/api/sessionCheck/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { adminAuth } from "../../../src/lib/firebaseAdminAuth";
 
-export async function POST(req: Request) {
+export async function GET(req: NextRequest) {
   try {
-    const { idToken } = await req.json();
+    const raw = req.cookies.get("__session")?.value;
 
-    if (!idToken) {
+    if (!raw) {
       return NextResponse.json(
-        { ok: false, reason: "missing_idToken" },
-        {
-          status: 400,
-          headers: { "Cache-Control": "no-store, private", Vary: "Cookie" },
-        }
+        { ok: false, reason: "no_cookie" },
+        { status: 401, headers: { "Cache-Control": "no-store, private", Vary: "Cookie" } }
       );
     }
 
-    // 7 dias
-    const expiresInMs = 1000 * 60 * 60 * 24 * 7;
+    const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
+    const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
 
-    const sessionCookie = await adminAuth().createSessionCookie(idToken, {
-      expiresIn: expiresInMs,
-    });
-
-    const res = NextResponse.json(
-      { ok: true },
-      { headers: { "Cache-Control": "no-store, private", Vary: "Cookie" } }
+    return NextResponse.json(
+      { ok: true, uid: decoded.uid, email: (decoded as any).email ?? null },
+      { status: 200, headers: { "Cache-Control": "no-store, private", Vary: "Cookie" } }
     );
-
-    res.cookies.set("__session", sessionCookie, {
-      httpOnly: true,
-      secure: true, // Vercel = HTTPS
-      sameSite: "lax",
-      path: "/",
-      maxAge: Math.floor(expiresInMs / 1000),
-    });
-
-    return res;
   } catch (e: any) {
     return NextResponse.json(
-      {
-        ok: false,
-        reason: "session_create_failed",
-        error: String(e?.message || e),
-      },
-      {
-        status: 401,
-        headers: { "Cache-Control": "no-store, private", Vary: "Cookie" },
-      }
+      { ok: false, reason: "invalid_cookie", error: String(e?.message || "invalid_session") },
+      { status: 401, headers: { "Cache-Control": "no-store, private", Vary: "Cookie" } }
     );
   }
 }
