@@ -13,9 +13,9 @@ import React, {
 type AuthCtx = {
   uid: string | null;
   email: string | null;
-  loading: boolean; // true só no boot inicial até 1ª checagem
-  refreshing: boolean; // true enquanto roda refresh manual/auto
-  refresh: () => Promise<boolean>; // retorna se está logado
+  loading: boolean;
+  refreshing: boolean;
+  refresh: () => Promise<boolean>;
 };
 
 const Ctx = createContext<AuthCtx>({
@@ -26,13 +26,14 @@ const Ctx = createContext<AuthCtx>({
   refresh: async () => false,
 });
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [uid, setUid] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // evita update depois de unmount
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -41,18 +42,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const doFetch = useCallback(async () => {
+    return fetch("/api/sessionCheck", {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache" },
+    });
+  }, []);
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
 
     try {
-      const r = await fetch("/api/sessionCheck", {
-        method: "GET",
-        credentials: "include",
-        cache: "no-store",
-        headers: { "Cache-Control": "no-cache" },
-      });
+      // 1ª tentativa
+      let r = await doFetch();
 
-      // ✅ Sessão inválida de verdade → derruba
+      // Se deu 401 por no_cookie logo após login, tenta de novo rapidinho
+      if (r.status === 401) {
+        const data1 = await r.json().catch(() => ({} as any));
+        if (data1?.reason === "no_cookie") {
+          await sleep(150);
+          r = await doFetch();
+        } else {
+          // invalid_cookie ou outro 401: derruba
+          if (mountedRef.current) {
+            setUid(null);
+            setEmail(null);
+          }
+          return false;
+        }
+      }
+
       if (r.status === 401 || r.status === 403) {
         if (mountedRef.current) {
           setUid(null);
@@ -61,21 +82,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
 
-      // ❗ Qualquer outro erro (500/502/etc) = NÃO derruba a sessão
       if (!r.ok) {
+        // erro 500/502 etc: não derruba
         return Boolean(uid);
       }
 
-      const data = (await r.json()) as {
-        uid?: string;
-        email?: string | null;
-        ok?: boolean;
-        reason?: string;
-      };
-
+      const data = (await r.json()) as { uid?: string; email?: string | null };
       const nextUid = data.uid || null;
 
-      // ✅ Sessão válida
       if (nextUid) {
         if (mountedRef.current) {
           setUid(nextUid);
@@ -84,15 +98,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return true;
       }
 
-      // Se veio 200 mas sem uid, trata como inválido (caso raro)
       if (mountedRef.current) {
         setUid(null);
         setEmail(null);
       }
       return false;
     } catch (e) {
-      // ✅ Erro de rede/transitório: NÃO derruba
       console.error("[Auth] sessionCheck failed:", e);
+      // erro de rede: não derruba
       return Boolean(uid);
     } finally {
       if (mountedRef.current) {
@@ -100,17 +113,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
       }
     }
-  }, [uid]);
+  }, [doFetch, uid]);
 
-  // Boot inicial
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  // Revalida quando volta pro foco (sem “logout fantasma”)
   useEffect(() => {
     const onFocus = () => refresh();
-
     const onVisibility = () => {
       if (document.visibilityState === "visible") refresh();
     };
