@@ -1,23 +1,19 @@
 "use client";
 
-import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
 
 type AuthCtx = {
   uid: string | null;
   email?: string | null;
   loading: boolean;
+  refresh: () => Promise<void>;
 };
 
 const Ctx = createContext<AuthCtx>({
   uid: null,
   email: null,
   loading: true,
+  refresh: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -25,62 +21,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [email, setEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let alive = true;
+  const refresh = useCallback(async () => {
+    try {
+      const r = await fetch("/api/sessionCheck", {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+      });
 
-    async function run() {
-      try {
-        const r = await fetch("/api/sessionCheck", {
-          method: "GET",
-          credentials: "include", // ✅ manda cookie de sessão
-        });
-
-        if (!alive) return;
-
-        // ✅ 401 = simplesmente não logado (normal no boot)
-        if (r.status === 401) {
-          setUid(null);
-          setEmail(null);
-          setLoading(false);
-          return;
-        }
-
-        if (!r.ok) {
-          console.warn("[sessionCheck] unexpected status:", r.status);
-          setUid(null);
-          setEmail(null);
-          setLoading(false);
-          return;
-        }
-
-        const data = (await r.json().catch(() => ({}))) as {
-          uid?: string;
-          email?: string | null;
-        };
-
+      if (r.ok) {
+        const data = (await r.json()) as { uid?: string; email?: string | null };
         setUid(data.uid || null);
         setEmail(data.email ?? null);
-      } catch (err) {
-        console.warn("[sessionCheck] failed:", err);
+      } else {
         setUid(null);
         setEmail(null);
-      } finally {
-        if (alive) setLoading(false);
       }
+    } catch {
+      setUid(null);
+      setEmail(null);
+    } finally {
+      setLoading(false);
     }
+  }, []);
 
-    run();
-
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!alive) return;
+      await refresh();
+    })();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [refresh]);
 
-  const value = useMemo(() => ({ uid, email, loading }), [
-    uid,
-    email,
-    loading,
-  ]);
+  const value = useMemo(() => ({ uid, email, loading, refresh }), [uid, email, loading, refresh]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
