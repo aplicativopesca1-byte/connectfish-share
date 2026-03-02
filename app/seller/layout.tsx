@@ -1,8 +1,8 @@
+// 📂 app/seller/layout.tsx
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
 
 export default function SellerLayout({ children }: { children: React.ReactNode }) {
@@ -10,11 +10,28 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
   const router = useRouter();
   const pathname = usePathname();
 
+  const [loggingOut, setLoggingOut] = useState(false);
+
   useEffect(() => {
     if (!loading && !uid) {
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
     }
   }, [loading, uid, router, pathname]);
+
+  async function doLogout() {
+    try {
+      setLoggingOut(true);
+      await fetch("/api/sessionLogout", {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+      });
+    } finally {
+      setLoggingOut(false);
+      router.replace("/login?next=%2Fseller");
+      router.refresh();
+    }
+  }
 
   if (loading) {
     return (
@@ -42,9 +59,24 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
           </div>
         </div>
 
-        <Link href="/api/sessionLogout" style={{ fontSize: 12, fontWeight: 800 }}>
-          Sair
-        </Link>
+        <button
+          type="button"
+          onClick={doLogout}
+          disabled={loggingOut}
+          style={{
+            fontSize: 12,
+            fontWeight: 800,
+            border: "1px solid rgba(15,23,42,0.14)",
+            background: "#0F172A",
+            color: "#fff",
+            borderRadius: 10,
+            padding: "8px 12px",
+            cursor: loggingOut ? "not-allowed" : "pointer",
+            opacity: loggingOut ? 0.7 : 1,
+          }}
+        >
+          {loggingOut ? "Saindo…" : "Sair"}
+        </button>
       </div>
 
       {children}
