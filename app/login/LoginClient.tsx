@@ -43,7 +43,7 @@ async function ensurePersistence() {
  * que responde 200 e seta Set-Cookie __session=...
  */
 async function createServerSession(idToken: string) {
-  const r = await fetch("/api/session", {
+  const r = await fetch("/api/sessionLogin", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
