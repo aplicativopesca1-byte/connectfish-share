@@ -35,6 +35,7 @@ type TournamentDoc = {
   description?: string | null;
   coverImageUrl?: string | null;
   species?: string;
+  entryFee?: number;
   minSizeCm?: number;
   validFishCount?: number;
   rules?: string[];
@@ -123,6 +124,13 @@ function formatDateTime(value: string | null) {
   }).format(date);
 }
 
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(Number(value || 0));
+}
+
 function slugify(value: string) {
   return value
     .normalize("NFD")
@@ -187,7 +195,6 @@ export default function TournamentForm({
 }: Props) {
   const router = useRouter();
 
-  // IMPORTANTE: seu AuthContext provavelmente expõe uid/email diretamente
   const { uid, email, loading: authLoading } = useAuth() as {
     uid?: string | null;
     email?: string | null;
@@ -206,6 +213,7 @@ export default function TournamentForm({
   const [description, setDescription] = useState("");
   const [coverImageUrl, setCoverImageUrl] = useState("");
   const [species, setSpecies] = useState("");
+  const [entryFee, setEntryFee] = useState<number>(0);
   const [minSizeCm, setMinSizeCm] = useState<number>(30);
   const [validFishCount, setValidFishCount] = useState<number>(3);
   const [rulesText, setRulesText] = useState("");
@@ -258,6 +266,7 @@ export default function TournamentForm({
       setDescription(data.description || "");
       setCoverImageUrl(data.coverImageUrl || "");
       setSpecies(data.species || "");
+      setEntryFee(Number(data.entryFee ?? 0) || 0);
       setMinSizeCm(Number(data.minSizeCm ?? 30) || 30);
       setValidFishCount(Number(data.validFishCount ?? 3) || 3);
       setRulesText(Array.isArray(data.rules) ? data.rules.join("\n") : "");
@@ -302,6 +311,12 @@ export default function TournamentForm({
         return;
       }
 
+      if (Number(entryFee) < 0) {
+        setError("O valor da inscrição não pode ser negativo.");
+        setSaving(false);
+        return;
+      }
+
       if (!isEdit) {
         if (authLoading) {
           setError("Aguardando identificação do usuário.");
@@ -340,6 +355,7 @@ export default function TournamentForm({
         description: description.trim() || null,
         coverImageUrl: coverImageUrl.trim() || null,
         species: species.trim(),
+        entryFee: Number(entryFee || 0),
         minSizeCm: Number(minSizeCm || 0),
         validFishCount: Number(validFishCount || 0),
         rules: parseRules(rulesText),
@@ -537,6 +553,19 @@ export default function TournamentForm({
             />
           </Field>
 
+          <Field label="Valor da inscrição (R$)">
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              value={entryFee}
+              onChange={(e) => setEntryFee(Number(e.target.value))}
+              style={styles.input}
+              placeholder="Ex.: 50"
+              disabled={!canEditStructure}
+            />
+          </Field>
+
           <Field label="Tamanho mínimo (cm)">
             <input
               type="number"
@@ -659,6 +688,7 @@ O ranking só atualiza após validação da organização.`}
           <PreviewCard label="Título" value={title || "—"} />
           <PreviewCard label="Slug" value={slug || generatedSlug || "—"} />
           <PreviewCard label="Espécie" value={species || "—"} />
+          <PreviewCard label="Inscrição" value={formatMoney(entryFee || 0)} />
           <PreviewCard label="Mínimo" value={`${minSizeCm || 0} cm`} />
           <PreviewCard
             label="Peixes válidos"
