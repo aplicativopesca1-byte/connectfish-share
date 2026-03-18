@@ -2,6 +2,7 @@
 import "server-only";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
 
 type ServiceAccount = {
   project_id: string;
@@ -13,16 +14,14 @@ function parseAdminJson(): ServiceAccount {
   const rawJson = process.env.FIREBASE_ADMIN_JSON;
   const b64 = process.env.FIREBASE_ADMIN_JSON_B64;
 
-  // Preferir JSON direto (menos chance de runtime pegar Buffer)
   let raw = rawJson?.trim();
 
-  // Se só tiver B64, decodifica usando atob (funciona em runtimes web/edge também)
   if (!raw && b64) {
-    // atob existe em runtimes web; no Node também funciona via global em Next (mas se não existir, caímos no fallback)
     const decode =
       typeof atob === "function"
         ? atob
         : (s: string) => Buffer.from(s, "base64").toString("utf8");
+
     raw = decode(b64).trim();
   }
 
@@ -35,11 +34,12 @@ function parseAdminJson(): ServiceAccount {
   let parsed: any;
   try {
     parsed = JSON.parse(raw);
-  } catch (e) {
+  } catch {
     throw new Error("FIREBASE_ADMIN_JSON is not valid JSON (parse failed).");
   }
 
   const { project_id, client_email, private_key } = parsed || {};
+
   if (!project_id || !client_email || !private_key) {
     throw new Error(
       "FIREBASE_ADMIN_JSON is missing required fields (project_id/client_email/private_key)."
@@ -49,26 +49,30 @@ function parseAdminJson(): ServiceAccount {
   return {
     project_id,
     client_email,
-    // importante: normalizar \n
     private_key: String(private_key).replace(/\\n/g, "\n"),
   };
 }
 
-function initAdmin() {
-  if (getApps().length) return;
+function getAdminApp() {
+  if (!getApps().length) {
+    const sa = parseAdminJson();
 
-  const sa = parseAdminJson();
+    initializeApp({
+      credential: cert({
+        projectId: sa.project_id,
+        clientEmail: sa.client_email,
+        privateKey: sa.private_key,
+      }),
+    });
+  }
 
-  initializeApp({
-    credential: cert({
-      projectId: sa.project_id,
-      clientEmail: sa.client_email,
-      privateKey: sa.private_key,
-    }),
-  });
+  return getApps()[0];
 }
 
 export function adminAuth() {
-  initAdmin();
-  return getAuth();
+  return getAuth(getAdminApp());
+}
+
+export function adminDb() {
+  return getFirestore(getAdminApp());
 }

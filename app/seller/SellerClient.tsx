@@ -1,8 +1,7 @@
-// 📂 app/seller/SellerClient.tsx
 "use client";
 
 import type { CSSProperties } from "react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 
 type SellerClientProps = {
@@ -10,13 +9,7 @@ type SellerClientProps = {
   email?: string | null;
 };
 
-type Order = {
-  id: string;
-  status: "Pendente" | "Pago" | "Enviado" | "Cancelado";
-  total: string;
-  date: string; // dd/mm
-  customer: string;
-};
+type SellerStatus = "Não iniciado" | "Em configuração" | "Em breve";
 
 function formatUid(uid: string) {
   if (!uid) return "";
@@ -24,7 +17,7 @@ function formatUid(uid: string) {
   return `${uid.slice(0, 6)}…${uid.slice(-4)}`;
 }
 
-function statusChipStyle(status: Order["status"]): CSSProperties {
+function statusChipStyle(status: SellerStatus): CSSProperties {
   const base: CSSProperties = {
     display: "inline-flex",
     alignItems: "center",
@@ -37,455 +30,585 @@ function statusChipStyle(status: Order["status"]): CSSProperties {
     whiteSpace: "nowrap",
   };
 
-  if (status === "Pago")
-    return { ...base, background: "rgba(46,139,87,0.14)", color: "#14532D" };
-  if (status === "Enviado")
-    return { ...base, background: "rgba(11,60,93,0.10)", color: "#0B3C5D" };
-  if (status === "Cancelado")
-    return { ...base, background: "rgba(229,57,53,0.10)", color: "#B91C1C" };
+  if (status === "Em configuração") {
+    return {
+      ...base,
+      background: "rgba(11,60,93,0.10)",
+      color: "#0B3C5D",
+    };
+  }
 
-  return { ...base, background: "rgba(100,116,139,0.10)", color: "#334155" };
+  if (status === "Em breve") {
+    return {
+      ...base,
+      background: "rgba(100,116,139,0.10)",
+      color: "#334155",
+    };
+  }
+
+  return {
+    ...base,
+    background: "rgba(245,158,11,0.12)",
+    color: "#92400E",
+  };
 }
 
 export default function SellerClient({ uid, email }: SellerClientProps) {
   const router = useRouter();
-  const [loadingLogout, setLoadingLogout] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
 
-  // 🔧 Mock de dados (trocar depois por Firestore/DB/API)
   const stats = useMemo(
     () => [
-      { label: "Pedidos hoje", value: "0" },
-      { label: "Pedidos pendentes", value: "0" },
-      { label: "Faturamento (mês)", value: "R$ 0" },
-      { label: "Produtos ativos", value: "0" },
+      { label: "Meu pesqueiro", value: "0", hint: "cadastros ativos" },
+      { label: "Produtos", value: "0", hint: "itens publicados" },
+      { label: "Pedidos", value: "0", hint: "movimentações" },
+      { label: "Plano", value: "Inativo", hint: "assinatura" },
     ],
     []
   );
 
-  const orders = useMemo<Order[]>(
+  const modules = useMemo(
     () => [
-      // Exemplo:
-      // { id: "A1B2", status: "Pago", total: "R$ 129,90", date: "26/02", customer: "Cliente X" },
+      {
+        title: "Meu pesqueiro",
+        status: "Em configuração" as SellerStatus,
+        description:
+          "Cadastre seu pesqueiro para aparecer no app, receber avaliações e ganhar divulgação.",
+        cta: "Gerenciar pesqueiro",
+        onClick: () => router.push("/seller/fishery"),
+      },
+      {
+        title: "Marketplace",
+        status: "Em breve" as SellerStatus,
+        description:
+          "Venda produtos, pacotes e outros itens para os usuários do ConnectFish.",
+        cta: "Ver módulo",
+        onClick: () => router.push("/seller/products"),
+      },
+      {
+        title: "Pedidos",
+        status: "Em breve" as SellerStatus,
+        description:
+          "Acompanhe pagamentos, entregas e movimentações da sua operação comercial.",
+        cta: "Ver pedidos",
+        onClick: () => router.push("/seller/orders"),
+      },
     ],
-    []
+    [router]
   );
 
-  async function doLogout() {
-    try {
-      setErr(null);
-      setLoadingLogout(true);
-
-      const r = await fetch("/api/sessionLogout", {
-        method: "POST",
-        credentials: "include",
-        cache: "no-store",
-      });
-
-      if (!r.ok) {
-        const data = await r.json().catch(() => ({}));
-        throw new Error(data?.error || `Falha ao sair (${r.status}).`);
-      }
-
-      router.replace("/login?next=%2Fseller");
-      router.refresh();
-    } catch (e: any) {
-      setErr(String(e?.message || "Não foi possível sair."));
-    } finally {
-      setLoadingLogout(false);
-    }
-  }
+  const quickActions = useMemo(
+    () => [
+      {
+        title: "Cadastrar pesqueiro",
+        sub: "Crie ou edite as informações do seu estabelecimento.",
+        onClick: () => router.push("/seller/fishery"),
+      },
+      {
+        title: "Plano e assinatura",
+        sub: "No futuro você vai gerenciar cobrança e destaque do seu negócio aqui.",
+        onClick: () => router.push("/seller/billing"),
+      },
+      {
+        title: "Configurações",
+        sub: "Dados da conta comercial, preferências e integrações.",
+        onClick: () => router.push("/seller/settings"),
+      },
+    ],
+    [router]
+  );
 
   return (
     <div style={styles.page}>
-      {/* TOP BAR */}
-      <header style={styles.topbar}>
-        <div style={styles.brand}>
-          <div style={styles.logo}>CF</div>
-          <div>
-            <div style={styles.brandTitle}>ConnectFish Seller</div>
-            <div style={styles.brandSub}>
-              {email ? email : "Painel do vendedor"} • UID {formatUid(uid)}
-            </div>
+      <section style={styles.hero}>
+        <div>
+          <div style={styles.eyebrow}>Área Comercial</div>
+          <div style={styles.h1}>Bem-vindo ao seu painel</div>
+          <div style={styles.heroSub}>
+            Aqui você vai gerenciar seu pesqueiro, acompanhar sua operação e,
+            no futuro, vender no marketplace do ConnectFish.
+          </div>
+
+          <div style={styles.heroMeta}>
+            <span style={styles.metaPill}>
+              {email ? email : `UID ${formatUid(uid)}`}
+            </span>
+            <span style={styles.metaPill}>Conta comercial em preparação</span>
           </div>
         </div>
 
-        <div style={styles.topbarActions}>
-          <a
-            href="/"
-            style={styles.ghostBtn}
-            onClick={(e) => {
-              e.preventDefault();
-              router.push("/");
-            }}
-          >
-            Home
-          </a>
-
-          <a
-            href="#"
-            style={styles.ghostBtn}
-            onClick={(e) => {
-              e.preventDefault();
-              // Ajuste para seu deep link do app depois (expo linking)
-              alert("Depois ligamos isso com deep link do app 🙂");
-            }}
-          >
-            Abrir no app
-          </a>
+        <div style={styles.heroCard}>
+          <div style={styles.heroCardLabel}>Próximo passo recomendado</div>
+          <div style={styles.heroCardTitle}>Cadastrar seu pesqueiro</div>
+          <div style={styles.heroCardSub}>
+            Esse é o primeiro módulo real da sua área comercial e será a base
+            para divulgação no app.
+          </div>
 
           <button
             type="button"
-            onClick={doLogout}
-            disabled={loadingLogout}
-            style={{
-              ...styles.primaryBtn,
-              ...(loadingLogout ? styles.btnDisabled : {}),
-            }}
+            style={styles.primaryBtn}
+            onClick={() => router.push("/seller/fishery")}
           >
-            {loadingLogout ? "Saindo..." : "Sair"}
+            Ir para meu pesqueiro
           </button>
         </div>
-      </header>
+      </section>
 
-      {/* CONTENT */}
-      <main style={styles.content}>
-        {/* HERO */}
-        <section style={styles.hero}>
-          <div>
-            <div style={styles.h1}>Seu painel</div>
-            <div style={styles.heroSub}>
-              Aqui você acompanha pedidos, produtos e desempenho. (vamos plugar os
-              dados reais em seguida)
-            </div>
+      <section style={styles.grid4}>
+        {stats.map((item) => (
+          <div key={item.label} style={styles.statCard}>
+            <div style={styles.statLabel}>{item.label}</div>
+            <div style={styles.statValue}>{item.value}</div>
+            <div style={styles.statHint}>{item.hint}</div>
           </div>
+        ))}
+      </section>
 
-          <div style={styles.status}>
-            <div style={styles.statusDot} />
-            Sessão ativa
-          </div>
-        </section>
-
-        {/* STATS */}
-        <section style={styles.grid4}>
-          {stats.map((s) => (
-            <div key={s.label} style={styles.statCard}>
-              <div style={styles.statLabel}>{s.label}</div>
-              <div style={styles.statValue}>{s.value}</div>
-            </div>
-          ))}
-        </section>
-
-        {/* ROW: Orders + Actions */}
-        <section style={styles.grid2}>
-          <div style={styles.panel}>
-            <div style={styles.panelHeader}>
-              <div style={styles.panelTitle}>Últimos pedidos</div>
-              <button
-                type="button"
-                style={styles.linkBtn}
-                onClick={() => alert("Depois ligamos em /seller/orders")}
-              >
-                Ver tudo
-              </button>
-            </div>
-
-            {orders.length === 0 ? (
-              <div style={styles.empty}>
-                <div style={styles.emptyTitle}>Nenhum pedido ainda</div>
-                <div style={styles.emptySub}>
-                  Quando alguém comprar, vai aparecer aqui.
-                </div>
+      <section style={styles.grid2}>
+        <div style={styles.panel}>
+          <div style={styles.panelHeader}>
+            <div>
+              <div style={styles.panelTitle}>Módulos da área comercial</div>
+              <div style={styles.panelSub}>
+                Estrutura inicial preparada para crescer com o ConnectFish.
               </div>
-            ) : (
-              <div style={styles.table}>
-                <div style={styles.tableHead}>
-                  <div style={styles.th}>Pedido</div>
-                  <div style={styles.th}>Cliente</div>
-                  <div style={styles.th}>Data</div>
-                  <div style={styles.th}>Total</div>
-                  <div style={styles.th}>Status</div>
+            </div>
+          </div>
+
+          <div style={styles.moduleList}>
+            {modules.map((item) => (
+              <div key={item.title} style={styles.moduleCard}>
+                <div style={styles.moduleTop}>
+                  <div style={styles.moduleTitle}>{item.title}</div>
+                  <span style={statusChipStyle(item.status)}>{item.status}</span>
                 </div>
 
-                {orders.map((o) => (
-                  <div key={o.id} style={styles.tr}>
-                    <div style={styles.tdStrong}>{o.id}</div>
-                    <div style={styles.td}>{o.customer}</div>
-                    <div style={styles.td}>{o.date}</div>
-                    <div style={styles.td}>{o.total}</div>
-                    <div style={styles.td}>
-                      <span style={statusChipStyle(o.status)}>{o.status}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+                <div style={styles.moduleDescription}>{item.description}</div>
 
+                <button
+                  type="button"
+                  style={styles.secondaryBtn}
+                  onClick={item.onClick}
+                >
+                  {item.cta}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={styles.sideColumn}>
           <div style={styles.panel}>
             <div style={styles.panelHeader}>
-              <div style={styles.panelTitle}>Ações rápidas</div>
+              <div>
+                <div style={styles.panelTitle}>Ações rápidas</div>
+                <div style={styles.panelSub}>
+                  Atalhos para acelerar sua configuração.
+                </div>
+              </div>
             </div>
 
             <div style={styles.actions}>
-              <button
-                type="button"
-                style={styles.actionCard}
-                onClick={() => alert("Depois ligamos em /seller/products/new")}
-              >
-                <div style={styles.actionTitle}>Adicionar produto</div>
-                <div style={styles.actionSub}>
-                  Crie um produto e disponibilize no marketplace.
-                </div>
-              </button>
-
-              <button
-                type="button"
-                style={styles.actionCard}
-                onClick={() => alert("Depois ligamos em /seller/orders")}
-              >
-                <div style={styles.actionTitle}>Ver pedidos</div>
-                <div style={styles.actionSub}>
-                  Acompanhe status, pagamentos e envios.
-                </div>
-              </button>
-
-              <button
-                type="button"
-                style={styles.actionCard}
-                onClick={() => alert("Depois ligamos em /seller/insights")}
-              >
-                <div style={styles.actionTitle}>Insights</div>
-                <div style={styles.actionSub}>
-                  Veja performance, conversão e ranking.
-                </div>
-              </button>
+              {quickActions.map((action) => (
+                <button
+                  key={action.title}
+                  type="button"
+                  style={styles.actionCard}
+                  onClick={action.onClick}
+                >
+                  <div style={styles.actionTitle}>{action.title}</div>
+                  <div style={styles.actionSub}>{action.sub}</div>
+                </button>
+              ))}
             </div>
+          </div>
 
-            <div style={styles.noteBox}>
-              <div style={styles.noteTitle}>Próximo passo</div>
-              <div style={styles.noteSub}>
-                Ligar esse painel no Firestore / API e já trazer pedidos reais,
-                produtos e faturamento.
+          <div style={styles.noteBox}>
+            <div style={styles.noteTitle}>Como vamos evoluir isso</div>
+            <div style={styles.noteSub}>
+              Primeiro estruturamos o pesqueiro. Depois entram assinatura,
+              avaliações, produtos, pedidos e integração total com o app.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section style={styles.panel}>
+        <div style={styles.panelHeader}>
+          <div>
+            <div style={styles.panelTitle}>Checklist inicial</div>
+            <div style={styles.panelSub}>
+              Ordem recomendada para ativar sua operação.
+            </div>
+          </div>
+        </div>
+
+        <div style={styles.checkList}>
+          <div style={styles.checkItem}>
+            <div style={styles.checkDot} />
+            <div>
+              <div style={styles.checkTitle}>Cadastrar o pesqueiro</div>
+              <div style={styles.checkSub}>
+                Nome, descrição, cidade, peixes, horário e contatos.
               </div>
             </div>
           </div>
-        </section>
 
-        {err && <div style={styles.err}>{err}</div>}
-      </main>
+          <div style={styles.checkItem}>
+            <div style={styles.checkDotMuted} />
+            <div>
+              <div style={styles.checkTitle}>Adicionar localização</div>
+              <div style={styles.checkSub}>
+                Garantir que ele possa aparecer corretamente no Explore.
+              </div>
+            </div>
+          </div>
+
+          <div style={styles.checkItem}>
+            <div style={styles.checkDotMuted} />
+            <div>
+              <div style={styles.checkTitle}>Ativar plano</div>
+              <div style={styles.checkSub}>
+                Etapa futura para manter o estabelecimento divulgado.
+              </div>
+            </div>
+          </div>
+
+          <div style={styles.checkItem}>
+            <div style={styles.checkDotMuted} />
+            <div>
+              <div style={styles.checkTitle}>Abrir marketplace</div>
+              <div style={styles.checkSub}>
+                Venda de produtos e outros serviços dentro da plataforma.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
 
 const styles: Record<string, CSSProperties> = {
   page: {
-    minHeight: "100vh",
-    background: "linear-gradient(120deg, #0B3C5D 0%, #2E8B57 70%)",
-    fontFamily: "system-ui",
-    color: "#0F172A",
-  },
-  topbar: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 16,
-    padding: "16px 18px",
-    borderBottom: "1px solid rgba(255,255,255,0.16)",
-    background: "rgba(0,0,0,0.10)",
-  },
-  brand: { display: "flex", gap: 12, alignItems: "center" },
-  logo: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    background: "#0F172A",
-    color: "#fff",
     display: "grid",
-    placeItems: "center",
-    fontWeight: 900,
-    letterSpacing: 1,
-    userSelect: "none",
-  },
-  brandTitle: { fontSize: 14, fontWeight: 900, color: "#fff" },
-  brandSub: { fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.78)" },
-
-  topbarActions: { display: "flex", gap: 10, alignItems: "center" },
-  ghostBtn: {
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.20)",
-    background: "rgba(255,255,255,0.10)",
-    color: "#fff",
-    fontWeight: 900,
-    cursor: "pointer",
-    textDecoration: "none",
-    fontSize: 12,
-  },
-  primaryBtn: {
-    padding: "10px 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(15,23,42,0.14)",
-    background: "#0F172A",
-    color: "#fff",
-    fontWeight: 900,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-    fontSize: 12,
-  },
-  btnDisabled: { opacity: 0.6, cursor: "not-allowed" },
-
-  content: {
-    width: "min(1100px, 100%)",
-    margin: "0 auto",
-    padding: 18,
+    gap: 16,
   },
 
   hero: {
-    display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    gap: 12,
-    padding: 18,
-    background: "rgba(255,255,255,0.92)",
-    border: "1px solid rgba(15,23,42,0.10)",
-    borderRadius: 18,
-    boxShadow: "0 12px 30px rgba(0,0,0,0.10)",
+    display: "grid",
+    gridTemplateColumns: "1.3fr 0.7fr",
+    gap: 14,
+    alignItems: "stretch",
   },
-  h1: { fontSize: 22, fontWeight: 1000, letterSpacing: -0.2 },
-  heroSub: { marginTop: 6, fontSize: 13, fontWeight: 700, color: "#334155" },
 
-  status: {
+  eyebrow: {
+    fontSize: 11,
+    fontWeight: 1000,
+    color: "#0B3C5D",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+
+  h1: {
+    marginTop: 6,
+    fontSize: 28,
+    fontWeight: 1000,
+    letterSpacing: -0.3,
+    color: "#0F172A",
+  },
+
+  heroSub: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 1.55,
+    fontWeight: 700,
+    color: "#475569",
+    maxWidth: 760,
+  },
+
+  heroMeta: {
+    marginTop: 14,
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+
+  metaPill: {
     display: "inline-flex",
     alignItems: "center",
-    gap: 8,
     padding: "8px 12px",
     borderRadius: 999,
-    background: "rgba(46,139,87,0.14)",
-    border: "1px solid rgba(46,139,87,0.30)",
-    color: "#14532D",
-    fontWeight: 900,
+    background: "#FFFFFF",
+    border: "1px solid rgba(15,23,42,0.08)",
+    color: "#334155",
     fontSize: 12,
-    whiteSpace: "nowrap",
+    fontWeight: 900,
+    boxShadow: "0 6px 16px rgba(15,23,42,0.04)",
   },
-  statusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 999,
-    background: "#2E8B57",
-    boxShadow: "0 0 0 4px rgba(46,139,87,0.18)",
+
+  heroCard: {
+    background: "linear-gradient(135deg, #0B3C5D 0%, #2E8B57 100%)",
+    borderRadius: 20,
+    padding: 18,
+    color: "#FFFFFF",
+    border: "1px solid rgba(255,255,255,0.10)",
+    boxShadow: "0 14px 30px rgba(11,60,93,0.18)",
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "space-between",
+    gap: 12,
+    minHeight: 190,
+  },
+
+  heroCardLabel: {
+    fontSize: 11,
+    fontWeight: 1000,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    color: "rgba(255,255,255,0.72)",
+  },
+
+  heroCardTitle: {
+    fontSize: 20,
+    fontWeight: 1000,
+    lineHeight: 1.2,
+  },
+
+  heroCardSub: {
+    fontSize: 13,
+    lineHeight: 1.5,
+    fontWeight: 700,
+    color: "rgba(255,255,255,0.84)",
   },
 
   grid4: {
-    marginTop: 12,
     display: "grid",
     gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
     gap: 12,
   },
+
   statCard: {
-    background: "rgba(255,255,255,0.92)",
-    border: "1px solid rgba(15,23,42,0.10)",
+    background: "#FFFFFF",
+    border: "1px solid rgba(15,23,42,0.08)",
     borderRadius: 18,
-    padding: 14,
-    boxShadow: "0 10px 24px rgba(0,0,0,0.08)",
+    padding: 16,
+    boxShadow: "0 10px 24px rgba(15,23,42,0.05)",
   },
-  statLabel: { fontSize: 12, fontWeight: 900, color: "#334155" },
-  statValue: { marginTop: 8, fontSize: 22, fontWeight: 1000 },
+
+  statLabel: {
+    fontSize: 12,
+    fontWeight: 900,
+    color: "#475569",
+  },
+
+  statValue: {
+    marginTop: 8,
+    fontSize: 24,
+    fontWeight: 1000,
+    color: "#0F172A",
+  },
+
+  statHint: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#64748B",
+  },
 
   grid2: {
-    marginTop: 12,
     display: "grid",
-    gridTemplateColumns: "1.2fr 0.8fr",
+    gridTemplateColumns: "1.15fr 0.85fr",
+    gap: 12,
+    alignItems: "start",
+  },
+
+  sideColumn: {
+    display: "grid",
     gap: 12,
   },
+
   panel: {
-    background: "rgba(255,255,255,0.92)",
-    border: "1px solid rgba(15,23,42,0.10)",
+    background: "#FFFFFF",
+    border: "1px solid rgba(15,23,42,0.08)",
     borderRadius: 18,
-    padding: 14,
-    boxShadow: "0 10px 24px rgba(0,0,0,0.08)",
+    padding: 16,
+    boxShadow: "0 10px 24px rgba(15,23,42,0.05)",
   },
+
   panelHeader: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 12,
+  },
+
+  panelTitle: {
+    fontSize: 15,
+    fontWeight: 1000,
+    color: "#0F172A",
+  },
+
+  panelSub: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#64748B",
+  },
+
+  moduleList: {
+    display: "grid",
+    gap: 12,
+  },
+
+  moduleCard: {
+    border: "1px solid rgba(15,23,42,0.08)",
+    borderRadius: 16,
+    padding: 14,
+    background: "rgba(248,250,252,0.95)",
+  },
+
+  moduleTop: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
-    marginBottom: 10,
   },
-  panelTitle: { fontSize: 14, fontWeight: 1000 },
-  linkBtn: {
-    background: "transparent",
-    border: "none",
-    padding: 0,
-    cursor: "pointer",
-    fontSize: 12,
+
+  moduleTitle: {
+    fontSize: 14,
     fontWeight: 1000,
-    color: "#0B3C5D",
-    textDecoration: "underline",
+    color: "#0F172A",
   },
 
-  empty: {
-    padding: 14,
-    borderRadius: 14,
-    border: "1px dashed rgba(15,23,42,0.18)",
-    background: "rgba(100,116,139,0.06)",
+  moduleDescription: {
+    marginTop: 10,
+    fontSize: 13,
+    lineHeight: 1.55,
+    fontWeight: 700,
+    color: "#475569",
   },
-  emptyTitle: { fontSize: 13, fontWeight: 1000 },
-  emptySub: { marginTop: 6, fontSize: 12, fontWeight: 800, color: "#334155" },
 
-  table: { display: "grid", gap: 8 },
-  tableHead: {
+  actions: {
     display: "grid",
-    gridTemplateColumns: "0.7fr 1.2fr 0.7fr 0.8fr 0.8fr",
     gap: 10,
-    padding: "8px 10px",
-    borderRadius: 12,
-    background: "rgba(15,23,42,0.04)",
-    border: "1px solid rgba(15,23,42,0.08)",
   },
-  th: { fontSize: 12, fontWeight: 1000, color: "#334155" },
-  tr: {
-    display: "grid",
-    gridTemplateColumns: "0.7fr 1.2fr 0.7fr 0.8fr 0.8fr",
-    gap: 10,
-    padding: "10px 10px",
-    borderRadius: 12,
-    border: "1px solid rgba(15,23,42,0.08)",
-    background: "#fff",
-  },
-  td: { fontSize: 12, fontWeight: 800, color: "#0F172A" },
-  tdStrong: { fontSize: 12, fontWeight: 1000, color: "#0F172A" },
 
-  actions: { display: "grid", gap: 10 },
   actionCard: {
     textAlign: "left",
-    padding: 12,
+    padding: 14,
     borderRadius: 14,
-    border: "1px solid rgba(15,23,42,0.10)",
-    background: "#fff",
+    border: "1px solid rgba(15,23,42,0.08)",
+    background: "#FFFFFF",
     cursor: "pointer",
   },
-  actionTitle: { fontSize: 13, fontWeight: 1000 },
-  actionSub: { marginTop: 6, fontSize: 12, fontWeight: 800, color: "#334155" },
+
+  actionTitle: {
+    fontSize: 13,
+    fontWeight: 1000,
+    color: "#0F172A",
+  },
+
+  actionSub: {
+    marginTop: 6,
+    fontSize: 12,
+    lineHeight: 1.5,
+    fontWeight: 700,
+    color: "#475569",
+  },
 
   noteBox: {
-    marginTop: 12,
+    padding: 14,
+    borderRadius: 16,
+    background: "rgba(46,139,87,0.10)",
+    border: "1px solid rgba(46,139,87,0.18)",
+  },
+
+  noteTitle: {
+    fontSize: 12,
+    fontWeight: 1000,
+    color: "#14532D",
+  },
+
+  noteSub: {
+    marginTop: 6,
+    fontSize: 12,
+    lineHeight: 1.5,
+    fontWeight: 800,
+    color: "#14532D",
+  },
+
+  checkList: {
+    display: "grid",
+    gap: 12,
+  },
+
+  checkItem: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 12,
     padding: 12,
     borderRadius: 14,
-    background: "rgba(46,139,87,0.10)",
-    border: "1px solid rgba(46,139,87,0.20)",
+    border: "1px solid rgba(15,23,42,0.08)",
+    background: "rgba(248,250,252,0.95)",
   },
-  noteTitle: { fontSize: 12, fontWeight: 1000, color: "#14532D" },
-  noteSub: { marginTop: 6, fontSize: 12, fontWeight: 800, color: "#14532D" },
 
-  err: {
-    marginTop: 12,
-    background: "rgba(229,57,53,0.10)",
-    border: "1px solid rgba(229,57,53,0.25)",
-    color: "#B91C1C",
-    padding: 10,
-    borderRadius: 14,
-    fontWeight: 900,
+  checkDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    background: "#2E8B57",
+    marginTop: 4,
+    flexShrink: 0,
+    boxShadow: "0 0 0 4px rgba(46,139,87,0.14)",
+  },
+
+  checkDotMuted: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    background: "#CBD5E1",
+    marginTop: 4,
+    flexShrink: 0,
+  },
+
+  checkTitle: {
+    fontSize: 13,
+    fontWeight: 1000,
+    color: "#0F172A",
+  },
+
+  checkSub: {
+    marginTop: 5,
     fontSize: 12,
+    lineHeight: 1.5,
+    fontWeight: 700,
+    color: "#475569",
+  },
+
+  primaryBtn: {
+    height: 44,
+    padding: "0 16px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.16)",
+    background: "#FFFFFF",
+    color: "#0F172A",
+    fontSize: 13,
+    fontWeight: 1000,
+    cursor: "pointer",
+  },
+
+  secondaryBtn: {
+    marginTop: 12,
+    height: 40,
+    padding: "0 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(15,23,42,0.10)",
+    background: "#FFFFFF",
+    color: "#0F172A",
+    fontSize: 12,
+    fontWeight: 1000,
+    cursor: "pointer",
   },
 };

@@ -1,4 +1,3 @@
-// 📂 src/lib/firebase.ts
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import {
   getAuth,
@@ -7,6 +6,7 @@ import {
   type Auth,
 } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
+import { getStorage, type FirebaseStorage } from "firebase/storage";
 
 // 🔒 Garantir que este módulo só execute no browser
 const isBrowser = typeof window !== "undefined";
@@ -37,6 +37,7 @@ const g = globalThis as unknown as {
   __cf_app__?: FirebaseApp;
   __cf_auth__?: Auth;
   __cf_db__?: Firestore;
+  __cf_storage__?: FirebaseStorage;
   __cf_persist__?: boolean;
 };
 
@@ -46,6 +47,8 @@ export const app: FirebaseApp =
 
 export const auth: Auth = g.__cf_auth__ ?? (g.__cf_auth__ = getAuth(app));
 export const db: Firestore = g.__cf_db__ ?? (g.__cf_db__ = getFirestore(app));
+export const storage: FirebaseStorage =
+  g.__cf_storage__ ?? (g.__cf_storage__ = getStorage(app));
 
 // ✅ persistence: apenas no browser
 if (isBrowser && !g.__cf_persist__) {
