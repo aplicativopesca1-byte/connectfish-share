@@ -1,18 +1,8 @@
 // app/api/mercadopago/webhook/route.ts
 
 import { NextResponse } from "next/server";
-import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-  getDocs,
-} from "firebase/firestore";
-import { db } from "../../../../src/lib/firebase";
+import { FieldValue } from "firebase-admin/firestore";
+import { adminDb } from "../../../../src/lib/firebaseAdmin";
 
 type MercadoPagoPaymentResponse = {
   id?: number | string;
@@ -66,13 +56,13 @@ function normalizeMoney(value: unknown) {
 }
 
 async function findRegistrationByExternalReference(externalReference: string) {
-  const registrationsRef = collection(db, "tournamentRegistrations");
-  const registrationsQuery = query(
-    registrationsRef,
-    where("externalReference", "==", externalReference)
-  );
+  const db = adminDb();
 
-  const snapshot = await getDocs(registrationsQuery);
+  const snapshot = await db
+    .collection("tournamentRegistrations")
+    .where("externalReference", "==", externalReference)
+    .limit(1)
+    .get();
 
   if (snapshot.empty) return null;
 
@@ -85,36 +75,36 @@ async function ensureTeamFromApprovedRegistration(params: {
   paymentId: string | number;
 }) {
   const { registrationId, tournamentId, paymentId } = params;
+  const db = adminDb();
 
-  const registrationRef = doc(db, "tournamentRegistrations", registrationId);
-  const registrationSnap = await getDoc(registrationRef);
+  const registrationRef = db.collection("tournamentRegistrations").doc(registrationId);
+  const registrationSnap = await registrationRef.get();
 
-  if (!registrationSnap.exists()) return;
+  if (!registrationSnap.exists) return;
 
   const registration = registrationSnap.data() as Record<string, unknown>;
 
-  const existingTeamsQuery = query(
-    collection(db, "tournamentTeams"),
-    where("registrationId", "==", registrationId)
-  );
-
-  const existingTeamsSnap = await getDocs(existingTeamsQuery);
+  const existingTeamsSnap = await db
+    .collection("tournamentTeams")
+    .where("registrationId", "==", registrationId)
+    .limit(1)
+    .get();
 
   if (!existingTeamsSnap.empty) {
     const existingTeamDoc = existingTeamsSnap.docs[0];
 
-    await updateDoc(doc(db, "tournamentTeams", existingTeamDoc.id), {
+    await db.collection("tournamentTeams").doc(existingTeamDoc.id).update({
       registrationStatus: "confirmed",
       paymentStatus: "approved",
       paymentProvider: "mercado_pago",
       paymentId: String(paymentId),
-      updatedAt: serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
 
     return;
   }
 
-  await addDoc(collection(db, "tournamentTeams"), {
+  await db.collection("tournamentTeams").add({
     tournamentId,
     registrationId,
 
@@ -133,8 +123,8 @@ async function ensureTeamFromApprovedRegistration(params: {
     paymentProvider: "mercado_pago",
     paymentId: String(paymentId),
 
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
     source: String(registration.source ?? "public_registration_web"),
   });
 }
@@ -145,6 +135,8 @@ async function processPaymentWebhook(paymentId: string) {
   if (!accessToken) {
     throw new Error("MERCADO_PAGO_ACCESS_TOKEN não configurado.");
   }
+
+  const db = adminDb();
 
   const paymentResponse = await fetch(
     `https://api.mercadopago.com/v1/payments/${paymentId}`,
@@ -159,7 +151,9 @@ async function processPaymentWebhook(paymentId: string) {
   );
 
   const paymentData =
-    (await paymentResponse.json().catch(() => null)) as MercadoPagoPaymentResponse | null;
+    (await paymentResponse.json().catch(() => null)) as
+      | MercadoPagoPaymentResponse
+      | null;
 
   if (!paymentResponse.ok || !paymentData?.id) {
     console.error("Falha ao consultar pagamento no Mercado Pago:", {
@@ -188,25 +182,32 @@ async function processPaymentWebhook(paymentId: string) {
     : null;
 
   let registrationDocRef = registrationId
-    ? doc(db, "tournamentRegistrations", registrationId)
+    ? db.collection("tournamentRegistrations").doc(registrationId)
     : null;
 
   let registrationSnap =
-    registrationDocRef !== null ? await getDoc(registrationDocRef) : null;
+    registrationDocRef !== null ? await registrationDocRef.get() : null;
 
-  if ((!registrationSnap || !registrationSnap.exists()) && externalReference) {
+  if ((!registrationSnap || !registrationSnap.exists) && externalReference) {
     const foundByExternalReference = await findRegistrationByExternalReference(
       externalReference
     );
 
     if (foundByExternalReference) {
       registrationId = foundByExternalReference.id;
-      registrationDocRef = doc(db, "tournamentRegistrations", registrationId);
-      registrationSnap = await getDoc(registrationDocRef);
+      registrationDocRef = db
+        .collection("tournamentRegistrations")
+        .doc(registrationId);
+      registrationSnap = await registrationDocRef.get();
     }
   }
 
-  if (!registrationDocRef || !registrationSnap || !registrationSnap.exists()) {
+  if (
+    !registrationDocRef ||
+    !registrationSnap ||
+    !registrationSnap.exists ||
+    !registrationId
+  ) {
     console.error("Registro de inscrição não encontrado para o pagamento:", {
       paymentId,
       externalReference,
@@ -230,39 +231,28 @@ async function processPaymentWebhook(paymentId: string) {
     paymentCurrency: currency,
     payerEmail,
     approvedAt: approvedAt ?? null,
-    updatedAt: serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
   };
 
   if (paymentStatus === "approved") {
-    await updateDoc(registrationDocRef, {
+    await registrationDocRef.update({
       ...baseUpdate,
       registrationStatus: "confirmed",
     });
 
-   const safeRegistrationId = registrationId;
-
-if (paymentStatus === "approved") {
-  await updateDoc(registrationDocRef, {
-    ...baseUpdate,
-    registrationStatus: "confirmed",
-  });
-
-  if (safeTournamentId && safeRegistrationId) {
-    await ensureTeamFromApprovedRegistration({
-      registrationId: safeRegistrationId,
-      tournamentId: safeTournamentId,
-      paymentId: paymentData.id,
-    });
-  }
-
-  return;
-}
+    if (safeTournamentId) {
+      await ensureTeamFromApprovedRegistration({
+        registrationId,
+        tournamentId: safeTournamentId,
+        paymentId: paymentData.id,
+      });
+    }
 
     return;
   }
 
   if (paymentStatus === "pending" || paymentStatus === "in_process") {
-    await updateDoc(registrationDocRef, {
+    await registrationDocRef.update({
       ...baseUpdate,
       registrationStatus: "awaiting_payment",
     });
@@ -275,14 +265,14 @@ if (paymentStatus === "approved") {
     paymentStatus === "refunded" ||
     paymentStatus === "charged_back"
   ) {
-    await updateDoc(registrationDocRef, {
+    await registrationDocRef.update({
       ...baseUpdate,
       registrationStatus: "payment_failed",
     });
     return;
   }
 
-  await updateDoc(registrationDocRef, {
+  await registrationDocRef.update({
     ...baseUpdate,
     registrationStatus: "awaiting_payment",
   });
@@ -297,10 +287,7 @@ function extractPaymentIdFromUrl(request: Request) {
   const dataId = url.searchParams.get("data.id");
   const paymentId = url.searchParams.get("id");
 
-  const isPaymentTopic =
-    topic === "payment" ||
-    topic === "merchant_order" ||
-    type === "payment";
+  const isPaymentTopic = topic === "payment" || type === "payment";
 
   if (!isPaymentTopic) {
     return null;
@@ -327,7 +314,11 @@ export async function GET(request: Request) {
     console.error("Erro no webhook GET Mercado Pago:", error);
 
     return NextResponse.json(
-      { ok: false, message: "Erro ao processar webhook." },
+      {
+        ok: false,
+        message: "Erro ao processar webhook.",
+        error: error instanceof Error ? error.message : "Erro desconhecido",
+      },
       { status: 500 }
     );
   }
@@ -369,7 +360,11 @@ export async function POST(request: Request) {
     console.error("Erro no webhook POST Mercado Pago:", error);
 
     return NextResponse.json(
-      { ok: false, message: "Erro ao processar webhook." },
+      {
+        ok: false,
+        message: "Erro ao processar webhook.",
+        error: error instanceof Error ? error.message : "Erro desconhecido",
+      },
       { status: 500 }
     );
   }

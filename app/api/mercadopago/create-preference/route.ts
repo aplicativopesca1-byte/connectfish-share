@@ -1,15 +1,8 @@
 // app/api/mercadopago/create-preference/route.ts
 
 import { NextResponse } from "next/server";
-import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  serverTimestamp,
-  updateDoc,
-} from "firebase/firestore";
-import { db } from "../../../../src/lib/firebase";
+import { FieldValue } from "firebase-admin/firestore";
+import { adminDb } from "../../../../src/lib/firebaseAdmin";
 
 type MemberInput = {
   userId?: string | null;
@@ -186,10 +179,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const tournamentRef = doc(db, "tournaments", tournamentId);
-    const tournamentSnap = await getDoc(tournamentRef);
+    const db = adminDb();
 
-    if (!tournamentSnap.exists()) {
+    const tournamentRef = db.collection("tournaments").doc(tournamentId);
+    const tournamentSnap = await tournamentRef.get();
+
+    if (!tournamentSnap.exists) {
       return NextResponse.json(
         { success: false, message: "Torneio não encontrado." },
         { status: 404 }
@@ -224,38 +219,34 @@ export async function POST(request: Request) {
       );
     }
 
-    const registrationRef = await addDoc(
-      collection(db, "tournamentRegistrations"),
-      {
-        tournamentId,
-        tournamentSlug,
-        tournamentTitle,
-        teamName,
-        captainName,
-        captainEmail,
-        captainPhone,
-        members,
-        source,
+    const registrationRef = await db.collection("tournamentRegistrations").add({
+      tournamentId,
+      tournamentSlug,
+      tournamentTitle,
+      teamName,
+      captainName,
+      captainEmail,
+      captainPhone,
+      members,
+      source,
 
-        registrationStatus: "awaiting_payment",
-        paymentProvider: "mercado_pago",
-        paymentStatus: "pending",
+      registrationStatus: "awaiting_payment",
+      paymentProvider: "mercado_pago",
+      paymentStatus: "pending",
 
-        paymentId: null,
-        merchantOrderId: null,
-        preferenceId: null,
-        externalReference: null,
+      paymentId: null,
+      merchantOrderId: null,
+      preferenceId: null,
+      externalReference: null,
 
-        amount: entryFee,
-        currency,
+      amount: entryFee,
+      currency,
 
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      }
-    );
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
 
     const externalReference = `tournament:${tournamentId}:registration:${registrationRef.id}`;
-
     const tournamentPublicPath = tournamentSlug ?? tournamentId;
 
     const successUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/success?registrationId=${registrationRef.id}`;
@@ -324,10 +315,10 @@ export async function POST(request: Request) {
         body: mpData,
       });
 
-      await updateDoc(doc(db, "tournamentRegistrations", registrationRef.id), {
+      await db.collection("tournamentRegistrations").doc(registrationRef.id).update({
         registrationStatus: "payment_error",
         paymentStatus: "error",
-        updatedAt: serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
 
       return NextResponse.json(
@@ -339,10 +330,10 @@ export async function POST(request: Request) {
       );
     }
 
-    await updateDoc(doc(db, "tournamentRegistrations", registrationRef.id), {
+    await db.collection("tournamentRegistrations").doc(registrationRef.id).update({
       preferenceId: mpData.id,
       externalReference,
-      updatedAt: serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
 
     return NextResponse.json({
@@ -359,6 +350,7 @@ export async function POST(request: Request) {
       {
         success: false,
         message: "Erro interno ao iniciar pagamento.",
+        error: error instanceof Error ? error.message : "Erro desconhecido",
       },
       { status: 500 }
     );
