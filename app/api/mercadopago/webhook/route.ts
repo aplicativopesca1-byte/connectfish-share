@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "../../../../src/lib/firebaseAdmin";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type MercadoPagoPaymentResponse = {
   id?: number | string;
@@ -38,12 +41,20 @@ type RegistrationData = {
   source?: string;
 };
 
+type WebhookBody = {
+  action?: string;
+  type?: string;
+  data?: {
+    id?: string | number;
+  } | null;
+};
+
 function compactSpaces(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function parseExternalReference(value: unknown): ParsedReference {
-  const raw = String(value ?? "").trim();
+  const raw = compactSpaces(value);
 
   if (!raw) {
     return {
@@ -62,7 +73,7 @@ function parseExternalReference(value: unknown): ParsedReference {
 }
 
 function normalizeStatus(value: unknown) {
-  return String(value ?? "").trim().toLowerCase();
+  return compactSpaces(value).toLowerCase();
 }
 
 function normalizeMoney(value: unknown) {
@@ -464,7 +475,6 @@ function extractPaymentIdFromUrl(request: Request) {
 
   const topic = url.searchParams.get("topic");
   const type = url.searchParams.get("type");
-
   const dataId = url.searchParams.get("data.id");
   const paymentId = url.searchParams.get("id");
 
@@ -512,20 +522,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json().catch(() => null)) as
-      | Record<string, unknown>
-      | null;
+    const body = (await request.json().catch(() => null)) as WebhookBody | null;
 
-    const action = String(body?.action ?? "").trim().toLowerCase();
-    const type = String(body?.type ?? "").trim().toLowerCase();
-
-    const paymentId =
-      body?.data &&
-      typeof body.data === "object" &&
-      body.data !== null &&
-      "id" in body.data
-        ? String((body.data as { id?: string | number }).id ?? "").trim()
-        : "";
+    const action = compactSpaces(body?.action).toLowerCase();
+    const type = compactSpaces(body?.type).toLowerCase();
+    const paymentId = compactSpaces(body?.data?.id);
 
     const isPaymentEvent =
       type === "payment" ||
