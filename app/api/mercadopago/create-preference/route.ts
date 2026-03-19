@@ -1,7 +1,5 @@
-// app/api/mercadopago/create-preference/route.ts
-
 import { NextResponse } from "next/server";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "../../../../src/lib/firebaseAdmin";
 
 type MemberInput = {
@@ -31,6 +29,24 @@ type MercadoPagoPreferenceResponse = {
   sandbox_init_point?: string;
 };
 
+type RegistrationDoc = {
+  tournamentId?: string;
+  tournamentSlug?: string | null;
+  teamName?: string;
+  captainName?: string;
+  captainEmail?: string;
+  captainPhone?: string | null;
+  members?: NormalizedMember[];
+  registrationStatus?: string;
+  paymentStatus?: string;
+  externalReference?: string | null;
+  preferenceId?: string | null;
+  amount?: number;
+  currency?: string;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+};
+
 function getBaseUrl() {
   const envBaseUrl =
     process.env.APP_URL ||
@@ -45,10 +61,22 @@ function getBaseUrl() {
   return null;
 }
 
+function compactSpaces(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function normalizePhone(value: unknown) {
+  const digits = String(value ?? "").replace(/\D+/g, "");
+  return digits || null;
+}
+
 function normalizeMembers(value: unknown): NormalizedMember[] {
   if (!Array.isArray(value)) return [];
 
-  return value.reduce<NormalizedMember[]>((acc, item) => {
+  const seen = new Set<string>();
+  const result: NormalizedMember[] = [];
+
+  for (const item of value) {
     const raw = (item ?? {}) as MemberInput;
 
     const userId =
@@ -56,20 +84,20 @@ function normalizeMembers(value: unknown): NormalizedMember[] {
         ? raw.userId.trim()
         : null;
 
-    const name =
-      typeof raw.name === "string" && raw.name.trim()
-        ? raw.name.trim()
-        : null;
+    const name = compactSpaces(raw.name);
+    if (!name) continue;
 
-    if (!name) return acc;
+    const dedupeKey = name.toLocaleLowerCase("pt-BR");
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
 
-    acc.push({
+    result.push({
       userId,
       name,
     });
+  }
 
-    return acc;
-  }, []);
+  return result;
 }
 
 function normalizeMoney(value: unknown, fallback = 0) {
@@ -103,6 +131,79 @@ function isTournamentAcceptingRegistrations(status: string) {
   return status === "scheduled" || status === "live";
 }
 
+function buildExternalReference(params: {
+  tournamentId: string;
+  registrationId: string;
+}) {
+  return `tournament:${params.tournamentId}:registration:${params.registrationId}`;
+}
+
+function isPendingLikeStatus(value: unknown) {
+  const status = String(value ?? "").trim().toLowerCase();
+  return (
+    status === "pending" ||
+    status === "in_process" ||
+    status === "awaiting_payment"
+  );
+}
+
+function isConfirmedStatus(value: unknown) {
+  const status = String(value ?? "").trim().toLowerCase();
+  return status === "approved" || status === "confirmed";
+}
+
+function areMembersEquivalent(
+  a: NormalizedMember[] | undefined,
+  b: NormalizedMember[]
+) {
+  const left = Array.isArray(a) ? a : [];
+  if (left.length !== b.length) return false;
+
+  const normalize = (items: NormalizedMember[]) =>
+    items
+      .map((item) => ({
+        userId: item.userId ?? null,
+        name: compactSpaces(item.name).toLocaleLowerCase("pt-BR"),
+      }))
+      .sort((x, y) => x.name.localeCompare(y.name, "pt-BR"));
+
+  const leftNorm = normalize(left);
+  const rightNorm = normalize(b);
+
+  return JSON.stringify(leftNorm) === JSON.stringify(rightNorm);
+}
+
+async function findExistingRegistration(params: {
+  tournamentId: string;
+  captainEmail: string;
+  teamName: string;
+  members: NormalizedMember[];
+}) {
+  const db = adminDb();
+
+  const snapshot = await db
+    .collection("tournamentRegistrations")
+    .where("tournamentId", "==", params.tournamentId)
+    .where("captainEmail", "==", params.captainEmail)
+    .where("teamName", "==", params.teamName)
+    .orderBy("createdAt", "desc")
+    .limit(10)
+    .get();
+
+  if (snapshot.empty) return null;
+
+  for (const doc of snapshot.docs) {
+    const data = doc.data() as RegistrationDoc;
+
+    const sameMembers = areMembersEquivalent(data.members, params.members);
+    if (!sameMembers) continue;
+
+    return doc;
+  }
+
+  return null;
+}
+
 export async function POST(request: Request) {
   try {
     const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
@@ -133,13 +234,12 @@ export async function POST(request: Request) {
 
     const body = (await request.json()) as RequestBody;
 
-    const tournamentId = String(body.tournamentId ?? "").trim();
-    const tournamentSlug = String(body.tournamentSlug ?? "").trim() || null;
-    const teamName = String(body.teamName ?? "").trim();
-    const captainName = String(body.captainName ?? "").trim();
-    const captainEmail = String(body.captainEmail ?? "").trim().toLowerCase();
-    const captainPhone = String(body.captainPhone ?? "").trim() || null;
-    const source = String(body.source ?? "public_registration_web").trim();
+    const tournamentId = compactSpaces(body.tournamentId);
+    const teamName = compactSpaces(body.teamName);
+    const captainName = compactSpaces(body.captainName);
+    const captainEmail = compactSpaces(body.captainEmail).toLowerCase();
+    const captainPhone = normalizePhone(body.captainPhone);
+    const source = compactSpaces(body.source || "public_registration_web");
 
     const members = normalizeMembers(body.members);
 
@@ -150,16 +250,22 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!teamName) {
+    if (!teamName || teamName.length < 3) {
       return NextResponse.json(
-        { success: false, message: "Nome da equipe é obrigatório." },
+        {
+          success: false,
+          message: "Informe um nome de equipe válido com pelo menos 3 caracteres.",
+        },
         { status: 400 }
       );
     }
 
-    if (!captainName) {
+    if (!captainName || captainName.length < 3) {
       return NextResponse.json(
-        { success: false, message: "Nome do capitão é obrigatório." },
+        {
+          success: false,
+          message: "Informe o nome do capitão com pelo menos 3 caracteres.",
+        },
         { status: 400 }
       );
     }
@@ -175,6 +281,21 @@ export async function POST(request: Request) {
     if (!emailRegex.test(captainEmail)) {
       return NextResponse.json(
         { success: false, message: "Informe um e-mail válido." },
+        { status: 400 }
+      );
+    }
+
+    const captainNameKey = captainName.toLocaleLowerCase("pt-BR");
+    const duplicateCaptainMember = members.some(
+      (member) => member.name.toLocaleLowerCase("pt-BR") === captainNameKey
+    );
+
+    if (duplicateCaptainMember) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "O capitão não pode estar repetido na lista de membros.",
+        },
         { status: 400 }
       );
     }
@@ -204,7 +325,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const tournamentTitle = String(tournamentRaw.title ?? "Torneio");
+    const tournamentTitle = compactSpaces(tournamentRaw.title || "Torneio");
+    const tournamentSlug = compactSpaces(tournamentRaw.slug) || null;
     const entryFee = getTournamentEntryFee(tournamentRaw);
     const currency = getTournamentCurrency(tournamentRaw);
 
@@ -219,10 +341,66 @@ export async function POST(request: Request) {
       );
     }
 
-    const registrationRef = await db.collection("tournamentRegistrations").add({
+    const existingRegistrationDoc = await findExistingRegistration({
+      tournamentId,
+      captainEmail,
+      teamName,
+      members,
+    });
+
+    if (existingRegistrationDoc) {
+      const existing = existingRegistrationDoc.data() as RegistrationDoc;
+      const existingPaymentStatus = String(existing.paymentStatus ?? "")
+        .trim()
+        .toLowerCase();
+      const existingRegistrationStatus = String(existing.registrationStatus ?? "")
+        .trim()
+        .toLowerCase();
+
+      if (
+        isConfirmedStatus(existingPaymentStatus) ||
+        isConfirmedStatus(existingRegistrationStatus)
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            message:
+              "Já existe uma inscrição confirmada para esta equipe neste torneio.",
+          },
+          { status: 409 }
+        );
+      }
+
+      if (
+        isPendingLikeStatus(existingPaymentStatus) ||
+        isPendingLikeStatus(existingRegistrationStatus)
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            message:
+              "Já existe uma inscrição pendente para esta equipe. Finalize o pagamento existente ou aguarde a atualização do sistema.",
+            registrationId: existingRegistrationDoc.id,
+            externalReference: existing.externalReference ?? null,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    const registrationRef = db.collection("tournamentRegistrations").doc();
+
+    const externalReference = buildExternalReference({
+      tournamentId,
+      registrationId: registrationRef.id,
+    });
+
+    await registrationRef.set({
       tournamentId,
       tournamentSlug,
       tournamentTitle,
+      tournamentStatusSnapshot: tournamentStatus,
+
       teamName,
       captainName,
       captainEmail,
@@ -233,20 +411,32 @@ export async function POST(request: Request) {
       registrationStatus: "awaiting_payment",
       paymentProvider: "mercado_pago",
       paymentStatus: "pending",
+      paymentStatusDetail: null,
 
       paymentId: null,
       merchantOrderId: null,
       preferenceId: null,
-      externalReference: null,
+      externalReference,
 
       amount: entryFee,
       currency,
+      tournamentEntryFeeSnapshot: entryFee,
+      tournamentCurrencySnapshot: currency,
+
+      amountPaid: null,
+      paymentCurrency: null,
+      payerEmail: captainEmail,
+
+      paymentStartedAt: FieldValue.serverTimestamp(),
+      preferenceCreatedAt: null,
+      paymentApprovedAt: null,
+      paymentFailedAt: null,
+      lastWebhookAt: null,
 
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    const externalReference = `tournament:${tournamentId}:registration:${registrationRef.id}`;
     const tournamentPublicPath = tournamentSlug ?? tournamentId;
 
     const successUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/success?registrationId=${registrationRef.id}`;
@@ -315,9 +505,11 @@ export async function POST(request: Request) {
         body: mpData,
       });
 
-      await db.collection("tournamentRegistrations").doc(registrationRef.id).update({
-        registrationStatus: "payment_error",
+      await registrationRef.update({
+        registrationStatus: "payment_failed",
         paymentStatus: "error",
+        paymentStatusDetail: "preference_creation_failed",
+        paymentFailedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
 
@@ -330,9 +522,13 @@ export async function POST(request: Request) {
       );
     }
 
-    await db.collection("tournamentRegistrations").doc(registrationRef.id).update({
+    const checkoutUrl = mpData.init_point ?? mpData.sandbox_init_point ?? null;
+
+    await registrationRef.update({
       preferenceId: mpData.id,
       externalReference,
+      checkoutUrl,
+      preferenceCreatedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
 
@@ -341,7 +537,7 @@ export async function POST(request: Request) {
       registrationId: registrationRef.id,
       preferenceId: mpData.id,
       externalReference,
-      checkoutUrl: mpData.init_point ?? mpData.sandbox_init_point ?? null,
+      checkoutUrl,
     });
   } catch (error) {
     console.error("Erro interno ao criar preferência Mercado Pago:", error);

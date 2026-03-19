@@ -1,7 +1,5 @@
-// app/api/mercadopago/webhook/route.ts
-
 import { NextResponse } from "next/server";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "../../../../src/lib/firebaseAdmin";
 
 type MercadoPagoPaymentResponse = {
@@ -25,6 +23,24 @@ type ParsedReference = {
   tournamentId: string | null;
   registrationId: string | null;
 };
+
+type RegistrationData = {
+  tournamentId?: string;
+  registrationStatus?: string;
+  paymentStatus?: string;
+  amount?: number;
+  currency?: string;
+  teamName?: string;
+  captainName?: string;
+  captainEmail?: string;
+  captainPhone?: string | null;
+  members?: unknown[];
+  source?: string;
+};
+
+function compactSpaces(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
 
 function parseExternalReference(value: unknown): ParsedReference {
   const raw = String(value ?? "").trim();
@@ -55,6 +71,37 @@ function normalizeMoney(value: unknown) {
   return Number(parsed.toFixed(2));
 }
 
+function areAmountsEquivalent(a: unknown, b: unknown) {
+  return normalizeMoney(a) === normalizeMoney(b);
+}
+
+function normalizeCurrency(value: unknown) {
+  return compactSpaces(value).toUpperCase() || "BRL";
+}
+
+function isFinalApprovedStatus(value: unknown) {
+  return normalizeStatus(value) === "approved";
+}
+
+function isRefundOrChargeback(value: unknown) {
+  const status = normalizeStatus(value);
+  return status === "refunded" || status === "charged_back";
+}
+
+function getRegistrationStatusFromPaymentStatus(paymentStatus: string) {
+  if (paymentStatus === "approved") return "confirmed";
+  if (paymentStatus === "refunded") return "refunded";
+  if (paymentStatus === "charged_back") return "chargeback";
+  if (
+    paymentStatus === "rejected" ||
+    paymentStatus === "cancelled" ||
+    paymentStatus === "error"
+  ) {
+    return "payment_failed";
+  }
+  return "awaiting_payment";
+}
+
 async function findRegistrationByExternalReference(externalReference: string) {
   const db = adminDb();
 
@@ -82,54 +129,67 @@ async function ensureTeamFromApprovedRegistration(params: {
 
   if (!registrationSnap.exists) return;
 
-  const registration = registrationSnap.data() as Record<string, unknown>;
+  const registration = registrationSnap.data() as RegistrationData;
+  const teamRef = db.collection("tournamentTeams").doc(registrationId);
 
-  const existingTeamsSnap = await db
-    .collection("tournamentTeams")
-    .where("registrationId", "==", registrationId)
-    .limit(1)
-    .get();
+  await teamRef.set(
+    {
+      tournamentId,
+      registrationId,
 
-  if (!existingTeamsSnap.empty) {
-    const existingTeamDoc = existingTeamsSnap.docs[0];
+      teamName: compactSpaces(registration.teamName),
+      captainId: null,
+      captainName: compactSpaces(registration.captainName),
+      captainEmail: compactSpaces(registration.captainEmail).toLowerCase(),
+      captainPhone: registration.captainPhone
+        ? String(registration.captainPhone)
+        : null,
 
-    await db.collection("tournamentTeams").doc(existingTeamDoc.id).update({
+      members: Array.isArray(registration.members) ? registration.members : [],
+
       registrationStatus: "confirmed",
       paymentStatus: "approved",
       paymentProvider: "mercado_pago",
       paymentId: String(paymentId),
+
+      source: compactSpaces(registration.source || "public_registration_web"),
       updatedAt: FieldValue.serverTimestamp(),
-    });
+      createdAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
 
-    return;
-  }
+async function logWebhookEvent(params: {
+  paymentId: string;
+  type: string;
+  action: string;
+  externalReference: string | null;
+  registrationId: string | null;
+  payload: unknown;
+  result: string;
+}) {
+  const db = adminDb();
 
-  await db.collection("tournamentTeams").add({
-    tournamentId,
-    registrationId,
-
-    teamName: String(registration.teamName ?? ""),
-    captainId: null,
-    captainName: String(registration.captainName ?? ""),
-    captainEmail: String(registration.captainEmail ?? ""),
-    captainPhone: registration.captainPhone
-      ? String(registration.captainPhone)
-      : null,
-
-    members: Array.isArray(registration.members) ? registration.members : [],
-
-    registrationStatus: "confirmed",
-    paymentStatus: "approved",
-    paymentProvider: "mercado_pago",
-    paymentId: String(paymentId),
-
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-    source: String(registration.source ?? "public_registration_web"),
+  await db.collection("paymentWebhookEvents").add({
+    provider: "mercado_pago",
+    paymentId: params.paymentId,
+    type: params.type,
+    action: params.action,
+    externalReference: params.externalReference,
+    registrationId: params.registrationId,
+    payload: params.payload ?? null,
+    result: params.result,
+    receivedAt: FieldValue.serverTimestamp(),
   });
 }
 
-async function processPaymentWebhook(paymentId: string) {
+async function processPaymentWebhook(params: {
+  paymentId: string;
+  eventType?: string;
+  eventAction?: string;
+  rawPayload?: unknown;
+}) {
   const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
 
   if (!accessToken) {
@@ -139,7 +199,7 @@ async function processPaymentWebhook(paymentId: string) {
   const db = adminDb();
 
   const paymentResponse = await fetch(
-    `https://api.mercadopago.com/v1/payments/${paymentId}`,
+    `https://api.mercadopago.com/v1/payments/${params.paymentId}`,
     {
       method: "GET",
       headers: {
@@ -159,25 +219,26 @@ async function processPaymentWebhook(paymentId: string) {
     console.error("Falha ao consultar pagamento no Mercado Pago:", {
       status: paymentResponse.status,
       body: paymentData,
-      paymentId,
+      paymentId: params.paymentId,
     });
+
     throw new Error("Não foi possível consultar o pagamento.");
   }
 
-  const externalReference = String(paymentData.external_reference ?? "").trim();
+  const externalReference = compactSpaces(paymentData.external_reference) || null;
   const parsedReference = parseExternalReference(externalReference);
 
   let registrationId = parsedReference.registrationId;
-  const tournamentId = parsedReference.tournamentId;
+  const tournamentIdFromReference = parsedReference.tournamentId;
   const paymentStatus = normalizeStatus(paymentData.status);
-  const statusDetail = String(paymentData.status_detail ?? "").trim() || null;
-  const amount = normalizeMoney(paymentData.transaction_amount);
-  const currency = String(paymentData.currency_id ?? "BRL").toUpperCase();
-  const payerEmail = String(paymentData.payer?.email ?? "").trim() || null;
+  const statusDetail = compactSpaces(paymentData.status_detail) || null;
+  const amountPaid = normalizeMoney(paymentData.transaction_amount);
+  const paymentCurrency = normalizeCurrency(paymentData.currency_id);
+  const payerEmail = compactSpaces(paymentData.payer?.email).toLowerCase() || null;
   const merchantOrderId = paymentData.order?.id
     ? String(paymentData.order.id)
     : null;
-  const approvedAt = paymentData.date_approved
+  const paymentApprovedAt = paymentData.date_approved
     ? String(paymentData.date_approved)
     : null;
 
@@ -209,53 +270,145 @@ async function processPaymentWebhook(paymentId: string) {
     !registrationId
   ) {
     console.error("Registro de inscrição não encontrado para o pagamento:", {
-      paymentId,
+      paymentId: params.paymentId,
       externalReference,
       parsedReference,
+    });
+
+    await logWebhookEvent({
+      paymentId: params.paymentId,
+      type: params.eventType || "unknown",
+      action: params.eventAction || "unknown",
+      externalReference,
+      registrationId: null,
+      payload: params.rawPayload ?? null,
+      result: "registration_not_found",
     });
 
     return;
   }
 
-  const registrationData = registrationSnap.data() as Record<string, unknown>;
-  const safeTournamentId =
-    tournamentId || String(registrationData.tournamentId ?? "").trim();
+  const registrationData = registrationSnap.data() as RegistrationData;
 
-  const baseUpdate = {
+  const currentPaymentStatus = normalizeStatus(registrationData.paymentStatus);
+  const currentRegistrationStatus = normalizeStatus(
+    registrationData.registrationStatus
+  );
+
+  if (
+    isFinalApprovedStatus(currentPaymentStatus) &&
+    paymentStatus !== "approved" &&
+    !isRefundOrChargeback(paymentStatus)
+  ) {
+    await logWebhookEvent({
+      paymentId: params.paymentId,
+      type: params.eventType || "unknown",
+      action: params.eventAction || "unknown",
+      externalReference,
+      registrationId,
+      payload: params.rawPayload ?? null,
+      result: `ignored_downgrade_${paymentStatus}`,
+    });
+
+    return;
+  }
+
+  const expectedAmount = normalizeMoney(registrationData.amount);
+  const expectedCurrency = normalizeCurrency(registrationData.currency);
+  const amountMatches = areAmountsEquivalent(expectedAmount, amountPaid);
+  const currencyMatches = expectedCurrency === paymentCurrency;
+
+  const safeTournamentId =
+    tournamentIdFromReference || compactSpaces(registrationData.tournamentId);
+
+  const baseUpdate: Record<string, unknown> = {
     paymentId: String(paymentData.id),
     merchantOrderId,
-    externalReference: externalReference || null,
+    externalReference,
     paymentStatus,
     paymentStatusDetail: statusDetail,
-    amountPaid: amount,
-    paymentCurrency: currency,
+    amountPaid,
+    paymentCurrency,
     payerEmail,
-    approvedAt: approvedAt ?? null,
+    paymentApprovedAt: paymentApprovedAt ?? null,
+    lastWebhookAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   };
+
+  if (!amountMatches || !currencyMatches) {
+    await registrationDocRef.update({
+      ...baseUpdate,
+      paymentReviewRequired: true,
+      paymentReviewReason: !amountMatches
+        ? "amount_mismatch"
+        : "currency_mismatch",
+    });
+
+    await logWebhookEvent({
+      paymentId: params.paymentId,
+      type: params.eventType || "unknown",
+      action: params.eventAction || "unknown",
+      externalReference,
+      registrationId,
+      payload: params.rawPayload ?? null,
+      result: !amountMatches ? "amount_mismatch" : "currency_mismatch",
+    });
+
+    return;
+  }
 
   if (paymentStatus === "approved") {
     await registrationDocRef.update({
       ...baseUpdate,
       registrationStatus: "confirmed",
+      paymentReviewRequired: false,
+      paymentReviewReason: null,
+      paymentFailedAt: null,
     });
 
     if (safeTournamentId) {
       await ensureTeamFromApprovedRegistration({
         registrationId,
         tournamentId: safeTournamentId,
-        paymentId: paymentData.id,
+        paymentId: paymentData.id!,
       });
     }
+
+    await logWebhookEvent({
+      paymentId: params.paymentId,
+      type: params.eventType || "unknown",
+      action: params.eventAction || "unknown",
+      externalReference,
+      registrationId,
+      payload: params.rawPayload ?? null,
+      result: "approved_processed",
+    });
 
     return;
   }
 
   if (paymentStatus === "pending" || paymentStatus === "in_process") {
-    await registrationDocRef.update({
-      ...baseUpdate,
-      registrationStatus: "awaiting_payment",
+    if (
+      currentRegistrationStatus !== "confirmed" &&
+      currentRegistrationStatus !== "refunded" &&
+      currentRegistrationStatus !== "chargeback"
+    ) {
+      await registrationDocRef.update({
+        ...baseUpdate,
+        registrationStatus: "awaiting_payment",
+      });
+    }
+
+    await logWebhookEvent({
+      paymentId: params.paymentId,
+      type: params.eventType || "unknown",
+      action: params.eventAction || "unknown",
+      externalReference,
+      registrationId,
+      payload: params.rawPayload ?? null,
+      result: "pending_processed",
     });
+
     return;
   }
 
@@ -263,18 +416,46 @@ async function processPaymentWebhook(paymentId: string) {
     paymentStatus === "rejected" ||
     paymentStatus === "cancelled" ||
     paymentStatus === "refunded" ||
-    paymentStatus === "charged_back"
+    paymentStatus === "charged_back" ||
+    paymentStatus === "error"
   ) {
     await registrationDocRef.update({
       ...baseUpdate,
-      registrationStatus: "payment_failed",
+      registrationStatus: getRegistrationStatusFromPaymentStatus(paymentStatus),
+      paymentFailedAt:
+        paymentStatus === "rejected" ||
+        paymentStatus === "cancelled" ||
+        paymentStatus === "error"
+          ? FieldValue.serverTimestamp()
+          : null,
     });
+
+    await logWebhookEvent({
+      paymentId: params.paymentId,
+      type: params.eventType || "unknown",
+      action: params.eventAction || "unknown",
+      externalReference,
+      registrationId,
+      payload: params.rawPayload ?? null,
+      result: `${paymentStatus}_processed`,
+    });
+
     return;
   }
 
   await registrationDocRef.update({
     ...baseUpdate,
-    registrationStatus: "awaiting_payment",
+    registrationStatus: currentRegistrationStatus || "awaiting_payment",
+  });
+
+  await logWebhookEvent({
+    paymentId: params.paymentId,
+    type: params.eventType || "unknown",
+    action: params.eventAction || "unknown",
+    externalReference,
+    registrationId,
+    payload: params.rawPayload ?? null,
+    result: `unmapped_status_${paymentStatus}`,
   });
 }
 
@@ -307,7 +488,12 @@ export async function GET(request: Request) {
       );
     }
 
-    await processPaymentWebhook(String(paymentId));
+    await processPaymentWebhook({
+      paymentId: String(paymentId),
+      eventType: "payment",
+      eventAction: "payment.get",
+      rawPayload: null,
+    });
 
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (error) {
@@ -353,7 +539,12 @@ export async function POST(request: Request) {
       );
     }
 
-    await processPaymentWebhook(paymentId);
+    await processPaymentWebhook({
+      paymentId,
+      eventType: type,
+      eventAction: action,
+      rawPayload: body,
+    });
 
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (error) {

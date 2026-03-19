@@ -40,6 +40,8 @@ type TournamentDoc = {
   location?: string;
   boundaryEnabled?: boolean;
   boundary?: TournamentBoundary;
+  boundaryCompleted?: boolean;
+  setupStep?: number;
 };
 
 const DEFAULT_CENTER: LatLng = {
@@ -216,54 +218,77 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
     return { ok: false as const, message: "Tipo de perímetro inválido." };
   }
 
+  function buildBoundary(): TournamentBoundary {
+    if (!boundaryEnabled) return null;
+
+    if (boundaryType === "circle") {
+      return {
+        type: "circle",
+        center: {
+          latitude,
+          longitude,
+        },
+        radiusM,
+      };
+    }
+
+    return {
+      type: "polygon",
+      points: polygonPoints.map((point) => ({
+        latitude: point.latitude,
+        longitude: point.longitude,
+      })),
+    };
+  }
+
+  async function persistBoundary() {
+    if (!safeTournamentId) {
+      throw new Error("ID do torneio inválido.");
+    }
+
+    const validation = validateBeforeSave();
+    if (!validation.ok) {
+      throw new Error(validation.message);
+    }
+
+    const ref = doc(db, "tournaments", safeTournamentId);
+
+    await updateDoc(ref, {
+      boundaryEnabled,
+      boundary: buildBoundary(),
+      boundaryCompleted: true,
+      setupStep: 2,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
   async function handleSave() {
     setSaving(true);
     setMessage(null);
     setError(null);
 
     try {
-      if (!safeTournamentId) {
-        setError("ID do torneio inválido.");
-        return;
-      }
-
-      const validation = validateBeforeSave();
-      if (!validation.ok) {
-        setError(validation.message);
-        return;
-      }
-
-      const ref = doc(db, "tournaments", safeTournamentId);
-
-      const boundary: TournamentBoundary = !boundaryEnabled
-        ? null
-        : boundaryType === "circle"
-        ? {
-            type: "circle",
-            center: {
-              latitude,
-              longitude,
-            },
-            radiusM,
-          }
-        : {
-            type: "polygon",
-            points: polygonPoints.map((point) => ({
-              latitude: point.latitude,
-              longitude: point.longitude,
-            })),
-          };
-
-      await updateDoc(ref, {
-        boundaryEnabled,
-        boundary,
-        updatedAt: serverTimestamp(),
-      });
-
+      await persistBoundary();
       setMessage("Perímetro salvo com sucesso.");
     } catch (err) {
       console.error("Erro ao salvar perímetro:", err);
-      setError("Não foi possível salvar o perímetro.");
+      setError(err instanceof Error ? err.message : "Não foi possível salvar o perímetro.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveAndGoToReview() {
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+
+    try {
+      await persistBoundary();
+      router.push(`/seller/tournaments/${safeTournamentId}/edit?step=3`);
+    } catch (err) {
+      console.error("Erro ao salvar perímetro e ir para revisão:", err);
+      setError(err instanceof Error ? err.message : "Não foi possível continuar.");
     } finally {
       setSaving(false);
     }
@@ -354,7 +379,7 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
           <div style={styles.headerInfo}>
             <h1 style={styles.title}>Mapa do torneio</h1>
             <p style={styles.subtitle}>
-              Configure a área oficial de validação das capturas.
+              Etapa 2 de 3 · Configure a área oficial de validação das capturas.
             </p>
 
             <div style={styles.headerMeta}>
@@ -368,12 +393,43 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
             </div>
           </div>
 
+          <div style={styles.topActions}>
+            <button
+              type="button"
+              onClick={() => router.push(`/seller/tournaments/${safeTournamentId}/edit?step=1`)}
+              style={styles.secondaryButton}
+            >
+              Voltar para etapa 1
+            </button>
+
+            <button
+              type="button"
+              onClick={() => router.push(`/seller/tournaments/${safeTournamentId}`)}
+              style={styles.secondaryButton}
+            >
+              Voltar ao torneio
+            </button>
+          </div>
+        </div>
+
+        <div style={styles.stepBanner}>
+          <div style={styles.stepBannerLeft}>
+            <strong style={styles.stepBannerTitle}>Fluxo de criação</strong>
+            <span style={styles.stepBannerText}>
+              Depois de salvar o perímetro, siga para a revisão final e publicação.
+            </span>
+          </div>
+
           <button
             type="button"
-            onClick={() => router.push(`/seller/tournaments/${safeTournamentId}`)}
-            style={styles.secondaryButton}
+            onClick={handleSaveAndGoToReview}
+            disabled={saving}
+            style={{
+              ...styles.primaryButton,
+              ...(saving ? styles.disabledButton : {}),
+            }}
           >
-            Voltar ao torneio
+            {saving ? "Salvando..." : "Salvar e ir para etapa 3"}
           </button>
         </div>
 
@@ -562,9 +618,24 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
                 type="button"
                 onClick={handleSave}
                 disabled={saving}
-                style={styles.primaryButton}
+                style={{
+                  ...styles.primaryButton,
+                  ...(saving ? styles.disabledButton : {}),
+                }}
               >
                 {saving ? "Salvando..." : "Salvar perímetro"}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveAndGoToReview}
+                disabled={saving}
+                style={{
+                  ...styles.secondaryBlueButton,
+                  ...(saving ? styles.disabledButton : {}),
+                }}
+              >
+                {saving ? "Salvando..." : "Ir para etapa 3"}
               </button>
 
               <button
@@ -703,6 +774,11 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     gap: 8,
   },
+  topActions: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+  },
   title: {
     margin: 0,
     fontSize: 30,
@@ -761,6 +837,34 @@ const styles: Record<string, CSSProperties> = {
     color: "#374151",
     fontSize: 13,
     fontWeight: 800,
+  },
+  stepBanner: {
+    background: "#FFFFFF",
+    border: "1px solid rgba(15,23,42,0.08)",
+    borderRadius: 18,
+    padding: 16,
+    boxShadow: "0 10px 30px rgba(15,23,42,0.04)",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 16,
+    flexWrap: "wrap",
+  },
+  stepBannerLeft: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  stepBannerTitle: {
+    color: "#0F172A",
+    fontSize: 14,
+    fontWeight: 900,
+  },
+  stepBannerText: {
+    color: "#64748B",
+    fontSize: 14,
+    fontWeight: 700,
+    lineHeight: 1.5,
   },
   muted: {
     margin: 0,
@@ -943,6 +1047,20 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     cursor: "pointer",
     textDecoration: "none",
+  },
+  secondaryBlueButton: {
+    border: "1px solid #BFDBFE",
+    borderRadius: 12,
+    padding: "12px 16px",
+    background: "#EFF6FF",
+    color: "#1D4ED8",
+    fontSize: 14,
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+  disabledButton: {
+    opacity: 0.6,
+    cursor: "not-allowed",
   },
   successText: {
     marginTop: 14,

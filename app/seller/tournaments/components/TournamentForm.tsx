@@ -15,7 +15,7 @@ import {
   serverTimestamp,
   updateDoc,
 } from "firebase/firestore";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { db } from "../../../../src/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 
@@ -26,6 +26,30 @@ type Props = {
 };
 
 type TournamentStatus = "draft" | "scheduled" | "live" | "finished";
+type TournamentVisibility = "draft" | "published";
+type SetupStep = 1 | 2 | 3;
+
+type FirestoreTimestampLike = {
+  toDate?: () => Date;
+};
+
+type LatLng = {
+  latitude: number;
+  longitude: number;
+};
+
+type CircleBoundary = {
+  type: "circle";
+  center: LatLng;
+  radiusM: number;
+};
+
+type PolygonBoundary = {
+  type: "polygon";
+  points: LatLng[];
+};
+
+type TournamentBoundary = CircleBoundary | PolygonBoundary | null;
 
 type TournamentDoc = {
   title?: string;
@@ -36,23 +60,49 @@ type TournamentDoc = {
   coverImageUrl?: string | null;
   species?: string;
   entryFee?: number;
+  currency?: string | null;
   minSizeCm?: number;
   validFishCount?: number;
   rules?: string[];
   status?: TournamentStatus;
+  visibility?: TournamentVisibility;
+  setupStep?: number;
+  basicsCompleted?: boolean;
+  boundaryCompleted?: boolean;
+  publishReady?: boolean;
+  missingFields?: string[];
   scheduledStartAt?: unknown;
   scheduledEndAt?: unknown;
   registrationUrl?: string | null;
   adminUrl?: string | null;
   boundaryEnabled?: boolean;
+
+  // formato novo
+  boundary?: TournamentBoundary;
+
+  // compatibilidade com formato antigo
+  boundaryType?: string | null;
+  boundaryCenter?: LatLng | null;
+  boundaryRadiusM?: number | null;
+  boundaryPolygonPoints?: LatLng[] | null;
+
   publishedAt?: unknown;
   startedAt?: unknown;
   finishedAt?: unknown;
 };
 
-type FirestoreTimestampLike = {
-  toDate?: () => Date;
+type BoundarySummary = {
+  enabled: boolean;
+  type: "circle" | "polygon" | null;
+  center: LatLng | null;
+  radiusM: number | null;
+  polygonPointsCount: number;
+  isConfigured: boolean;
 };
+
+function safeTrim(value: unknown) {
+  return String(value ?? "").trim();
+}
 
 function toDateTimeLocalInput(value: unknown): string {
   if (!value) return "";
@@ -124,10 +174,10 @@ function formatDateTime(value: string | null) {
   }).format(date);
 }
 
-function formatMoney(value: number) {
+function formatMoney(value: number, currency = "BRL") {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
-    currency: "BRL",
+    currency,
   }).format(Number(value || 0));
 }
 
@@ -152,7 +202,7 @@ function parseRules(text: string) {
 function getStatusLabel(status: TournamentStatus) {
   if (status === "live") return "Ao vivo";
   if (status === "finished") return "Finalizado";
-  if (status === "scheduled") return "Agendado";
+  if (status === "scheduled") return "Publicado";
   return "Rascunho";
 }
 
@@ -188,12 +238,135 @@ function getStatusBadgeStyle(status: TournamentStatus): CSSProperties {
   };
 }
 
+function parseLatLng(value: unknown): LatLng | null {
+  if (!value || typeof value !== "object") return null;
+
+  const raw = value as Record<string, unknown>;
+  const latitude = Number(raw.latitude);
+  const longitude = Number(raw.longitude);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+  return { latitude, longitude };
+}
+
+function parsePolygonPoints(value: unknown): LatLng[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => parseLatLng(item))
+    .filter(Boolean) as LatLng[];
+}
+
+function calculatePolygonCenter(points: LatLng[]): LatLng | null {
+  if (!Array.isArray(points) || points.length === 0) return null;
+
+  const sum = points.reduce(
+    (acc, point) => {
+      acc.latitude += point.latitude;
+      acc.longitude += point.longitude;
+      return acc;
+    },
+    { latitude: 0, longitude: 0 }
+  );
+
+  return {
+    latitude: sum.latitude / points.length,
+    longitude: sum.longitude / points.length,
+  };
+}
+
+function buildBoundarySummary(data: TournamentDoc): BoundarySummary {
+  const enabled = data.boundaryEnabled !== false;
+
+  if (!enabled) {
+    return {
+      enabled: false,
+      type: null,
+      center: null,
+      radiusM: null,
+      polygonPointsCount: 0,
+      isConfigured: true,
+    };
+  }
+
+  // 1) formato novo: boundary
+  const boundary = data.boundary;
+
+  if (boundary?.type === "circle") {
+    const center = parseLatLng(boundary.center);
+    const radiusM =
+      boundary.radiusM !== undefined && boundary.radiusM !== null
+        ? Number(boundary.radiusM)
+        : null;
+
+    return {
+      enabled: true,
+      type: "circle",
+      center,
+      radiusM,
+      polygonPointsCount: 0,
+      isConfigured: !!center && !!radiusM && radiusM > 0,
+    };
+  }
+
+  if (boundary?.type === "polygon") {
+    const points = parsePolygonPoints(boundary.points);
+
+    return {
+      enabled: true,
+      type: "polygon",
+      center: calculatePolygonCenter(points),
+      radiusM: null,
+      polygonPointsCount: points.length,
+      isConfigured: points.length >= 3,
+    };
+  }
+
+  // 2) fallback para formato antigo
+  const typeRaw = safeTrim(data.boundaryType).toLowerCase();
+  const type =
+    typeRaw === "circle" || typeRaw === "polygon"
+      ? (typeRaw as "circle" | "polygon")
+      : null;
+
+  const center = parseLatLng(data.boundaryCenter);
+  const radiusM =
+    data.boundaryRadiusM !== undefined && data.boundaryRadiusM !== null
+      ? Number(data.boundaryRadiusM)
+      : null;
+  const polygonPoints = parsePolygonPoints(data.boundaryPolygonPoints);
+
+  const isConfigured =
+    type === "circle"
+      ? !!center && !!radiusM && radiusM > 0
+      : type === "polygon"
+      ? polygonPoints.length >= 3
+      : false;
+
+  return {
+    enabled: true,
+    type,
+    center,
+    radiusM,
+    polygonPointsCount: polygonPoints.length,
+    isConfigured,
+  };
+}
+
+function getStepFromSearchParam(raw: string | null): SetupStep {
+  if (raw === "2") return 2;
+  if (raw === "3") return 3;
+  return 1;
+}
+
 export default function TournamentForm({
   mode,
   tournamentId,
   currentUserId,
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const { uid, email, loading: authLoading } = useAuth() as {
     uid?: string | null;
@@ -202,9 +375,11 @@ export default function TournamentForm({
   };
 
   const isEdit = mode === "edit";
+  const searchStep = getStepFromSearchParam(searchParams.get("step"));
 
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
+  const [currentStep, setCurrentStep] = useState<SetupStep>(searchStep);
 
   const [title, setTitle] = useState("");
   const [subtitle, setSubtitle] = useState("");
@@ -214,19 +389,28 @@ export default function TournamentForm({
   const [coverImageUrl, setCoverImageUrl] = useState("");
   const [species, setSpecies] = useState("");
   const [entryFee, setEntryFee] = useState<number>(0);
+  const [currency, setCurrency] = useState("BRL");
   const [minSizeCm, setMinSizeCm] = useState<number>(30);
   const [validFishCount, setValidFishCount] = useState<number>(3);
   const [rulesText, setRulesText] = useState("");
   const [status, setStatus] = useState<TournamentStatus>("draft");
+  const [visibility, setVisibility] = useState<TournamentVisibility>("draft");
   const [scheduledStartAt, setScheduledStartAt] = useState("");
   const [scheduledEndAt, setScheduledEndAt] = useState("");
-  const [registrationUrl, setRegistrationUrl] = useState("");
-  const [adminUrl, setAdminUrl] = useState("");
   const [boundaryEnabled, setBoundaryEnabled] = useState(true);
 
   const [publishedAt, setPublishedAt] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [finishedAt, setFinishedAt] = useState<string | null>(null);
+
+  const [boundarySummary, setBoundarySummary] = useState<BoundarySummary>({
+    enabled: true,
+    type: null,
+    center: null,
+    radiusM: null,
+    polygonPointsCount: 0,
+    isConfigured: false,
+  });
 
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -234,15 +418,111 @@ export default function TournamentForm({
   const generatedSlug = useMemo(() => slugify(title), [title]);
   const resolvedUserId = String(uid || currentUserId || "").trim();
   const resolvedUserName = String(email || "Organizador").trim();
+  const finalSlugPreview = slug.trim() || generatedSlug;
 
   const isOperationallyLocked =
     isEdit && (status === "live" || status === "finished");
   const canEditStructure = !isOperationallyLocked;
 
+  const parsedRules = useMemo(() => parseRules(rulesText), [rulesText]);
+
+  const basicsValidation = useMemo(() => {
+    const missing: string[] = [];
+
+    if (!title.trim()) missing.push("Nome do torneio");
+    if (!finalSlugPreview.trim()) missing.push("Slug público");
+    if (!location.trim()) missing.push("Local");
+    if (!description.trim()) missing.push("Descrição");
+    if (!species.trim()) missing.push("Espécie");
+    if (Number(entryFee) < 0) missing.push("Valor da inscrição inválido");
+    if (Number(minSizeCm) < 0) missing.push("Tamanho mínimo inválido");
+    if (Number(validFishCount) < 1) missing.push("Quantidade de peixes válidos");
+    if (parsedRules.length === 0) missing.push("Regras do torneio");
+    if (!scheduledStartAt) missing.push("Início programado");
+    if (!scheduledEndAt) missing.push("Fim programado");
+
+    if (scheduledStartAt && scheduledEndAt) {
+      const start = new Date(scheduledStartAt).getTime();
+      const end = new Date(scheduledEndAt).getTime();
+
+      if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
+        missing.push("Período do torneio inválido");
+      }
+    }
+
+    return {
+      valid: missing.length === 0,
+      missing,
+    };
+  }, [
+    title,
+    finalSlugPreview,
+    location,
+    description,
+    species,
+    entryFee,
+    minSizeCm,
+    validFishCount,
+    parsedRules,
+    scheduledStartAt,
+    scheduledEndAt,
+  ]);
+
+  const reviewChecklist = useMemo(() => {
+    const items = [
+      {
+        label: "Informações principais completas",
+        ok: basicsValidation.valid,
+      },
+      {
+        label: boundaryEnabled
+          ? "Perímetro configurado"
+          : "Perímetro desativado pelo organizador",
+        ok: boundaryEnabled ? boundarySummary.isConfigured : true,
+      },
+      {
+        label: "Slug público pronto",
+        ok: !!finalSlugPreview.trim(),
+      },
+      {
+        label: "Torneio em rascunho antes de publicar",
+        ok: status === "draft" || status === "scheduled",
+      },
+    ];
+
+    const missingFields: string[] = [
+      ...basicsValidation.missing,
+      ...(boundaryEnabled && !boundarySummary.isConfigured
+        ? ["Perímetro do torneio"]
+        : []),
+    ];
+
+    return {
+      items,
+      publishReady: missingFields.length === 0,
+      missingFields,
+    };
+  }, [
+    basicsValidation,
+    boundaryEnabled,
+    boundarySummary.isConfigured,
+    finalSlugPreview,
+    status,
+  ]);
+
+  useEffect(() => {
+    setCurrentStep(searchStep);
+  }, [searchStep]);
+
   useEffect(() => {
     if (!isEdit || !tournamentId) return;
     void loadTournament();
   }, [isEdit, tournamentId]);
+
+  function clearFeedback() {
+    if (message) setMessage(null);
+    if (error) setError(null);
+  }
 
   async function loadTournament() {
     setLoading(true);
@@ -267,18 +547,19 @@ export default function TournamentForm({
       setCoverImageUrl(data.coverImageUrl || "");
       setSpecies(data.species || "");
       setEntryFee(Number(data.entryFee ?? 0) || 0);
+      setCurrency(safeTrim(data.currency).toUpperCase() || "BRL");
       setMinSizeCm(Number(data.minSizeCm ?? 30) || 30);
       setValidFishCount(Number(data.validFishCount ?? 3) || 3);
       setRulesText(Array.isArray(data.rules) ? data.rules.join("\n") : "");
       setStatus(data.status || "draft");
+      setVisibility(data.visibility || "draft");
       setScheduledStartAt(toDateTimeLocalInput(data.scheduledStartAt));
       setScheduledEndAt(toDateTimeLocalInput(data.scheduledEndAt));
-      setRegistrationUrl(data.registrationUrl || "");
-      setAdminUrl(data.adminUrl || "");
       setBoundaryEnabled(data.boundaryEnabled !== false);
       setPublishedAt(toIsoStringSafe(data.publishedAt));
       setStartedAt(toIsoStringSafe(data.startedAt));
       setFinishedAt(toIsoStringSafe(data.finishedAt));
+      setBoundarySummary(buildBoundarySummary(data));
     } catch (err) {
       console.error("Erro ao carregar torneio:", err);
       setError("Não foi possível carregar os dados do torneio.");
@@ -287,106 +568,204 @@ export default function TournamentForm({
     }
   }
 
-  async function handleSubmit() {
+  function getBasePayload() {
+    return {
+      title: title.trim(),
+      subtitle: subtitle.trim() || null,
+      slug: finalSlugPreview || null,
+      location: location.trim(),
+      description: description.trim() || null,
+      coverImageUrl: coverImageUrl.trim() || null,
+      species: species.trim(),
+      entryFee: Number(entryFee || 0),
+      currency: safeTrim(currency).toUpperCase() || "BRL",
+      minSizeCm: Number(minSizeCm || 0),
+      validFishCount: Number(validFishCount || 0),
+      rules: parsedRules,
+      scheduledStartAt: scheduledStartAt ? new Date(scheduledStartAt) : null,
+      scheduledEndAt: scheduledEndAt ? new Date(scheduledEndAt) : null,
+      boundaryEnabled,
+      updatedAt: serverTimestamp(),
+    };
+  }
+
+  async function createDraftTournament(stepAfterCreate: SetupStep) {
+    if (authLoading) {
+      throw new Error("Aguardando identificação do usuário.");
+    }
+
+    if (!resolvedUserId) {
+      throw new Error("Usuário não identificado para criar o torneio.");
+    }
+
+    const ref = await addDoc(collection(db, "tournaments"), {
+      ...getBasePayload(),
+      status: "draft",
+      visibility: "draft",
+      setupStep: stepAfterCreate,
+      basicsCompleted: basicsValidation.valid,
+      boundaryCompleted: boundaryEnabled ? boundarySummary.isConfigured : true,
+      publishReady: false,
+      missingFields: reviewChecklist.missingFields,
+      createdBy: resolvedUserId,
+      createdByName: resolvedUserName,
+      createdAt: serverTimestamp(),
+    });
+
+    return ref.id;
+  }
+
+  async function saveDraft(options?: {
+    nextStep?: SetupStep;
+    successMessage?: string;
+    redirectToStep?: boolean;
+  }) {
+    clearFeedback();
     setSaving(true);
-    setError(null);
-    setMessage(null);
 
     try {
-      if (!title.trim()) {
-        setError("Informe o nome do torneio.");
-        setSaving(false);
-        return;
-      }
-
-      if (!location.trim()) {
-        setError("Informe o local do torneio.");
-        setSaving(false);
-        return;
-      }
-
-      if (!species.trim()) {
-        setError("Informe a espécie do torneio.");
-        setSaving(false);
-        return;
-      }
-
-      if (Number(entryFee) < 0) {
-        setError("O valor da inscrição não pode ser negativo.");
-        setSaving(false);
-        return;
-      }
-
-      if (!isEdit) {
-        if (authLoading) {
-          setError("Aguardando identificação do usuário.");
-          setSaving(false);
-          return;
-        }
-
-        if (!resolvedUserId) {
-          console.error("Create tournament debug:", {
-            uid,
-            email,
-            currentUserId,
-            authLoading,
-          });
-          setError("Usuário não identificado para criar o torneio.");
-          setSaving(false);
-          return;
-        }
-      }
-
-      if (isEdit && isOperationallyLocked) {
-        setError(
-          "Esse torneio está em operação ou finalizado. Edite o status pela central do torneio antes de alterar a estrutura."
-        );
-        setSaving(false);
-        return;
-      }
-
-      const finalSlug = slug.trim() || generatedSlug;
-
-      const payload = {
-        title: title.trim(),
-        subtitle: subtitle.trim() || null,
-        slug: finalSlug || null,
-        location: location.trim(),
-        description: description.trim() || null,
-        coverImageUrl: coverImageUrl.trim() || null,
-        species: species.trim(),
-        entryFee: Number(entryFee || 0),
-        minSizeCm: Number(minSizeCm || 0),
-        validFishCount: Number(validFishCount || 0),
-        rules: parseRules(rulesText),
-        scheduledStartAt: scheduledStartAt ? new Date(scheduledStartAt) : null,
-        scheduledEndAt: scheduledEndAt ? new Date(scheduledEndAt) : null,
-        registrationUrl: registrationUrl.trim() || null,
-        adminUrl: adminUrl.trim() || null,
-        boundaryEnabled,
-        updatedAt: serverTimestamp(),
-      };
+      const nextStep = options?.nextStep ?? currentStep;
 
       if (isEdit && tournamentId) {
         const ref = doc(db, "tournaments", tournamentId);
-        await updateDoc(ref, payload);
-        setMessage("Torneio atualizado com sucesso.");
-        return;
+
+        await updateDoc(ref, {
+          ...getBasePayload(),
+          status: "draft",
+          visibility: "draft",
+          setupStep: nextStep,
+          basicsCompleted: basicsValidation.valid,
+          boundaryCompleted: boundaryEnabled ? boundarySummary.isConfigured : true,
+          publishReady: false,
+          missingFields: reviewChecklist.missingFields,
+        });
+
+        setStatus("draft");
+        setVisibility("draft");
+        setMessage(options?.successMessage || "Rascunho salvo com sucesso.");
+
+        if (options?.redirectToStep) {
+          router.push(`/seller/tournaments/${tournamentId}/edit?step=${nextStep}`);
+        } else {
+          setCurrentStep(nextStep);
+        }
+
+        return tournamentId;
       }
 
-      const ref = await addDoc(collection(db, "tournaments"), {
-        ...payload,
-        status: "draft",
-        createdBy: resolvedUserId,
-        createdByName: resolvedUserName,
-        createdAt: serverTimestamp(),
+      const newTournamentId = await createDraftTournament(nextStep);
+      setMessage(options?.successMessage || "Rascunho criado com sucesso.");
+      router.push(`/seller/tournaments/${newTournamentId}/edit?step=${nextStep}`);
+      return newTournamentId;
+    } catch (err) {
+      console.error("Erro ao salvar rascunho:", err);
+      setError(
+        err instanceof Error ? err.message : "Não foi possível salvar o rascunho."
+      );
+      return null;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleContinueToBoundary() {
+    clearFeedback();
+
+    if (!canEditStructure) {
+      setError("A estrutura do torneio está bloqueada para edição.");
+      return;
+    }
+
+    if (!basicsValidation.valid) {
+      setError(
+        `Preencha os campos obrigatórios antes de avançar: ${basicsValidation.missing.join(
+          ", "
+        )}.`
+      );
+      return;
+    }
+
+    await saveDraft({
+      nextStep: 2,
+      successMessage: "Etapa 1 concluída. Agora configure o perímetro.",
+      redirectToStep: true,
+    });
+  }
+
+  function handleOpenBoundaryEditor() {
+    clearFeedback();
+
+    if (!isEdit || !tournamentId) {
+      setError("Salve o torneio antes de abrir o editor de perímetro.");
+      return;
+    }
+
+    router.push(`/seller/tournaments/${tournamentId}/map`);
+  }
+
+  async function handleContinueToReview() {
+    clearFeedback();
+
+    if (boundaryEnabled && !boundarySummary.isConfigured) {
+      setError(
+        "Configure o perímetro do torneio antes de seguir para a revisão final."
+      );
+      return;
+    }
+
+    await saveDraft({
+      nextStep: 3,
+      successMessage: "Etapa 2 concluída. Revise o torneio antes de publicar.",
+      redirectToStep: true,
+    });
+  }
+
+  async function handlePublishTournament() {
+    clearFeedback();
+
+    if (!isEdit || !tournamentId) {
+      setError("Salve o torneio como rascunho antes de publicar.");
+      return;
+    }
+
+    if (isOperationallyLocked) {
+      setError("Este torneio não pode ser publicado novamente neste momento.");
+      return;
+    }
+
+    if (!reviewChecklist.publishReady) {
+      setError(
+        `Ainda faltam itens obrigatórios para publicar: ${reviewChecklist.missingFields.join(
+          ", "
+        )}.`
+      );
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const ref = doc(db, "tournaments", tournamentId);
+
+      await updateDoc(ref, {
+        ...getBasePayload(),
+        status: "scheduled",
+        visibility: "published",
+        setupStep: 3,
+        basicsCompleted: true,
+        boundaryCompleted: boundaryEnabled ? boundarySummary.isConfigured : true,
+        publishReady: true,
+        missingFields: [],
+        publishedAt: publishedAt ? new Date(publishedAt) : serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
 
-      router.push(`/seller/tournaments/${ref.id}/map`);
-      return;
+      setStatus("scheduled");
+      setVisibility("published");
+      setMessage("Torneio publicado com sucesso.");
     } catch (err) {
-      console.error("Erro ao salvar torneio:", err);
-      setError("Não foi possível salvar o torneio.");
+      console.error("Erro ao publicar torneio:", err);
+      setError("Não foi possível publicar o torneio.");
     } finally {
       setSaving(false);
     }
@@ -407,321 +786,665 @@ export default function TournamentForm({
 
   return (
     <main style={styles.page}>
-      {isEdit ? (
-        <section style={styles.heroCard}>
-          <div style={styles.heroTop}>
-            <div>
-              <h1 style={styles.title}>Editar torneio</h1>
+      <section style={styles.heroCard}>
+        <div style={styles.heroTop}>
+          <div>
+            <h1 style={styles.title}>
+              {isEdit ? "Configuração do torneio" : "Novo torneio"}
+            </h1>
+            <p style={styles.sectionSub}>
+              Crie em 3 etapas: informações principais, perímetro e revisão final.
+            </p>
+          </div>
+
+          <div style={styles.heroBadges}>
+            <span style={getStatusBadgeStyle(status)}>{getStatusLabel(status)}</span>
+            <span
+              style={
+                visibility === "published"
+                  ? styles.publishedBadge
+                  : styles.draftBadge
+              }
+            >
+              {visibility === "published"
+                ? "Visível ao público"
+                : "Apenas criador vê"}
+            </span>
+            {isOperationallyLocked ? (
+              <span style={styles.lockBadge}>Edição estrutural bloqueada</span>
+            ) : (
+              <span style={styles.editBadge}>Edição liberada</span>
+            )}
+          </div>
+        </div>
+
+        <div style={styles.timelineGrid}>
+          <PreviewCard label="Publicado em" value={formatDateTime(publishedAt)} />
+          <PreviewCard label="Iniciado em" value={formatDateTime(startedAt)} />
+          <PreviewCard label="Encerrado em" value={formatDateTime(finishedAt)} />
+        </div>
+
+        <div style={styles.stepsRow}>
+          <StepPill
+            active={currentStep === 1}
+            done={basicsValidation.valid}
+            step="1"
+            label="Informações"
+          />
+          <StepPill
+            active={currentStep === 2}
+            done={boundaryEnabled ? boundarySummary.isConfigured : true}
+            step="2"
+            label="Perímetro"
+          />
+          <StepPill
+            active={currentStep === 3}
+            done={reviewChecklist.publishReady && visibility === "published"}
+            step="3"
+            label="Revisão"
+          />
+        </div>
+      </section>
+
+      {currentStep === 1 ? (
+        <>
+          <section style={styles.card}>
+            <div style={styles.sectionHeader}>
+              <h2 style={styles.sectionTitle}>Etapa 1 · Informações principais</h2>
               <p style={styles.sectionSub}>
-                Ajuste a estrutura do torneio, regras e agenda operacional.
+                Preencha toda a estrutura do torneio antes de seguir para o mapa.
               </p>
             </div>
 
-            <div style={styles.heroBadges}>
-              <span style={getStatusBadgeStyle(status)}>
-                {getStatusLabel(status)}
-              </span>
-              {isOperationallyLocked ? (
-                <span style={styles.lockBadge}>
-                  Edição estrutural bloqueada
-                </span>
-              ) : (
-                <span style={styles.editBadge}>Edição liberada</span>
-              )}
+            <div style={styles.formGrid}>
+              <Field label="Nome do torneio *">
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => {
+                    clearFeedback();
+                    setTitle(e.target.value);
+                  }}
+                  style={styles.input}
+                  placeholder="Ex.: Torneio Tucunaré Master"
+                  disabled={!canEditStructure}
+                />
+              </Field>
+
+              <Field label="Subtítulo">
+                <input
+                  type="text"
+                  value={subtitle}
+                  onChange={(e) => {
+                    clearFeedback();
+                    setSubtitle(e.target.value);
+                  }}
+                  style={styles.input}
+                  placeholder="Ex.: Etapa ConnectFish"
+                  disabled={!canEditStructure}
+                />
+              </Field>
+
+              <Field label="Slug público *">
+                <input
+                  type="text"
+                  value={slug}
+                  onChange={(e) => {
+                    clearFeedback();
+                    setSlug(slugify(e.target.value));
+                  }}
+                  style={styles.input}
+                  placeholder={generatedSlug || "torneio-tucunare-master"}
+                  disabled={!canEditStructure}
+                />
+              </Field>
+
+              <Field label="Local *">
+                <input
+                  type="text"
+                  value={location}
+                  onChange={(e) => {
+                    clearFeedback();
+                    setLocation(e.target.value);
+                  }}
+                  style={styles.input}
+                  placeholder="Ex.: Rio Juruena - MT"
+                  disabled={!canEditStructure}
+                />
+              </Field>
             </div>
-          </div>
 
-          <div style={styles.timelineGrid}>
-            <PreviewCard
-              label="Publicado em"
-              value={formatDateTime(publishedAt)}
-            />
-            <PreviewCard
-              label="Iniciado em"
-              value={formatDateTime(startedAt)}
-            />
-            <PreviewCard
-              label="Encerrado em"
-              value={formatDateTime(finishedAt)}
-            />
-          </div>
+            <Field label="Descrição *">
+              <textarea
+                value={description}
+                onChange={(e) => {
+                  clearFeedback();
+                  setDescription(e.target.value);
+                }}
+                style={styles.textarea}
+                placeholder="Explique rapidamente como será o torneio, o local e a operação."
+                disabled={!canEditStructure}
+              />
+            </Field>
 
-          {isOperationallyLocked ? (
-            <p style={styles.warningText}>
-              Este torneio está {status === "live" ? "ao vivo" : "finalizado"}.
-              Para manter a operação consistente, os campos estruturais foram
-              bloqueados. Use a central do torneio para alterar o status antes
-              de editar a estrutura.
-            </p>
-          ) : null}
-        </section>
-      ) : null}
+            <Field label="URL da capa">
+              <input
+                type="text"
+                value={coverImageUrl}
+                onChange={(e) => {
+                  clearFeedback();
+                  setCoverImageUrl(e.target.value);
+                }}
+                style={styles.input}
+                placeholder="https://..."
+                disabled={!canEditStructure}
+              />
+            </Field>
+          </section>
 
-      <section style={styles.card}>
-        <div style={styles.sectionHeader}>
-          <h2 style={styles.sectionTitle}>Informações principais</h2>
-          <p style={styles.sectionSub}>
-            Base do torneio que será usada no app, no portal e no ranking.
-          </p>
-        </div>
+          <section style={styles.card}>
+            <div style={styles.sectionHeader}>
+              <h2 style={styles.sectionTitle}>Regras e critérios</h2>
+              <p style={styles.sectionSub}>
+                Esses dados alimentam ranking, validação e página pública.
+              </p>
+            </div>
 
-        <div style={styles.formGrid}>
-          <Field label="Nome do torneio *">
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              style={styles.input}
-              placeholder="Ex.: Torneio Tucunaré Master"
-              disabled={!canEditStructure}
-            />
-          </Field>
+            <div style={styles.formGrid}>
+              <Field label="Espécie válida *">
+                <input
+                  type="text"
+                  value={species}
+                  onChange={(e) => {
+                    clearFeedback();
+                    setSpecies(e.target.value);
+                  }}
+                  style={styles.input}
+                  placeholder="Ex.: Tucunaré"
+                  disabled={!canEditStructure}
+                />
+              </Field>
 
-          <Field label="Subtítulo">
-            <input
-              type="text"
-              value={subtitle}
-              onChange={(e) => setSubtitle(e.target.value)}
-              style={styles.input}
-              placeholder="Ex.: Etapa ConnectFish"
-              disabled={!canEditStructure}
-            />
-          </Field>
+              <Field label="Valor da inscrição (R$) *">
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={entryFee}
+                  onChange={(e) => {
+                    clearFeedback();
+                    setEntryFee(Number(e.target.value));
+                  }}
+                  style={styles.input}
+                  disabled={!canEditStructure}
+                />
+              </Field>
 
-          <Field label="Slug público">
-            <input
-              type="text"
-              value={slug}
-              onChange={(e) => setSlug(slugify(e.target.value))}
-              style={styles.input}
-              placeholder={generatedSlug || "torneio-tucunare-master"}
-              disabled={!canEditStructure}
-            />
-          </Field>
+              <Field label="Moeda">
+                <input
+                  type="text"
+                  value={currency}
+                  onChange={(e) => {
+                    clearFeedback();
+                    setCurrency(e.target.value.toUpperCase());
+                  }}
+                  style={styles.input}
+                  placeholder="BRL"
+                  disabled={!canEditStructure}
+                  maxLength={5}
+                />
+              </Field>
 
-          <Field label="Local *">
-            <input
-              type="text"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              style={styles.input}
-              placeholder="Ex.: Rio Juruena - MT"
-              disabled={!canEditStructure}
-            />
-          </Field>
-        </div>
+              <Field label="Tamanho mínimo (cm) *">
+                <input
+                  type="number"
+                  min={0}
+                  value={minSizeCm}
+                  onChange={(e) => {
+                    clearFeedback();
+                    setMinSizeCm(Number(e.target.value));
+                  }}
+                  style={styles.input}
+                  disabled={!canEditStructure}
+                />
+              </Field>
 
-        <Field label="Descrição">
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            style={styles.textarea}
-            placeholder="Explique rapidamente como será o torneio, o local e a operação."
-            disabled={!canEditStructure}
-          />
-        </Field>
+              <Field label="Quantidade de peixes válidos *">
+                <input
+                  type="number"
+                  min={1}
+                  value={validFishCount}
+                  onChange={(e) => {
+                    clearFeedback();
+                    setValidFishCount(Number(e.target.value));
+                  }}
+                  style={styles.input}
+                  disabled={!canEditStructure}
+                />
+              </Field>
 
-        <Field label="URL da capa">
-          <input
-            type="text"
-            value={coverImageUrl}
-            onChange={(e) => setCoverImageUrl(e.target.value)}
-            style={styles.input}
-            placeholder="https://..."
-            disabled={!canEditStructure}
-          />
-        </Field>
-      </section>
+              <Field label="Status operacional">
+                <input
+                  type="text"
+                  value={getStatusLabel(status)}
+                  style={styles.inputReadonly}
+                  disabled
+                  readOnly
+                />
+              </Field>
+            </div>
 
-      <section style={styles.card}>
-        <div style={styles.sectionHeader}>
-          <h2 style={styles.sectionTitle}>Regras do torneio</h2>
-          <p style={styles.sectionSub}>
-            Essas regras ajudam a padronizar app, validação e ranking.
-          </p>
-        </div>
-
-        <div style={styles.formGrid}>
-          <Field label="Espécie válida *">
-            <input
-              type="text"
-              value={species}
-              onChange={(e) => setSpecies(e.target.value)}
-              style={styles.input}
-              placeholder="Ex.: Tucunaré"
-              disabled={!canEditStructure}
-            />
-          </Field>
-
-          <Field label="Valor da inscrição (R$)">
-            <input
-              type="number"
-              min={0}
-              step={0.01}
-              value={entryFee}
-              onChange={(e) => setEntryFee(Number(e.target.value))}
-              style={styles.input}
-              placeholder="Ex.: 50"
-              disabled={!canEditStructure}
-            />
-          </Field>
-
-          <Field label="Tamanho mínimo (cm)">
-            <input
-              type="number"
-              min={0}
-              value={minSizeCm}
-              onChange={(e) => setMinSizeCm(Number(e.target.value))}
-              style={styles.input}
-              disabled={!canEditStructure}
-            />
-          </Field>
-
-          <Field label="Quantidade de peixes válidos">
-            <input
-              type="number"
-              min={1}
-              value={validFishCount}
-              onChange={(e) => setValidFishCount(Number(e.target.value))}
-              style={styles.input}
-              disabled={!canEditStructure}
-            />
-          </Field>
-
-          <Field label="Status operacional">
-            <input
-              type="text"
-              value={getStatusLabel(status)}
-              style={styles.inputReadonly}
-              disabled
-              readOnly
-            />
-          </Field>
-        </div>
-
-        <Field label="Regras principais (uma por linha)">
-          <textarea
-            value={rulesText}
-            onChange={(e) => setRulesText(e.target.value)}
-            style={styles.textareaLarge}
-            placeholder={`Valem os 3 maiores peixes da equipe.
+            <Field label="Regras principais (uma por linha) *">
+              <textarea
+                value={rulesText}
+                onChange={(e) => {
+                  clearFeedback();
+                  setRulesText(e.target.value);
+                }}
+                style={styles.textareaLarge}
+                placeholder={`Valem os 3 maiores peixes da equipe.
 Captura deve ser fotografada na régua oficial do torneio.
 Somente o capitão envia capturas.
 O ranking só atualiza após validação da organização.`}
-            disabled={!canEditStructure}
-          />
-        </Field>
-      </section>
+                disabled={!canEditStructure}
+              />
+            </Field>
+          </section>
 
-      <section style={styles.card}>
-        <div style={styles.sectionHeader}>
-          <h2 style={styles.sectionTitle}>Agenda e operação</h2>
-          <p style={styles.sectionSub}>
-            Janela do torneio, inscrição e links operacionais.
-          </p>
-        </div>
+          <section style={styles.card}>
+            <div style={styles.sectionHeader}>
+              <h2 style={styles.sectionTitle}>Agenda</h2>
+              <p style={styles.sectionSub}>
+                Janela de funcionamento do torneio e período de inscrições.
+              </p>
+            </div>
 
-        <div style={styles.formGrid}>
-          <Field label="Início programado">
-            <input
-              type="datetime-local"
-              value={scheduledStartAt}
-              onChange={(e) => setScheduledStartAt(e.target.value)}
-              style={styles.input}
-              disabled={!canEditStructure}
-            />
-          </Field>
+            <div style={styles.formGrid}>
+              <Field label="Início programado *">
+                <input
+                  type="datetime-local"
+                  value={scheduledStartAt}
+                  onChange={(e) => {
+                    clearFeedback();
+                    setScheduledStartAt(e.target.value);
+                  }}
+                  style={styles.input}
+                  disabled={!canEditStructure}
+                />
+              </Field>
 
-          <Field label="Fim programado">
-            <input
-              type="datetime-local"
-              value={scheduledEndAt}
-              onChange={(e) => setScheduledEndAt(e.target.value)}
-              style={styles.input}
-              disabled={!canEditStructure}
-            />
-          </Field>
+              <Field label="Fim programado *">
+                <input
+                  type="datetime-local"
+                  value={scheduledEndAt}
+                  onChange={(e) => {
+                    clearFeedback();
+                    setScheduledEndAt(e.target.value);
+                  }}
+                  style={styles.input}
+                  disabled={!canEditStructure}
+                />
+              </Field>
+            </div>
+          </section>
 
-          <Field label="URL de inscrição">
-            <input
-              type="text"
-              value={registrationUrl}
-              onChange={(e) => setRegistrationUrl(e.target.value)}
-              style={styles.input}
-              placeholder="https://www.connectfish.app/tournaments/slug"
-              disabled={!canEditStructure}
-            />
-          </Field>
+          <section style={styles.card}>
+            <div style={styles.sectionHeader}>
+              <h2 style={styles.sectionTitle}>Preview rápido</h2>
+              <p style={styles.sectionSub}>
+                Confira os dados principais antes de seguir para o perímetro.
+              </p>
+            </div>
 
-          <Field label="URL administrativa">
-            <input
-              type="text"
-              value={adminUrl}
-              onChange={(e) => setAdminUrl(e.target.value)}
-              style={styles.input}
-              placeholder="https://..."
-              disabled={!canEditStructure}
-            />
-          </Field>
-        </div>
+            <div style={styles.previewGrid}>
+              <PreviewCard label="Título" value={title || "—"} />
+              <PreviewCard label="Slug" value={finalSlugPreview || "—"} />
+              <PreviewCard label="Espécie" value={species || "—"} />
+              <PreviewCard
+                label="Inscrição"
+                value={formatMoney(entryFee || 0, currency || "BRL")}
+              />
+              <PreviewCard label="Mínimo" value={`${minSizeCm || 0} cm`} />
+              <PreviewCard
+                label="Peixes válidos"
+                value={String(validFishCount || 0)}
+              />
+            </div>
 
-        <label style={styles.toggleRow}>
-          <input
-            type="checkbox"
-            checked={boundaryEnabled}
-            onChange={(e) => setBoundaryEnabled(e.target.checked)}
-            disabled={!canEditStructure}
-          />
-          <span style={styles.toggleLabel}>Ativar perímetro do torneio</span>
-        </label>
-      </section>
+            {!basicsValidation.valid ? (
+              <div style={styles.warningBox}>
+                <p style={styles.warningTitle}>Antes de avançar</p>
+                <p style={styles.warningText}>
+                  Faltam: {basicsValidation.missing.join(", ")}.
+                </p>
+              </div>
+            ) : null}
+          </section>
 
-      <section style={styles.card}>
-        <div style={styles.sectionHeader}>
-          <h2 style={styles.sectionTitle}>Preview rápido</h2>
-          <p style={styles.sectionSub}>
-            Conferência da estrutura antes de salvar.
-          </p>
-        </div>
+          <div style={styles.actionsRow}>
+            <button
+              type="button"
+              onClick={() =>
+                void saveDraft({
+                  nextStep: 1,
+                  successMessage: "Rascunho salvo com sucesso.",
+                })
+              }
+              disabled={saving || !canEditStructure || (!isEdit && !!authLoading)}
+              style={{
+                ...styles.secondaryButton,
+                ...((saving || !canEditStructure || (!isEdit && !!authLoading))
+                  ? styles.disabledButton
+                  : {}),
+              }}
+            >
+              Salvar rascunho
+            </button>
 
-        <div style={styles.previewGrid}>
-          <PreviewCard label="Título" value={title || "—"} />
-          <PreviewCard label="Slug" value={slug || generatedSlug || "—"} />
-          <PreviewCard label="Espécie" value={species || "—"} />
-          <PreviewCard label="Inscrição" value={formatMoney(entryFee || 0)} />
-          <PreviewCard label="Mínimo" value={`${minSizeCm || 0} cm`} />
-          <PreviewCard
-            label="Peixes válidos"
-            value={String(validFishCount || 0)}
-          />
-          <PreviewCard
-            label="Perímetro"
-            value={boundaryEnabled ? "Ativo" : "Desativado"}
-          />
-        </div>
-      </section>
+            <button
+              type="button"
+              onClick={() => void handleContinueToBoundary()}
+              disabled={saving || !canEditStructure || (!isEdit && !!authLoading)}
+              style={{
+                ...styles.primaryButton,
+                ...((saving || !canEditStructure || (!isEdit && !!authLoading))
+                  ? styles.disabledButton
+                  : {}),
+              }}
+            >
+              {saving ? "Salvando..." : "Continuar para perímetro"}
+            </button>
+          </div>
+        </>
+      ) : null}
 
-      <div style={styles.actionsRow}>
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={saving || !canEditStructure || (!isEdit && !!authLoading)}
-          style={{
-            ...styles.primaryButton,
-            ...((saving || !canEditStructure || (!isEdit && !!authLoading))
-              ? styles.disabledButton
-              : {}),
-          }}
-        >
-          {saving
-            ? "Salvando..."
-            : !isEdit && !!authLoading
-            ? "Identificando usuário..."
-            : isEdit
-            ? "Salvar alterações"
-            : "Criar torneio"}
-        </button>
+      {currentStep === 2 ? (
+        <>
+          <section style={styles.card}>
+            <div style={styles.sectionHeader}>
+              <h2 style={styles.sectionTitle}>Etapa 2 · Perímetro</h2>
+              <p style={styles.sectionSub}>
+                Configure a área oficial do torneio antes de publicar.
+              </p>
+            </div>
 
+            <label style={styles.toggleRow}>
+              <input
+                type="checkbox"
+                checked={boundaryEnabled}
+                onChange={(e) => {
+                  clearFeedback();
+                  setBoundaryEnabled(e.target.checked);
+                }}
+                disabled={!canEditStructure}
+              />
+              <span style={styles.toggleLabel}>Ativar perímetro do torneio</span>
+            </label>
+
+            <div style={styles.boundarySummaryGrid}>
+              <PreviewCard
+                label="Perímetro"
+                value={boundaryEnabled ? "Ativo" : "Desativado"}
+              />
+              <PreviewCard
+                label="Tipo"
+                value={
+                  boundaryEnabled
+                    ? boundarySummary.type === "circle"
+                      ? "Círculo"
+                      : boundarySummary.type === "polygon"
+                      ? "Polígono"
+                      : "Não definido"
+                    : "Não obrigatório"
+                }
+              />
+              <PreviewCard
+                label="Raio"
+                value={
+                  boundarySummary.radiusM && boundarySummary.radiusM > 0
+                    ? `${boundarySummary.radiusM} m`
+                    : "—"
+                }
+              />
+              <PreviewCard
+                label="Pontos do polígono"
+                value={String(boundarySummary.polygonPointsCount || 0)}
+              />
+            </div>
+
+            <div
+              style={{
+                ...styles.boundaryStatusBox,
+                ...(boundaryEnabled
+                  ? boundarySummary.isConfigured
+                    ? styles.boundaryStatusOk
+                    : styles.boundaryStatusPending
+                  : styles.boundaryStatusNeutral),
+              }}
+            >
+              {boundaryEnabled ? (
+                boundarySummary.isConfigured ? (
+                  <>
+                    <p style={styles.boundaryStatusTitle}>Perímetro configurado</p>
+                    <p style={styles.boundaryStatusText}>
+                      O torneio já possui uma área oficial pronta para validação de
+                      capturas.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p style={styles.boundaryStatusTitle}>
+                      Perímetro ainda não configurado
+                    </p>
+                    <p style={styles.boundaryStatusText}>
+                      Abra o editor de mapa e desenhe o círculo ou polígono antes
+                      de seguir para a revisão final.
+                    </p>
+                  </>
+                )
+              ) : (
+                <>
+                  <p style={styles.boundaryStatusTitle}>Perímetro desativado</p>
+                  <p style={styles.boundaryStatusText}>
+                    O organizador optou por não exigir geofence neste torneio.
+                  </p>
+                </>
+              )}
+            </div>
+
+            <div style={styles.actionsRow}>
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentStep(1);
+                  if (isEdit && tournamentId) {
+                    router.push(`/seller/tournaments/${tournamentId}/edit?step=1`);
+                  }
+                }}
+                style={styles.secondaryButton}
+              >
+                Voltar para informações
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenBoundaryEditor}
+                disabled={!isEdit || !tournamentId}
+                style={{
+                  ...styles.secondaryBlueButton,
+                  ...((!isEdit || !tournamentId) ? styles.disabledButton : {}),
+                }}
+              >
+                Abrir editor de perímetro
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void loadTournament()}
+                disabled={saving}
+                style={styles.secondaryButton}
+              >
+                Atualizar status do perímetro
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void saveDraft({
+                    nextStep: 2,
+                    successMessage: "Rascunho salvo com sucesso.",
+                    redirectToStep: true,
+                  })
+                }
+                disabled={saving}
+                style={{
+                  ...styles.secondaryButton,
+                  ...(saving ? styles.disabledButton : {}),
+                }}
+              >
+                Salvar rascunho
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void handleContinueToReview()}
+                disabled={saving || (boundaryEnabled && !boundarySummary.isConfigured)}
+                style={{
+                  ...styles.primaryButton,
+                  ...((saving || (boundaryEnabled && !boundarySummary.isConfigured))
+                    ? styles.disabledButton
+                    : {}),
+                }}
+              >
+                Ir para revisão final
+              </button>
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {currentStep === 3 ? (
+        <>
+          <section style={styles.card}>
+            <div style={styles.sectionHeader}>
+              <h2 style={styles.sectionTitle}>Etapa 3 · Revisão e publicação</h2>
+              <p style={styles.sectionSub}>
+                Confira o checklist final antes de deixar o torneio visível ao
+                público.
+              </p>
+            </div>
+
+            <div style={styles.reviewGrid}>
+              {reviewChecklist.items.map((item) => (
+                <div
+                  key={item.label}
+                  style={{
+                    ...styles.reviewItem,
+                    ...(item.ok ? styles.reviewItemOk : styles.reviewItemPending),
+                  }}
+                >
+                  <span style={styles.reviewItemIcon}>{item.ok ? "✓" : "!"}</span>
+                  <span style={styles.reviewItemText}>{item.label}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={styles.previewGrid}>
+              <PreviewCard label="Título" value={title || "—"} />
+              <PreviewCard label="Slug público" value={finalSlugPreview || "—"} />
+              <PreviewCard label="Local" value={location || "—"} />
+              <PreviewCard
+                label="Inscrição"
+                value={formatMoney(entryFee || 0, currency || "BRL")}
+              />
+              <PreviewCard
+                label="Perímetro"
+                value={
+                  boundaryEnabled
+                    ? boundarySummary.isConfigured
+                      ? "Configurado"
+                      : "Pendente"
+                    : "Desativado"
+                }
+              />
+              <PreviewCard
+                label="Visibilidade"
+                value={
+                  visibility === "published"
+                    ? "Visível ao público"
+                    : "Apenas criador vê"
+                }
+              />
+            </div>
+
+            {!reviewChecklist.publishReady ? (
+              <div style={styles.warningBox}>
+                <p style={styles.warningTitle}>Publicação bloqueada</p>
+                <p style={styles.warningText}>
+                  Ainda faltam: {reviewChecklist.missingFields.join(", ")}.
+                </p>
+              </div>
+            ) : (
+              <div style={styles.successBox}>
+                <p style={styles.successBoxTitle}>Tudo pronto para publicar</p>
+                <p style={styles.successBoxText}>
+                  Ao publicar, o torneio deixa de ser rascunho e passa a ficar
+                  visível para os usuários realizarem inscrições.
+                </p>
+              </div>
+            )}
+          </section>
+
+          <div style={styles.actionsRow}>
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentStep(2);
+                if (isEdit && tournamentId) {
+                  router.push(`/seller/tournaments/${tournamentId}/edit?step=2`);
+                }
+              }}
+              style={styles.secondaryButton}
+            >
+              Voltar para perímetro
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                void saveDraft({
+                  nextStep: 3,
+                  successMessage: "Rascunho salvo com sucesso.",
+                  redirectToStep: true,
+                })
+              }
+              disabled={saving}
+              style={{
+                ...styles.secondaryButton,
+                ...(saving ? styles.disabledButton : {}),
+              }}
+            >
+              Salvar como rascunho
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handlePublishTournament()}
+              disabled={saving || !reviewChecklist.publishReady}
+              style={{
+                ...styles.primaryButton,
+                ...((saving || !reviewChecklist.publishReady)
+                  ? styles.disabledButton
+                  : {}),
+              }}
+            >
+              {saving ? "Publicando..." : "Publicar torneio"}
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      <div style={styles.actionsFooter}>
         <button
           type="button"
           onClick={() =>
@@ -731,7 +1454,7 @@ O ranking só atualiza após validação da organização.`}
                 : "/seller/tournaments"
             )
           }
-          style={styles.secondaryButton}
+          style={styles.ghostButton}
         >
           Cancelar
         </button>
@@ -767,12 +1490,38 @@ function PreviewCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+function StepPill({
+  step,
+  label,
+  active,
+  done,
+}: {
+  step: string;
+  label: string;
+  active: boolean;
+  done: boolean;
+}) {
+  return (
+    <div
+      style={{
+        ...styles.stepPill,
+        ...(active ? styles.stepPillActive : {}),
+        ...(done ? styles.stepPillDone : {}),
+      }}
+    >
+      <span style={styles.stepCircle}>{done ? "✓" : step}</span>
+      <span style={styles.stepLabel}>{label}</span>
+    </div>
+  );
+}
+
 const styles: Record<string, CSSProperties> = {
   page: {
     display: "flex",
     flexDirection: "column",
     gap: 16,
   },
+
   card: {
     background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.08)",
@@ -780,6 +1529,7 @@ const styles: Record<string, CSSProperties> = {
     padding: 20,
     boxShadow: "0 10px 24px rgba(15,23,42,0.04)",
   },
+
   heroCard: {
     background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.08)",
@@ -787,6 +1537,7 @@ const styles: Record<string, CSSProperties> = {
     padding: 20,
     boxShadow: "0 10px 24px rgba(15,23,42,0.04)",
   },
+
   heroTop: {
     display: "flex",
     justifyContent: "space-between",
@@ -794,11 +1545,13 @@ const styles: Record<string, CSSProperties> = {
     gap: 16,
     flexWrap: "wrap",
   },
+
   heroBadges: {
     display: "flex",
     gap: 10,
     flexWrap: "wrap",
   },
+
   statusBadge: {
     display: "inline-flex",
     alignItems: "center",
@@ -807,6 +1560,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     fontWeight: 900,
   },
+
   lockBadge: {
     display: "inline-flex",
     alignItems: "center",
@@ -817,6 +1571,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     fontWeight: 900,
   },
+
   editBadge: {
     display: "inline-flex",
     alignItems: "center",
@@ -827,40 +1582,108 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     fontWeight: 900,
   },
+
+  draftBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "8px 12px",
+    borderRadius: 999,
+    background: "#EFF6FF",
+    color: "#1D4ED8",
+    fontSize: 13,
+    fontWeight: 900,
+  },
+
+  publishedBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "8px 12px",
+    borderRadius: 999,
+    background: "#ECFDF5",
+    color: "#166534",
+    fontSize: 13,
+    fontWeight: 900,
+  },
+
   timelineGrid: {
     marginTop: 16,
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
     gap: 12,
   },
-  warningText: {
-    margin: "14px 0 0 0",
-    color: "#92400E",
-    fontSize: 14,
-    fontWeight: 700,
-    lineHeight: 1.6,
+
+  stepsRow: {
+    marginTop: 16,
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
   },
+
+  stepPill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "10px 14px",
+    borderRadius: 999,
+    border: "1px solid rgba(15,23,42,0.08)",
+    background: "#FFFFFF",
+  },
+
+  stepPillActive: {
+    border: "1px solid #0B3C5D",
+    boxShadow: "0 0 0 3px rgba(11,60,93,0.06)",
+  },
+
+  stepPillDone: {
+    background: "#F0FDF4",
+    border: "1px solid #BBF7D0",
+  },
+
+  stepCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 999,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#0B3C5D",
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: 900,
+    flexShrink: 0,
+  },
+
+  stepLabel: {
+    fontSize: 13,
+    fontWeight: 900,
+    color: "#0F172A",
+  },
+
   title: {
     margin: 0,
     fontSize: 28,
     fontWeight: 1000,
     color: "#0B3C5D",
   },
+
   muted: {
     margin: "8px 0 0 0",
     color: "#64748B",
     fontSize: 14,
     fontWeight: 700,
   },
+
   sectionHeader: {
     marginBottom: 16,
   },
+
   sectionTitle: {
     margin: 0,
     fontSize: 18,
     fontWeight: 1000,
     color: "#0F172A",
   },
+
   sectionSub: {
     margin: "6px 0 0 0",
     color: "#64748B",
@@ -868,22 +1691,26 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 700,
     lineHeight: 1.6,
   },
+
   formGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
     gap: 12,
   },
+
   field: {
     display: "flex",
     flexDirection: "column",
     gap: 8,
     marginBottom: 14,
   },
+
   label: {
     fontSize: 13,
     color: "#475569",
     fontWeight: 900,
   },
+
   input: {
     width: "100%",
     border: "1px solid rgba(15,23,42,0.12)",
@@ -894,6 +1721,7 @@ const styles: Record<string, CSSProperties> = {
     background: "#FFFFFF",
     outline: "none",
   },
+
   inputReadonly: {
     width: "100%",
     border: "1px solid rgba(15,23,42,0.12)",
@@ -904,6 +1732,7 @@ const styles: Record<string, CSSProperties> = {
     background: "#F8FAFC",
     outline: "none",
   },
+
   textarea: {
     minHeight: 110,
     resize: "vertical",
@@ -916,6 +1745,7 @@ const styles: Record<string, CSSProperties> = {
     outline: "none",
     fontFamily: "system-ui, sans-serif",
   },
+
   textareaLarge: {
     minHeight: 170,
     resize: "vertical",
@@ -928,6 +1758,7 @@ const styles: Record<string, CSSProperties> = {
     outline: "none",
     fontFamily: "system-ui, sans-serif",
   },
+
   toggleRow: {
     display: "flex",
     alignItems: "center",
@@ -936,26 +1767,31 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     color: "#0F172A",
   },
+
   toggleLabel: {
     fontSize: 14,
   },
+
   previewGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
     gap: 12,
   },
+
   previewCard: {
     background: "#F8FAFC",
     border: "1px solid rgba(15,23,42,0.06)",
     borderRadius: 14,
     padding: 14,
   },
+
   previewLabel: {
     margin: 0,
     color: "#64748B",
     fontSize: 12,
     fontWeight: 800,
   },
+
   previewValue: {
     margin: "6px 0 0 0",
     color: "#0F172A",
@@ -963,11 +1799,150 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 1000,
     lineHeight: 1.4,
   },
+
+  warningBox: {
+    marginTop: 16,
+    borderRadius: 16,
+    padding: 16,
+    background: "#FEF3C7",
+    border: "1px solid #FDE68A",
+  },
+
+  warningTitle: {
+    margin: 0,
+    color: "#92400E",
+    fontSize: 14,
+    fontWeight: 900,
+  },
+
+  warningText: {
+    margin: "8px 0 0 0",
+    color: "#92400E",
+    fontSize: 14,
+    fontWeight: 700,
+    lineHeight: 1.6,
+  },
+
+  successBox: {
+    marginTop: 16,
+    borderRadius: 16,
+    padding: 16,
+    background: "#ECFDF5",
+    border: "1px solid #A7F3D0",
+  },
+
+  successBoxTitle: {
+    margin: 0,
+    color: "#166534",
+    fontSize: 14,
+    fontWeight: 900,
+  },
+
+  successBoxText: {
+    margin: "8px 0 0 0",
+    color: "#166534",
+    fontSize: 14,
+    fontWeight: 700,
+    lineHeight: 1.6,
+  },
+
+  boundarySummaryGrid: {
+    marginTop: 16,
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 12,
+  },
+
+  boundaryStatusBox: {
+    marginTop: 16,
+    borderRadius: 16,
+    padding: 16,
+  },
+
+  boundaryStatusOk: {
+    background: "#ECFDF5",
+    border: "1px solid #A7F3D0",
+  },
+
+  boundaryStatusPending: {
+    background: "#FEF2F2",
+    border: "1px solid #FECACA",
+  },
+
+  boundaryStatusNeutral: {
+    background: "#EFF6FF",
+    border: "1px solid #BFDBFE",
+  },
+
+  boundaryStatusTitle: {
+    margin: 0,
+    fontSize: 14,
+    fontWeight: 900,
+    color: "#0F172A",
+  },
+
+  boundaryStatusText: {
+    margin: "8px 0 0 0",
+    fontSize: 14,
+    fontWeight: 700,
+    lineHeight: 1.6,
+    color: "#475569",
+  },
+
+  reviewGrid: {
+    display: "grid",
+    gap: 10,
+    marginBottom: 16,
+  },
+
+  reviewItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 14,
+    padding: "12px 14px",
+  },
+
+  reviewItemOk: {
+    background: "#ECFDF5",
+    border: "1px solid #A7F3D0",
+  },
+
+  reviewItemPending: {
+    background: "#FEF2F2",
+    border: "1px solid #FECACA",
+  },
+
+  reviewItemIcon: {
+    width: 22,
+    height: 22,
+    borderRadius: 999,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: 900,
+    flexShrink: 0,
+  },
+
+  reviewItemText: {
+    color: "#0F172A",
+    fontSize: 14,
+    fontWeight: 800,
+  },
+
   actionsRow: {
     display: "flex",
     gap: 10,
     flexWrap: "wrap",
   },
+
+  actionsFooter: {
+    display: "flex",
+    justifyContent: "flex-start",
+  },
+
   primaryButton: {
     border: "none",
     borderRadius: 12,
@@ -978,6 +1953,7 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 900,
     cursor: "pointer",
   },
+
   secondaryButton: {
     border: "1px solid rgba(15,23,42,0.08)",
     borderRadius: 12,
@@ -988,15 +1964,40 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 900,
     cursor: "pointer",
   },
+
+  secondaryBlueButton: {
+    border: "1px solid #BFDBFE",
+    borderRadius: 12,
+    padding: "12px 16px",
+    background: "#EFF6FF",
+    color: "#1D4ED8",
+    fontSize: 14,
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+
+  ghostButton: {
+    border: "none",
+    borderRadius: 12,
+    padding: "12px 0",
+    background: "transparent",
+    color: "#475569",
+    fontSize: 14,
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+
   disabledButton: {
     opacity: 0.55,
     cursor: "not-allowed",
   },
+
   successText: {
     margin: 0,
     color: "#166534",
     fontWeight: 800,
   },
+
   errorText: {
     margin: 0,
     color: "#B91C1C",
