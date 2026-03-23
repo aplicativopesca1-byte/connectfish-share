@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "../../../../src/lib/firebaseAdmin";
+import { adminAuth } from "../../../../src/lib/firebaseAdminAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,7 +9,6 @@ export const dynamic = "force-dynamic";
 type RequestBody = {
   tournamentId?: string;
   teamId?: string;
-  userId?: string;
   source?: string | null;
 };
 
@@ -80,7 +80,18 @@ function isAllowedRegistrationStatus(value: unknown) {
   );
 }
 
-export async function POST(request: Request) {
+async function getAuthenticatedUserId(request: NextRequest) {
+  const raw = request.cookies.get("__session")?.value;
+
+  if (!raw) return null;
+
+  const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
+  const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
+
+  return decoded.uid || null;
+}
+
+export async function POST(request: NextRequest) {
   try {
     const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
 
@@ -108,12 +119,24 @@ export async function POST(request: Request) {
       );
     }
 
+    const authenticatedUserId = await getAuthenticatedUserId(request);
+
+    if (!authenticatedUserId) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Usuário não autenticado.",
+        },
+        { status: 401 }
+      );
+    }
+
     const body = (await request.json()) as RequestBody;
 
     const tournamentId = compactSpaces(body.tournamentId);
     const teamId = compactSpaces(body.teamId);
-    const userId = compactSpaces(body.userId);
     const source = compactSpaces(body.source || "member_individual_checkout");
+    const userId = authenticatedUserId;
 
     if (!tournamentId) {
       return NextResponse.json(
@@ -125,13 +148,6 @@ export async function POST(request: Request) {
     if (!teamId) {
       return NextResponse.json(
         { success: false, message: "teamId é obrigatório." },
-        { status: 400 }
-      );
-    }
-
-    if (!userId) {
-      return NextResponse.json(
-        { success: false, message: "userId é obrigatório." },
         { status: 400 }
       );
     }
@@ -401,13 +417,25 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Erro interno ao criar preferência individual:", error);
 
+    const message =
+      error instanceof Error &&
+      /session cookie/i.test(error.message || "")
+        ? "Usuário não autenticado."
+        : "Erro interno ao iniciar pagamento individual.";
+
+    const status =
+      error instanceof Error &&
+      /session cookie|cookie/i.test(error.message || "")
+        ? 401
+        : 500;
+
     return NextResponse.json(
       {
         success: false,
-        message: "Erro interno ao iniciar pagamento individual.",
+        message,
         error: error instanceof Error ? error.message : "Erro desconhecido",
       },
-      { status: 500 }
+      { status }
     );
   }
 }

@@ -1,14 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "../../../../../src/lib/firebaseAdmin";
+import { adminAuth } from "../../../../../src/lib/firebaseAdminAuth";
 
-type TeamMemberInput = {
-  userId?: string;
-};
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type RequestBody = {
   tournamentId?: string;
-  captainUserId?: string;
   teamName?: string;
   memberUserIds?: string[];
   source?: string | null;
@@ -28,9 +27,7 @@ function compactSpaces(value: unknown) {
 
 function normalizeIdList(value: unknown) {
   if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => compactSpaces(item))
-    .filter(Boolean);
+  return value.map((item) => compactSpaces(item)).filter(Boolean);
 }
 
 function normalizeTeamName(value: unknown) {
@@ -43,6 +40,16 @@ function uniqueStrings(values: string[]) {
 
 function buildTeamMemberDocId(teamId: string, userId: string) {
   return `${teamId}_${userId}`;
+}
+
+async function getAuthenticatedUserId(request: NextRequest) {
+  const raw = request.cookies.get("__session")?.value;
+  if (!raw) return null;
+
+  const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
+  const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
+
+  return decoded.uid || null;
 }
 
 async function getUserById(userId: string): Promise<UserRecord | null> {
@@ -125,12 +132,24 @@ function isTournamentAcceptingRegistrations(status: string) {
   return status === "scheduled" || status === "live";
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const authenticatedUserId = await getAuthenticatedUserId(request);
+
+    if (!authenticatedUserId) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Usuário não autenticado.",
+        },
+        { status: 401 }
+      );
+    }
+
     const body = (await request.json()) as RequestBody;
 
     const tournamentId = compactSpaces(body.tournamentId);
-    const captainUserId = compactSpaces(body.captainUserId);
+    const captainUserId = authenticatedUserId;
     const teamName = normalizeTeamName(body.teamName);
     const source = compactSpaces(body.source || "app_team_create");
     const rawMemberUserIds = normalizeIdList(body.memberUserIds);
@@ -138,13 +157,6 @@ export async function POST(request: Request) {
     if (!tournamentId) {
       return NextResponse.json(
         { success: false, message: "tournamentId é obrigatório." },
-        { status: 400 }
-      );
-    }
-
-    if (!captainUserId) {
-      return NextResponse.json(
-        { success: false, message: "captainUserId é obrigatório." },
         { status: 400 }
       );
     }
@@ -194,6 +206,17 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { success: false, message: "Capitão não encontrado." },
         { status: 404 }
+      );
+    }
+
+    if (!captain.username) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "Seu perfil ainda não possui username válido. Complete seu cadastro antes de criar a equipe.",
+        },
+        { status: 400 }
       );
     }
 
@@ -404,13 +427,25 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Erro ao criar equipe do torneio:", error);
 
+    const message =
+      error instanceof Error &&
+      /session cookie/i.test(error.message || "")
+        ? "Usuário não autenticado."
+        : "Erro interno ao criar equipe.";
+
+    const status =
+      error instanceof Error &&
+      /session cookie|cookie/i.test(error.message || "")
+        ? 401
+        : 500;
+
     return NextResponse.json(
       {
         success: false,
-        message: "Erro interno ao criar equipe.",
+        message,
         error: error instanceof Error ? error.message : "Erro desconhecido",
       },
-      { status: 500 }
+      { status }
     );
   }
 }

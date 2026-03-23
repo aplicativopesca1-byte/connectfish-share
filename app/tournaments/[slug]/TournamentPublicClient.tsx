@@ -228,7 +228,7 @@ export default function TournamentPublicClient({ slug }: Props) {
 
   useEffect(() => {
     void loadCaptainProfile();
-  }, [uid]);
+  }, [uid, email]);
 
   useEffect(() => {
     const queryValue = compactSpaces(memberQuery);
@@ -277,7 +277,10 @@ export default function TournamentPublicClient({ slug }: Props) {
         const status = String(raw.status ?? "draft").toLowerCase();
         const visibility = String(raw.visibility ?? "").toLowerCase();
 
-        return visibility === "published" || (visibility !== "published" && status !== "draft");
+        return (
+          visibility === "published" ||
+          (visibility !== "published" && status !== "draft")
+        );
       });
 
       if (!publishedDoc) {
@@ -291,10 +294,10 @@ export default function TournamentPublicClient({ slug }: Props) {
         typeof raw.entryFee === "number"
           ? raw.entryFee
           : typeof raw.entryFeeAmount === "number"
-          ? raw.entryFeeAmount
-          : typeof raw.price === "number"
-          ? raw.price
-          : null;
+            ? raw.entryFeeAmount
+            : typeof raw.price === "number"
+              ? raw.price
+              : null;
 
       const currency =
         typeof raw.currency === "string" && raw.currency.trim()
@@ -368,7 +371,10 @@ export default function TournamentPublicClient({ slug }: Props) {
 
       const response = await fetch(
         `/api/users/search?query=${encodeURIComponent(queryValue)}`,
-        { method: "GET" }
+        {
+          method: "GET",
+          credentials: "include",
+        }
       );
 
       const data = (await response.json()) as UserSearchResponse;
@@ -416,7 +422,9 @@ export default function TournamentPublicClient({ slug }: Props) {
 
   function removeMember(userId: string) {
     clearFeedback();
-    setSelectedMembers((current) => current.filter((item) => item.userId !== userId));
+    setSelectedMembers((current) =>
+      current.filter((item) => item.userId !== userId)
+    );
   }
 
   function validateForm() {
@@ -431,7 +439,10 @@ export default function TournamentPublicClient({ slug }: Props) {
     }
 
     if (!canAcceptRegistration(tournament.status)) {
-      return getRegistrationBlockMessage(tournament.status) ?? "Inscrições indisponíveis.";
+      return (
+        getRegistrationBlockMessage(tournament.status) ??
+        "Inscrições indisponíveis."
+      );
     }
 
     if (!compactSpaces(teamName) || compactSpaces(teamName).length < 3) {
@@ -465,6 +476,7 @@ export default function TournamentPublicClient({ slug }: Props) {
 
       const createTeamResponse = await fetch("/api/tournaments/team/create", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -479,7 +491,11 @@ export default function TournamentPublicClient({ slug }: Props) {
 
       const createTeamData = (await createTeamResponse.json()) as CreateTeamResponse;
 
-      if (!createTeamResponse.ok || !createTeamData.success || !createTeamData.teamId) {
+      if (
+        !createTeamResponse.ok ||
+        !createTeamData.success ||
+        !createTeamData.teamId
+      ) {
         throw new Error(createTeamData.message || "Não foi possível criar a equipe.");
       }
 
@@ -489,13 +505,13 @@ export default function TournamentPublicClient({ slug }: Props) {
         "/api/mercadopago/create-member-preference",
         {
           method: "POST",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
             tournamentId: tournament.id,
             teamId: createTeamData.teamId,
-            userId: uid,
             source: "public_tournament_web",
           }),
         }
@@ -772,7 +788,9 @@ export default function TournamentPublicClient({ slug }: Props) {
                         style={styles.searchResultButton}
                         disabled={isFormDisabled}
                       >
-                        <span style={styles.searchResultUsername}>@{user.username}</span>
+                        <span style={styles.searchResultUsername}>
+                          @{user.username}
+                        </span>
                         <span style={styles.searchResultMeta}>
                           {user.email || "Usuário ConnectFish"}
                         </span>
@@ -788,7 +806,8 @@ export default function TournamentPublicClient({ slug }: Props) {
 
                   {selectedMembers.length === 0 ? (
                     <p style={styles.helperText}>
-                      Você pode convidar até {maxAdditionalMembers} membros para a equipe.
+                      Você pode convidar até {maxAdditionalMembers} membros para a
+                      equipe.
                     </p>
                   ) : (
                     <div style={styles.selectedMembersList}>
@@ -886,7 +905,9 @@ export default function TournamentPublicClient({ slug }: Props) {
 
               {highlightedRules.length > 0 ? (
                 <div style={styles.checkoutSection}>
-                  <p style={styles.checkoutSectionTitle}>Resumo rápido das regras</p>
+                  <p style={styles.checkoutSectionTitle}>
+                    Resumo rápido das regras
+                  </p>
 
                   <div style={styles.miniRulesList}>
                     {highlightedRules.map((rule, index) => (
@@ -929,8 +950,8 @@ export default function TournamentPublicClient({ slug }: Props) {
                 </button>
 
                 <p style={styles.securityText}>
-                  Os demais participantes receberão convite e pagarão a própria inscrição
-                  após aceitarem entrar na equipe.
+                  Os demais participantes receberão convite e pagarão a própria
+                  inscrição após aceitarem entrar na equipe.
                 </p>
               </div>
 
