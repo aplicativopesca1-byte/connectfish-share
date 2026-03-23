@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { db } from "../../../src/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
+import AppSessionBridge from "../../seller/tournaments/components/AppSessionBridge";
 
 type Props = {
   slug: string;
@@ -341,7 +342,13 @@ export default function TournamentPublicClient({ slug }: Props) {
       const userSnap = await getDoc(doc(db, "users", uid));
 
       if (!userSnap.exists()) {
-        setCaptainProfile(null);
+        setCaptainProfile({
+          userId: uid,
+          username: "",
+          email: email || null,
+          photoUrl: null,
+          displayName: email || "Usuário logado",
+        });
         return;
       }
 
@@ -357,11 +364,18 @@ export default function TournamentPublicClient({ slug }: Props) {
           compactSpaces(raw.displayName) ||
           compactSpaces(raw.name) ||
           username ||
-          null,
+          email ||
+          "Usuário logado",
       });
     } catch (err) {
       console.error("Erro ao carregar perfil do capitão:", err);
-      setCaptainProfile(null);
+      setCaptainProfile({
+        userId: uid,
+        username: "",
+        email: email || null,
+        photoUrl: null,
+        displayName: email || "Usuário logado",
+      });
     }
   }
 
@@ -434,10 +448,6 @@ export default function TournamentPublicClient({ slug }: Props) {
       return "Você precisa estar logado para criar uma equipe.";
     }
 
-    if (!captainProfile?.username) {
-      return "Não foi possível identificar o capitão. Complete seu cadastro antes de continuar.";
-    }
-
     if (!canAcceptRegistration(tournament.status)) {
       return (
         getRegistrationBlockMessage(tournament.status) ??
@@ -457,7 +467,7 @@ export default function TournamentPublicClient({ slug }: Props) {
   }
 
   async function handleCreateTeamAndPay() {
-    if (!tournament || !uid || !captainProfile) return;
+    if (!tournament || !uid) return;
 
     setSaving(true);
     setError(null);
@@ -482,7 +492,6 @@ export default function TournamentPublicClient({ slug }: Props) {
         },
         body: JSON.stringify({
           tournamentId: tournament.id,
-          captainUserId: uid,
           teamName: compactSpaces(teamName),
           memberUserIds: selectedMembers.map((member) => member.userId),
           source: "public_tournament_web",
@@ -549,6 +558,7 @@ export default function TournamentPublicClient({ slug }: Props) {
     return (
       <main style={styles.page}>
         <div style={styles.container}>
+          <AppSessionBridge />
           <section style={styles.card}>
             <h1 style={styles.title}>Carregando torneio...</h1>
             <p style={styles.muted}>Aguarde enquanto buscamos os dados.</p>
@@ -562,6 +572,7 @@ export default function TournamentPublicClient({ slug }: Props) {
     return (
       <main style={styles.page}>
         <div style={styles.container}>
+          <AppSessionBridge />
           <section style={styles.card}>
             <h1 style={styles.title}>Torneio indisponível</h1>
             <p style={styles.errorText}>{error}</p>
@@ -575,6 +586,7 @@ export default function TournamentPublicClient({ slug }: Props) {
     return (
       <main style={styles.page}>
         <div style={styles.container}>
+          <AppSessionBridge />
           <section style={styles.card}>
             <h1 style={styles.title}>Torneio indisponível</h1>
             <p style={styles.errorText}>Torneio não encontrado.</p>
@@ -587,6 +599,8 @@ export default function TournamentPublicClient({ slug }: Props) {
   return (
     <main style={styles.page}>
       <div style={styles.container}>
+        <AppSessionBridge />
+
         <section style={styles.heroCard}>
           {tournament.coverImageUrl ? (
             <div
@@ -712,7 +726,9 @@ export default function TournamentPublicClient({ slug }: Props) {
 
                 <div style={styles.captainCard}>
                   <div style={styles.captainAvatar}>
-                    {captainProfile?.username?.charAt(0)?.toUpperCase() || "@"}
+                    {captainProfile?.username?.charAt(0)?.toUpperCase() ||
+                      captainProfile?.displayName?.charAt(0)?.toUpperCase() ||
+                      "@"}
                   </div>
 
                   <div style={styles.captainInfo}>
@@ -720,7 +736,9 @@ export default function TournamentPublicClient({ slug }: Props) {
                       {captainProfile?.displayName || "Usuário logado"}
                     </strong>
                     <span style={styles.captainUsername}>
-                      @{captainProfile?.username || "sem-username"}
+                      {captainProfile?.username
+                        ? `@${captainProfile.username}`
+                        : email || "Capitão definido pela sessão"}
                     </span>
                     <span style={styles.captainMeta}>
                       Capitão definido automaticamente pelo login atual
@@ -851,7 +869,7 @@ export default function TournamentPublicClient({ slug }: Props) {
                     value={
                       captainProfile?.username
                         ? `@${captainProfile.username}`
-                        : "Login necessário"
+                        : email || "Usuário autenticado"
                     }
                   />
                   <SummaryRow
