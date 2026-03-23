@@ -1,14 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useAuth } from "@/context/AuthContext";
 
 export default function AppSessionBridge() {
-  const { refresh } = useAuth();
   const [processing, setProcessing] = useState(false);
-
-  console.log("[AppSessionBridge] mounted");
-  console.log("[AppSessionBridge] hash:", typeof window !== "undefined" ? window.location.hash : "no-window");
 
   useEffect(() => {
     let cancelled = false;
@@ -20,7 +15,8 @@ export default function AppSessionBridge() {
       const params = new URLSearchParams(hash);
       const appToken = params.get("appToken");
 
-      console.log("[AppSessionBridge] parsed hash:", hash);
+      console.log("[AppSessionBridge] mounted");
+      console.log("[AppSessionBridge] hash:", window.location.hash);
       console.log("[AppSessionBridge] has appToken:", !!appToken);
 
       if (!appToken) return;
@@ -47,14 +43,12 @@ export default function AppSessionBridge() {
         }
 
         const cleanUrl = window.location.pathname + window.location.search;
-        window.history.replaceState({}, document.title, cleanUrl);
 
         if (!cancelled) {
-          await refresh();
+          window.location.replace(cleanUrl);
         }
       } catch (error) {
         console.error("[AppSessionBridge] erro:", error);
-      } finally {
         if (!cancelled) {
           setProcessing(false);
         }
@@ -66,7 +60,7 @@ export default function AppSessionBridge() {
     return () => {
       cancelled = true;
     };
-  }, [refresh]);
+  }, []);
 
   if (!processing) return null;
 

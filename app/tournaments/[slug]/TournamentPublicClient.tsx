@@ -554,7 +554,7 @@ export default function TournamentPublicClient({ slug }: Props) {
     }
   }
 
-  if (loading || authLoading) {
+  if (loading ){
     return (
       <main style={styles.page}>
         <div style={styles.container}>
