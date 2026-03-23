@@ -1,3 +1,6 @@
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "../../../../src/lib/firebaseAdmin";
@@ -204,6 +207,22 @@ async function findExistingRegistration(params: {
   return null;
 }
 
+function buildBackUrls(params: {
+  baseUrl: string;
+  tournamentPublicPath: string;
+  registrationId: string;
+}) {
+  const successUrl = `${params.baseUrl}/tournaments/${params.tournamentPublicPath}/payment/success?registrationId=${params.registrationId}`;
+  const failureUrl = `${params.baseUrl}/tournaments/${params.tournamentPublicPath}/payment/failure?registrationId=${params.registrationId}`;
+  const pendingUrl = `${params.baseUrl}/tournaments/${params.tournamentPublicPath}/payment/pending?registrationId=${params.registrationId}`;
+
+  return {
+    successUrl,
+    failureUrl,
+    pendingUrl,
+  };
+}
+
 export async function POST(request: Request) {
   try {
     const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
@@ -232,7 +251,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json()) as RequestBody;
+    const body = (await request.json().catch(() => ({}))) as RequestBody;
 
     const tournamentId = compactSpaces(body.tournamentId);
     const teamName = compactSpaces(body.teamName);
@@ -439,9 +458,11 @@ export async function POST(request: Request) {
 
     const tournamentPublicPath = tournamentSlug ?? tournamentId;
 
-    const successUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/success?registrationId=${registrationRef.id}`;
-    const failureUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/failure?registrationId=${registrationRef.id}`;
-    const pendingUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/pending?registrationId=${registrationRef.id}`;
+    const { successUrl, failureUrl, pendingUrl } = buildBackUrls({
+      baseUrl,
+      tournamentPublicPath,
+      registrationId: registrationRef.id,
+    });
 
     const preferencePayload = {
       items: [
@@ -474,6 +495,7 @@ export async function POST(request: Request) {
         teamName,
         captainEmail,
         source,
+        flow: "legacy_public_registration",
       },
     };
 

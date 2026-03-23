@@ -1,5 +1,7 @@
 "use client";
 
+import AppSessionBridge from "../../seller/tournaments/components/AppSessionBridge";
+import { useAuth } from "@/context/AuthContext";
 import {
   collection,
   doc,
@@ -9,7 +11,6 @@ import {
   where,
 } from "firebase/firestore";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { useAuth } from "@/context/AuthContext";
 import { db } from "../../../src/lib/firebase";
 
 type PageProps = {
@@ -463,6 +464,14 @@ export default function TeamInvitePage({ params }: PageProps) {
   }, [currentMember]);
 
   useEffect(() => {
+    if (!inviteId) {
+      setLoading(false);
+      setError("Convite inválido.");
+      return;
+    }
+
+    if (!uid) return;
+
     void loadPage();
   }, [inviteId, uid]);
 
@@ -474,6 +483,10 @@ export default function TeamInvitePage({ params }: PageProps) {
     try {
       if (!inviteId) {
         setError("Convite inválido.");
+        return;
+      }
+
+      if (!uid) {
         return;
       }
 
@@ -504,11 +517,6 @@ export default function TeamInvitePage({ params }: PageProps) {
       };
 
       setInvite(mappedInvite);
-
-      if (!uid) {
-        setError("Faça login com a conta convidada para continuar.");
-        return;
-      }
 
       if (mappedInvite.invitedUserId !== uid) {
         setError("Este convite não pertence ao usuário logado.");
@@ -541,10 +549,10 @@ export default function TeamInvitePage({ params }: PageProps) {
         typeof tournamentRaw.entryFee === "number"
           ? tournamentRaw.entryFee
           : typeof tournamentRaw.entryFeeAmount === "number"
-          ? tournamentRaw.entryFeeAmount
-          : typeof tournamentRaw.price === "number"
-          ? tournamentRaw.price
-          : null;
+            ? tournamentRaw.entryFeeAmount
+            : typeof tournamentRaw.price === "number"
+              ? tournamentRaw.price
+              : null;
 
       const mappedTournament: TournamentPublic = {
         id: tournamentSnap.id,
@@ -655,6 +663,7 @@ export default function TeamInvitePage({ params }: PageProps) {
     try {
       const response = await fetch("/api/tournaments/team/invite/respond", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -700,13 +709,13 @@ export default function TeamInvitePage({ params }: PageProps) {
     try {
       const response = await fetch("/api/mercadopago/create-member-preference", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           tournamentId: tournament.id,
           teamId: team.teamId,
-          userId: uid,
           source: "team_invite_checkout_page",
         }),
       });
@@ -732,10 +741,11 @@ export default function TeamInvitePage({ params }: PageProps) {
     }
   }
 
-  if (loading || authLoading) {
+  if (loading) {
     return (
       <main style={styles.page}>
         <div style={styles.container}>
+          <AppSessionBridge />
           <section style={styles.card}>
             <h1 style={styles.title}>Carregando convite...</h1>
             <p style={styles.muted}>Aguarde enquanto buscamos os dados da sua equipe.</p>
@@ -749,6 +759,7 @@ export default function TeamInvitePage({ params }: PageProps) {
     return (
       <main style={styles.page}>
         <div style={styles.container}>
+          <AppSessionBridge />
           <section style={styles.card}>
             <h1 style={styles.title}>Convite indisponível</h1>
             <p style={styles.errorText}>{error}</p>
@@ -761,6 +772,8 @@ export default function TeamInvitePage({ params }: PageProps) {
   return (
     <main style={styles.page}>
       <div style={styles.container}>
+        <AppSessionBridge />
+
         <section style={styles.heroCard}>
           {tournament?.coverImageUrl ? (
             <div

@@ -1,9 +1,10 @@
 "use client";
 
+import AppSessionBridge from "../../../../seller/tournaments/components/AppSessionBridge";
+import { useAuth } from "@/context/AuthContext";
 import {
   collection,
   doc,
-  documentId,
   getDoc,
   getDocs,
   orderBy,
@@ -13,7 +14,6 @@ import {
 } from "firebase/firestore";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { db } from "../../../../../src/lib/firebase";
-import { useAuth } from "@/context/AuthContext";
 
 type FirestoreTimestampLike = {
   toDate?: () => Date;
@@ -458,8 +458,19 @@ export default function MyTournamentInvitesClient() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (authLoading) return;
+
+    if (!uid) {
+      setInvites([]);
+      setMemberships([]);
+      setTeamsById({});
+      setTournamentsById({});
+      setLoading(false);
+      return;
+    }
+
     void loadPage();
-  }, [uid]);
+  }, [authLoading, uid]);
 
   const items = useMemo<CombinedItem[]>(() => {
     return memberships
@@ -502,8 +513,9 @@ export default function MyTournamentInvitesClient() {
       );
     }
 
-    return items.filter((item) =>
-      item.membership.inviteStatus === "accepted" || item.membership.role === "captain"
+    return items.filter(
+      (item) =>
+        item.membership.inviteStatus === "accepted" || item.membership.role === "captain"
     );
   }, [items, tab]);
 
@@ -528,14 +540,7 @@ export default function MyTournamentInvitesClient() {
   }
 
   async function loadPage() {
-    if (!uid) {
-      setInvites([]);
-      setMemberships([]);
-      setTeamsById({});
-      setTournamentsById({});
-      setLoading(false);
-      return;
-    }
+    if (!uid) return;
 
     setLoading(true);
     setError(null);
@@ -618,6 +623,7 @@ export default function MyTournamentInvitesClient() {
     try {
       const response = await fetch("/api/tournaments/team/invite/respond", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -662,13 +668,13 @@ export default function MyTournamentInvitesClient() {
     try {
       const response = await fetch("/api/mercadopago/create-member-preference", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           tournamentId: item.tournament.id,
           teamId: item.team.id,
-          userId: uid,
           source: "web_my_tournament_invites",
         }),
       });
@@ -698,7 +704,7 @@ export default function MyTournamentInvitesClient() {
     }
   }
 
-  if (loading || authLoading) {
+  if (authLoading || loading) {
     return (
       <main style={styles.page}>
         <div style={styles.container}>
@@ -730,6 +736,8 @@ export default function MyTournamentInvitesClient() {
   return (
     <main style={styles.page}>
       <div style={styles.container}>
+        <AppSessionBridge />
+
         <div style={styles.headerRow}>
           <div>
             <h1 style={styles.title}>Meus convites e inscrições</h1>
@@ -882,7 +890,7 @@ export default function MyTournamentInvitesClient() {
                   </div>
 
                   <div style={styles.actionsRow}>
-                    {canAccept ? (
+                    {canAccept && invite ? (
                       <>
                         <button
                           type="button"

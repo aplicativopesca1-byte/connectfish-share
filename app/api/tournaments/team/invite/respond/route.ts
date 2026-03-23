@@ -1,13 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "../../../../../../src/lib/firebaseAdmin";
+import { adminAuth } from "../../../../../../src/lib/firebaseAdminAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RequestBody = {
   inviteId?: string;
-  userId?: string;
   action?: "accept" | "decline" | string;
 };
 
@@ -23,12 +23,22 @@ function normalizeStatus(value: unknown) {
   return compactSpaces(value).toLowerCase();
 }
 
+// 🔒 NOVO: autenticação via cookie
+async function getAuthenticatedUserId(request: NextRequest) {
+  const raw = request.cookies.get("__session")?.value;
+  if (!raw) return null;
+
+  const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
+  const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
+
+  return decoded.uid || null;
+}
+
 async function recalculateTeamStatus(teamId: string) {
   const db = adminDb();
 
   const teamRef = db.collection("tournamentTeams").doc(teamId);
   const teamSnap = await teamRef.get();
-
   if (!teamSnap.exists) return;
 
   const membersSnap = await db
@@ -36,26 +46,24 @@ async function recalculateTeamStatus(teamId: string) {
     .where("teamId", "==", teamId)
     .get();
 
-  const members = membersSnap.docs.map(
-    (memberDoc) => memberDoc.data() as Record<string, unknown>
-  );
+  const members = membersSnap.docs.map((d) => d.data());
 
   const totalSlots = members.length;
 
   const acceptedMembersCount = members.filter(
-    (member) => normalizeStatus(member.inviteStatus) === "accepted"
+    (m) => normalizeStatus(m.inviteStatus) === "accepted"
   ).length;
 
   const paidMembersCount = members.filter(
-    (member) => normalizeStatus(member.paymentStatus) === "approved"
+    (m) => normalizeStatus(m.paymentStatus) === "approved"
   ).length;
 
   const hasPendingInvites = members.some(
-    (member) => normalizeStatus(member.inviteStatus) === "pending"
+    (m) => normalizeStatus(m.inviteStatus) === "pending"
   );
 
   const hasDeclinedMembers = members.some(
-    (member) => normalizeStatus(member.inviteStatus) === "declined"
+    (m) => normalizeStatus(m.inviteStatus) === "declined"
   );
 
   let teamStatus = "building";
@@ -87,24 +95,26 @@ async function recalculateTeamStatus(teamId: string) {
   });
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as RequestBody;
+    // 🔒 pega user da sessão
+    const userId = await getAuthenticatedUserId(request);
+
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, message: "Usuário não autenticado." },
+        { status: 401 }
+      );
+    }
+
+    const body = (await request.json().catch(() => ({}))) as RequestBody;
 
     const inviteId = compactSpaces(body.inviteId);
-    const userId = compactSpaces(body.userId);
     const action = normalizeAction(body.action);
 
     if (!inviteId) {
       return NextResponse.json(
         { success: false, message: "inviteId é obrigatório." },
-        { status: 400 }
-      );
-    }
-
-    if (!userId) {
-      return NextResponse.json(
-        { success: false, message: "userId é obrigatório." },
         { status: 400 }
       );
     }
@@ -135,11 +145,12 @@ export async function POST(request: Request) {
     const tournamentId = compactSpaces(inviteData.tournamentId);
     const currentInviteStatus = normalizeStatus(inviteData.status);
 
+    // 🔒 valida dono do convite
     if (invitedUserId !== userId) {
       return NextResponse.json(
         {
           success: false,
-          message: "Este convite não pertence ao usuário informado.",
+          message: "Este convite não pertence ao usuário autenticado.",
         },
         { status: 403 }
       );
@@ -149,7 +160,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           success: false,
-          message: "Convite inválido: dados da equipe ou torneio ausentes.",
+          message: "Convite inválido.",
         },
         { status: 400 }
       );
@@ -159,21 +170,23 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           success: false,
-          message: "Este convite já foi respondido ou não está mais disponível.",
+          message: "Convite já respondido.",
         },
         { status: 409 }
       );
     }
 
-    const teamMemberDocId = `${teamId}_${userId}`;
-    const teamMemberRef = db.collection("tournamentTeamMembers").doc(teamMemberDocId);
+    const teamMemberRef = db
+      .collection("tournamentTeamMembers")
+      .doc(`${teamId}_${userId}`);
+
     const teamMemberSnap = await teamMemberRef.get();
 
     if (!teamMemberSnap.exists) {
       return NextResponse.json(
         {
           success: false,
-          message: "Participante da equipe não encontrado.",
+          message: "Participante não encontrado.",
         },
         { status: 404 }
       );
@@ -218,19 +231,14 @@ export async function POST(request: Request) {
       teamId,
       tournamentId,
       action,
-      message:
-        action === "accept"
-          ? "Convite aceito com sucesso."
-          : "Convite recusado com sucesso.",
     });
   } catch (error) {
-    console.error("Erro ao responder convite do torneio:", error);
+    console.error("Erro ao responder convite:", error);
 
     return NextResponse.json(
       {
         success: false,
         message: "Erro interno ao responder convite.",
-        error: error instanceof Error ? error.message : "Erro desconhecido",
       },
       { status: 500 }
     );

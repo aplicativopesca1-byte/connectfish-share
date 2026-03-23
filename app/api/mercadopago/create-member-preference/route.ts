@@ -63,8 +63,12 @@ function normalizeStatus(value: unknown) {
 }
 
 function isBlockedPaymentStatus(value: unknown) {
+  return normalizeStatus(value) === "approved";
+}
+
+function isPendingLikePaymentStatus(value: unknown) {
   const status = normalizeStatus(value);
-  return status === "approved";
+  return status === "pending" || status === "in_process";
 }
 
 function isAllowedInviteStatus(value: unknown) {
@@ -131,7 +135,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = (await request.json()) as RequestBody;
+    const body = (await request.json().catch(() => ({}))) as RequestBody;
 
     const tournamentId = compactSpaces(body.tournamentId);
     const teamId = compactSpaces(body.teamId);
@@ -294,6 +298,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const existingPreferenceId = compactSpaces(memberData.preferenceId) || null;
+    const existingCheckoutUrl = compactSpaces(memberData.checkoutUrl) || null;
+
+    if (
+      existingPreferenceId &&
+      existingCheckoutUrl &&
+      isPendingLikePaymentStatus(paymentStatus)
+    ) {
+      return NextResponse.json(
+        {
+          success: true,
+          reused: true,
+          teamId,
+          userId,
+          preferenceId: existingPreferenceId,
+          checkoutUrl: existingCheckoutUrl,
+          message: "Pagamento já iniciado anteriormente.",
+        },
+        { status: 200 }
+      );
+    }
+
     const externalReference = buildExternalReference({
       tournamentId,
       teamId,
@@ -373,7 +399,10 @@ export async function POST(request: NextRequest) {
       });
 
       await memberRef.update({
-        registrationStatus: "payment_failed",
+        registrationStatus:
+          normalizeStatus(memberData.registrationStatus) === "confirmed"
+            ? "confirmed"
+            : "payment_failed",
         paymentStatus: "error",
         paymentStatusDetail: "preference_creation_failed",
         paymentStartedAt: FieldValue.serverTimestamp(),

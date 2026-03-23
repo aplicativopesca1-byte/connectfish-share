@@ -1,5 +1,7 @@
+"use client";
+
 import Link from "next/link";
-import type { CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 
 type Props = {
   params: {
@@ -10,16 +12,91 @@ type Props = {
   };
 };
 
+function AppSessionBridgeInline() {
+  const [processing, setProcessing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      if (typeof window === "undefined") return;
+
+      const hash = window.location.hash?.replace(/^#/, "") || "";
+      const params = new URLSearchParams(hash);
+      const appToken = params.get("appToken");
+
+      if (!appToken) return;
+
+      setProcessing(true);
+
+      try {
+        const response = await fetch("/api/sessionLogin", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ idToken: appToken }),
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || !data?.ok) {
+          throw new Error(data?.error || "Falha ao criar sessão web.");
+        }
+
+        const cleanUrl = window.location.pathname + window.location.search;
+
+        if (!cancelled) {
+          window.location.replace(cleanUrl);
+        }
+      } catch (error) {
+        console.error("[PaymentFailureBridge] erro:", error);
+        if (!cancelled) {
+          setProcessing(false);
+        }
+      }
+    }
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!processing) return null;
+
+  return <div style={styles.bridgeBox}>Validando seu acesso vindo do app...</div>;
+}
+
 export default function TournamentPaymentFailurePage({
   params,
   searchParams,
 }: Props) {
   const slug = params?.slug ?? "";
-  const registrationId = searchParams?.registrationId;
+
+  const [registrationId, setRegistrationId] = useState(
+    searchParams?.registrationId ?? ""
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const currentUrl = new URL(window.location.href);
+    const registrationIdFromUrl =
+      currentUrl.searchParams.get("registrationId") || "";
+
+    if (registrationIdFromUrl) {
+      setRegistrationId(registrationIdFromUrl);
+    }
+  }, []);
 
   return (
     <main style={styles.page}>
       <div style={styles.container}>
+        <AppSessionBridgeInline />
+
         <section style={styles.card}>
           <div style={styles.iconWrapFailure}>
             <span style={styles.icon}>×</span>
@@ -78,6 +155,17 @@ const styles: Record<string, CSSProperties> = {
     width: "100%",
     maxWidth: 760,
     margin: "0 auto",
+  },
+  bridgeBox: {
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 12,
+    background: "#EFF6FF",
+    border: "1px solid #BFDBFE",
+    color: "#1E40AF",
+    fontSize: 14,
+    fontWeight: 700,
+    textAlign: "center",
   },
   card: {
     background: "#FFFFFF",

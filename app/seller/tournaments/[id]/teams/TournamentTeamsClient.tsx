@@ -17,6 +17,7 @@ import {
 } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 import { db } from "../../../../../src/lib/firebase";
+import { useAuth } from "@/context/AuthContext";
 
 type Props = {
   tournamentId: string;
@@ -114,7 +115,12 @@ type TeamWithMembers = TournamentTeam & {
   members: TournamentTeamMember[];
 };
 
-type TeamFilter = "all" | "building" | "pending_invites" | "pending_payments" | "confirmed";
+type TeamFilter =
+  | "all"
+  | "building"
+  | "pending_invites"
+  | "pending_payments"
+  | "confirmed";
 
 function compactSpaces(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -504,13 +510,18 @@ function getMemberPaymentBadgeStyle(status: MemberPaymentStatus): CSSProperties 
 
 export default function TournamentTeamsClient({ tournamentId }: Props) {
   const router = useRouter();
+  const { uid, loading: authLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
 
   const [tournamentTitle, setTournamentTitle] = useState("Torneio");
-  const [tournamentLocation, setTournamentLocation] = useState("Local não definido");
+  const [tournamentLocation, setTournamentLocation] = useState(
+    "Local não definido"
+  );
   const [tournamentStatus, setTournamentStatus] = useState("scheduled");
-  const [tournamentSpecies, setTournamentSpecies] = useState("Espécie não definida");
+  const [tournamentSpecies, setTournamentSpecies] = useState(
+    "Espécie não definida"
+  );
 
   const [teams, setTeams] = useState<TeamWithMembers[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
@@ -547,8 +558,15 @@ export default function TournamentTeamsClient({ tournamentId }: Props) {
   }, [teams]);
 
   useEffect(() => {
+    if (authLoading) return;
+
+    if (!uid) {
+      router.push("/login");
+      return;
+    }
+
     void loadPage();
-  }, [tournamentId]);
+  }, [authLoading, uid, tournamentId]);
 
   async function loadPage() {
     setLoading(true);
@@ -597,7 +615,10 @@ export default function TournamentTeamsClient({ tournamentId }: Props) {
     );
 
     const membersSnap = await getDocs(
-      query(collection(db, "tournamentTeamMembers"), where("tournamentId", "==", tournamentId))
+      query(
+        collection(db, "tournamentTeamMembers"),
+        where("tournamentId", "==", tournamentId)
+      )
     );
 
     const members = membersSnap.docs.map((item) =>
@@ -632,13 +653,13 @@ export default function TournamentTeamsClient({ tournamentId }: Props) {
     });
   }
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <main style={styles.page}>
         <div style={styles.container}>
           <div style={styles.card}>
             <h1 style={styles.title}>Equipes e inscrições</h1>
-            <p style={styles.muted}>Carregando equipes do torneio...</p>
+            <p style={styles.muted}>Carregando painel...</p>
           </div>
         </div>
       </main>
@@ -686,11 +707,23 @@ export default function TournamentTeamsClient({ tournamentId }: Props) {
             <StatCard label="Espécie" value={tournamentSpecies} />
             <StatCard label="Total equipes" value={String(stats.total)} />
             <StatCard label="Em montagem" value={String(stats.building)} />
-            <StatCard label="Convites pendentes" value={String(stats.pendingInvites)} />
-            <StatCard label="Pagamentos pendentes" value={String(stats.pendingPayments)} />
+            <StatCard
+              label="Convites pendentes"
+              value={String(stats.pendingInvites)}
+            />
+            <StatCard
+              label="Pagamentos pendentes"
+              value={String(stats.pendingPayments)}
+            />
             <StatCard label="Confirmadas" value={String(stats.confirmed)} />
-            <StatCard label="Membros aceitos" value={String(stats.totalAcceptedMembers)} />
-            <StatCard label="Membros pagos" value={String(stats.totalPaidMembers)} />
+            <StatCard
+              label="Membros aceitos"
+              value={String(stats.totalAcceptedMembers)}
+            />
+            <StatCard
+              label="Membros pagos"
+              value={String(stats.totalPaidMembers)}
+            />
           </div>
         </div>
 
@@ -741,7 +774,9 @@ export default function TournamentTeamsClient({ tournamentId }: Props) {
             {filteredTeams.length === 0 ? (
               <div style={styles.emptyWrap}>
                 <div style={styles.emptyEmoji}>👥</div>
-                <p style={styles.muted}>Nenhuma equipe encontrada neste filtro.</p>
+                <p style={styles.muted}>
+                  Nenhuma equipe encontrada neste filtro.
+                </p>
               </div>
             ) : (
               <div style={styles.teamList}>
@@ -787,11 +822,18 @@ export default function TournamentTeamsClient({ tournamentId }: Props) {
                         />
                         <MiniInfo
                           label="Valor"
-                          value={formatMoney(team.amountPerParticipant, team.currency)}
+                          value={formatMoney(
+                            team.amountPerParticipant,
+                            team.currency
+                          )}
                         />
                         <MiniInfo
                           label="Pagamento"
-                          value={team.paymentMode === "individual" ? "Individual" : team.paymentMode}
+                          value={
+                            team.paymentMode === "individual"
+                              ? "Individual"
+                              : team.paymentMode
+                          }
                         />
                         <MiniInfo
                           label="Criada em"
@@ -848,7 +890,9 @@ export default function TournamentTeamsClient({ tournamentId }: Props) {
                   ) : (
                     <div style={styles.membersTable}>
                       <div style={styles.membersTableHeader}>
-                        <span style={styles.membersHeaderCell}>Participante</span>
+                        <span style={styles.membersHeaderCell}>
+                          Participante
+                        </span>
                         <span style={styles.membersHeaderCell}>Função</span>
                         <span style={styles.membersHeaderCell}>Convite</span>
                         <span style={styles.membersHeaderCell}>Inscrição</span>
@@ -861,10 +905,14 @@ export default function TournamentTeamsClient({ tournamentId }: Props) {
                           <div style={styles.memberIdentity}>
                             <span style={styles.memberName}>
                               {member.displayName ||
-                                (member.username ? `@${member.username}` : "Usuário")}
+                                (member.username
+                                  ? `@${member.username}`
+                                  : "Usuário")}
                             </span>
                             <span style={styles.memberSubtext}>
-                              {member.username ? `@${member.username}` : member.userId}
+                              {member.username
+                                ? `@${member.username}`
+                                : member.userId}
                             </span>
                           </div>
 
@@ -877,10 +925,16 @@ export default function TournamentTeamsClient({ tournamentId }: Props) {
                           </span>
 
                           <span style={styles.memberStatusText}>
-                            {getMemberRegistrationLabel(member.registrationStatus)}
+                            {getMemberRegistrationLabel(
+                              member.registrationStatus
+                            )}
                           </span>
 
-                          <span style={getMemberPaymentBadgeStyle(member.paymentStatus)}>
+                          <span
+                            style={getMemberPaymentBadgeStyle(
+                              member.paymentStatus
+                            )}
+                          >
                             {getMemberPaymentLabel(member.paymentStatus)}
                           </span>
 
@@ -1260,7 +1314,8 @@ const styles: Record<string, CSSProperties> = {
   },
   membersTableHeader: {
     display: "grid",
-    gridTemplateColumns: "minmax(180px, 1.4fr) 100px 110px 170px 120px 120px",
+    gridTemplateColumns:
+      "minmax(180px, 1.4fr) 100px 110px 170px 120px 120px",
     gap: 10,
     padding: "0 0 8px 0",
     borderBottom: "1px solid rgba(15,23,42,0.08)",
@@ -1272,7 +1327,8 @@ const styles: Record<string, CSSProperties> = {
   },
   membersTableRow: {
     display: "grid",
-    gridTemplateColumns: "minmax(180px, 1.4fr) 100px 110px 170px 120px 120px",
+    gridTemplateColumns:
+      "minmax(180px, 1.4fr) 100px 110px 170px 120px 120px",
     gap: 10,
     alignItems: "center",
     background: "#FFFFFF",
