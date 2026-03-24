@@ -23,17 +23,46 @@ function normalizeStatus(value: unknown) {
   return compactSpaces(value).toLowerCase();
 }
 
-// 🔒 NOVO: autenticação via cookie
+/* ============================================================
+   🔐 AUTH HÍBRIDA (APP + WEB)
+============================================================ */
 async function getAuthenticatedUserId(request: NextRequest) {
-  const raw = request.cookies.get("__session")?.value;
-  if (!raw) return null;
+  // 🔥 1. APP → Bearer Token
+  try {
+    const authHeader = request.headers.get("authorization") || "";
 
-  const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
-  const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
+    if (authHeader.toLowerCase().startsWith("bearer ")) {
+      const token = authHeader.slice(7).trim();
 
-  return decoded.uid || null;
+      if (token) {
+        const decoded = await adminAuth().verifyIdToken(token, true);
+        return decoded.uid || null;
+      }
+    }
+  } catch (error) {
+    console.error("Erro Bearer token:", error);
+  }
+
+  // 🔁 2. WEB → Cookie
+  try {
+    const raw = request.cookies.get("__session")?.value;
+    if (!raw) return null;
+
+    const sessionCookie = raw.includes("%")
+      ? decodeURIComponent(raw)
+      : raw;
+
+    const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
+    return decoded.uid || null;
+  } catch (error) {
+    console.error("Erro session cookie:", error);
+    return null;
+  }
 }
 
+/* ============================================================
+   🔁 RECALCULAR STATUS DO TIME
+============================================================ */
 async function recalculateTeamStatus(teamId: string) {
   const db = adminDb();
 
@@ -70,7 +99,10 @@ async function recalculateTeamStatus(teamId: string) {
 
   if (hasPendingInvites) {
     teamStatus = "pending_invites";
-  } else if (acceptedMembersCount > 0 && paidMembersCount < acceptedMembersCount) {
+  } else if (
+    acceptedMembersCount > 0 &&
+    paidMembersCount < acceptedMembersCount
+  ) {
     teamStatus = "pending_payments";
   }
 
@@ -95,9 +127,11 @@ async function recalculateTeamStatus(teamId: string) {
   });
 }
 
+/* ============================================================
+   🚀 MAIN
+============================================================ */
 export async function POST(request: NextRequest) {
   try {
-    // 🔒 pega user da sessão
     const userId = await getAuthenticatedUserId(request);
 
     if (!userId) {
@@ -145,7 +179,7 @@ export async function POST(request: NextRequest) {
     const tournamentId = compactSpaces(inviteData.tournamentId);
     const currentInviteStatus = normalizeStatus(inviteData.status);
 
-    // 🔒 valida dono do convite
+    // 🔒 valida dono
     if (invitedUserId !== userId) {
       return NextResponse.json(
         {
@@ -158,20 +192,14 @@ export async function POST(request: NextRequest) {
 
     if (!teamId || !tournamentId) {
       return NextResponse.json(
-        {
-          success: false,
-          message: "Convite inválido.",
-        },
+        { success: false, message: "Convite inválido." },
         { status: 400 }
       );
     }
 
     if (currentInviteStatus !== "pending") {
       return NextResponse.json(
-        {
-          success: false,
-          message: "Convite já respondido.",
-        },
+        { success: false, message: "Convite já respondido." },
         { status: 409 }
       );
     }
@@ -184,10 +212,7 @@ export async function POST(request: NextRequest) {
 
     if (!teamMemberSnap.exists) {
       return NextResponse.json(
-        {
-          success: false,
-          message: "Participante não encontrado.",
-        },
+        { success: false, message: "Participante não encontrado." },
         { status: 404 }
       );
     }
