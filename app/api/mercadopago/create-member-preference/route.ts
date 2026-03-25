@@ -85,14 +85,33 @@ function isAllowedRegistrationStatus(value: unknown) {
 }
 
 async function getAuthenticatedUserId(request: NextRequest) {
-  const raw = request.cookies.get("__session")?.value;
+  try {
+    const authHeader = request.headers.get("authorization") || "";
 
-  if (!raw) return null;
+    if (authHeader.toLowerCase().startsWith("bearer ")) {
+      const token = authHeader.slice(7).trim();
 
-  const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
-  const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
+      if (token) {
+        const decoded = await adminAuth().verifyIdToken(token, true);
+        return decoded.uid || null;
+      }
+    }
+  } catch (error) {
+    console.error("Erro Bearer token:", error);
+  }
 
-  return decoded.uid || null;
+  try {
+    const raw = request.cookies.get("__session")?.value;
+    if (!raw) return null;
+
+    const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
+    const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
+
+    return decoded.uid || null;
+  } catch (error) {
+    console.error("Erro session cookie:", error);
+    return null;
+  }
 }
 
 export async function POST(request: NextRequest) {

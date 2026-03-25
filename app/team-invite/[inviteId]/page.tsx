@@ -766,11 +766,20 @@ export default function TeamInvitePage({ params }: PageProps) {
     setMessage(null);
 
     try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+
+      if (!user) {
+        throw new Error("Usuário não autenticado.");
+      }
+
+      const idToken = await user.getIdToken(true);
+
       const response = await fetch("/api/mercadopago/create-member-preference", {
         method: "POST",
-        credentials: "include",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({
           tournamentId: tournament.id,
