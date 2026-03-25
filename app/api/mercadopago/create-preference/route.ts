@@ -223,6 +223,29 @@ function buildBackUrls(params: {
   };
 }
 
+function splitCaptainName(fullName: string) {
+  const parts = compactSpaces(fullName).split(" ").filter(Boolean);
+
+  if (parts.length === 0) {
+    return {
+      firstName: "Participante",
+      lastName: "ConnectFish",
+    };
+  }
+
+  if (parts.length === 1) {
+    return {
+      firstName: parts[0],
+      lastName: parts[0],
+    };
+  }
+
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(" "),
+  };
+}
+
 export async function POST(request: Request) {
   try {
     const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
@@ -464,6 +487,8 @@ export async function POST(request: Request) {
       registrationId: registrationRef.id,
     });
 
+    const { firstName, lastName } = splitCaptainName(captainName);
+
     const preferencePayload = {
       items: [
         {
@@ -476,8 +501,9 @@ export async function POST(request: Request) {
         },
       ],
       payer: {
-        name: captainName,
         email: captainEmail,
+        first_name: firstName,
+        last_name: lastName,
       },
       external_reference: externalReference,
       notification_url: `${baseUrl}/api/mercadopago/webhook`,
