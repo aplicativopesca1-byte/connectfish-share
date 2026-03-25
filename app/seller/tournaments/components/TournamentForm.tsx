@@ -8,12 +8,16 @@ import {
   type ReactNode,
 } from "react";
 import {
-  addDoc,
   collection,
   doc,
   getDoc,
+  getDocs,
+  limit,
+  query,
   serverTimestamp,
+  setDoc,
   updateDoc,
+  where,
 } from "firebase/firestore";
 import { useRouter, useSearchParams } from "next/navigation";
 import { db } from "../../../../src/lib/firebase";
@@ -74,18 +78,14 @@ type TournamentDoc = {
   scheduledStartAt?: unknown;
   scheduledEndAt?: unknown;
   registrationUrl?: string | null;
+  publicUrl?: string | null;
   adminUrl?: string | null;
   boundaryEnabled?: boolean;
-
-  // formato novo
   boundary?: TournamentBoundary;
-
-  // compatibilidade com formato antigo
   boundaryType?: string | null;
   boundaryCenter?: LatLng | null;
   boundaryRadiusM?: number | null;
   boundaryPolygonPoints?: LatLng[] | null;
-
   publishedAt?: unknown;
   startedAt?: unknown;
   finishedAt?: unknown;
@@ -99,6 +99,10 @@ type BoundarySummary = {
   polygonPointsCount: number;
   isConfigured: boolean;
 };
+
+const APP_BASE_URL =
+  process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") ||
+  "https://connectfish.app";
 
 function safeTrim(value: unknown) {
   return String(value ?? "").trim();
@@ -259,7 +263,7 @@ function parsePolygonPoints(value: unknown): LatLng[] {
 }
 
 function calculatePolygonCenter(points: LatLng[]): LatLng | null {
-  if (!Array.isArray(points) || points.length === 0) return null;
+  if (!points.length) return null;
 
   const sum = points.reduce(
     (acc, point) => {
@@ -290,7 +294,6 @@ function buildBoundarySummary(data: TournamentDoc): BoundarySummary {
     };
   }
 
-  // 1) formato novo: boundary
   const boundary = data.boundary;
 
   if (boundary?.type === "circle") {
@@ -323,7 +326,6 @@ function buildBoundarySummary(data: TournamentDoc): BoundarySummary {
     };
   }
 
-  // 2) fallback para formato antigo
   const typeRaw = safeTrim(data.boundaryType).toLowerCase();
   const type =
     typeRaw === "circle" || typeRaw === "polygon"
@@ -358,6 +360,32 @@ function getStepFromSearchParam(raw: string | null): SetupStep {
   if (raw === "2") return 2;
   if (raw === "3") return 3;
   return 1;
+}
+
+function buildTournamentPublicPath(slug: string, tournamentId?: string | null) {
+  const safeSlug = safeTrim(slug);
+  const safeId = safeTrim(tournamentId);
+
+  if (!safeSlug) return null;
+
+  const path = `/tournaments/${safeSlug}`;
+
+  if (!safeId) {
+    return `${APP_BASE_URL}${path}`;
+  }
+
+  const params = new URLSearchParams({ id: safeId });
+  return `${APP_BASE_URL}${path}?${params.toString()}`;
+}
+
+function buildTournamentUrls(slug: string, tournamentId: string) {
+  const safeId = safeTrim(tournamentId);
+
+  return {
+    publicUrl: buildTournamentPublicPath(slug, safeId),
+    registrationUrl: buildTournamentPublicPath(slug, safeId),
+    adminUrl: safeId ? `${APP_BASE_URL}/seller/tournaments/${safeId}` : null,
+  };
 }
 
 export default function TournamentForm({
@@ -403,6 +431,10 @@ export default function TournamentForm({
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [finishedAt, setFinishedAt] = useState<string | null>(null);
 
+  const [loadedRegistrationUrl, setLoadedRegistrationUrl] = useState<string | null>(null);
+  const [loadedPublicUrl, setLoadedPublicUrl] = useState<string | null>(null);
+  const [loadedAdminUrl, setLoadedAdminUrl] = useState<string | null>(null);
+
   const [boundarySummary, setBoundarySummary] = useState<BoundarySummary>({
     enabled: true,
     type: null,
@@ -425,6 +457,25 @@ export default function TournamentForm({
   const canEditStructure = !isOperationallyLocked;
 
   const parsedRules = useMemo(() => parseRules(rulesText), [rulesText]);
+
+  const previewUrls = useMemo(() => {
+    const urls = buildTournamentUrls(
+      finalSlugPreview,
+      tournamentId || "novo-torneio"
+    );
+
+    return {
+      publicUrl: loadedPublicUrl || urls.publicUrl,
+      registrationUrl: loadedRegistrationUrl || urls.registrationUrl,
+      adminUrl: loadedAdminUrl || urls.adminUrl,
+    };
+  }, [
+    finalSlugPreview,
+    tournamentId,
+    loadedPublicUrl,
+    loadedRegistrationUrl,
+    loadedAdminUrl,
+  ]);
 
   const basicsValidation = useMemo(() => {
     const missing: string[] = [];
@@ -485,6 +536,10 @@ export default function TournamentForm({
         ok: !!finalSlugPreview.trim(),
       },
       {
+        label: "URLs públicas geradas",
+        ok: !!previewUrls.registrationUrl && !!previewUrls.publicUrl,
+      },
+      {
         label: "Torneio em rascunho antes de publicar",
         ok: status === "draft" || status === "scheduled",
       },
@@ -494,6 +549,9 @@ export default function TournamentForm({
       ...basicsValidation.missing,
       ...(boundaryEnabled && !boundarySummary.isConfigured
         ? ["Perímetro do torneio"]
+        : []),
+      ...(!previewUrls.registrationUrl || !previewUrls.publicUrl
+        ? ["URLs públicas do torneio"]
         : []),
     ];
 
@@ -507,6 +565,8 @@ export default function TournamentForm({
     boundaryEnabled,
     boundarySummary.isConfigured,
     finalSlugPreview,
+    previewUrls.registrationUrl,
+    previewUrls.publicUrl,
     status,
   ]);
 
@@ -559,6 +619,9 @@ export default function TournamentForm({
       setPublishedAt(toIsoStringSafe(data.publishedAt));
       setStartedAt(toIsoStringSafe(data.startedAt));
       setFinishedAt(toIsoStringSafe(data.finishedAt));
+      setLoadedRegistrationUrl(data.registrationUrl || null);
+      setLoadedPublicUrl(data.publicUrl || null);
+      setLoadedAdminUrl(data.adminUrl || null);
       setBoundarySummary(buildBoundarySummary(data));
     } catch (err) {
       console.error("Erro ao carregar torneio:", err);
@@ -568,7 +631,33 @@ export default function TournamentForm({
     }
   }
 
-  function getBasePayload() {
+  async function validateUniqueSlug(slugValue: string) {
+    const safeSlug = safeTrim(slugValue);
+    if (!safeSlug) {
+      throw new Error("Slug público inválido.");
+    }
+
+    const slugQuery = query(
+      collection(db, "tournaments"),
+      where("slug", "==", safeSlug),
+      limit(5)
+    );
+
+    const snap = await getDocs(slugQuery);
+
+    const conflict = snap.docs.find((docSnap) => docSnap.id !== tournamentId);
+    if (conflict) {
+      throw new Error(
+        "Já existe um torneio com este slug público. Escolha outro slug."
+      );
+    }
+  }
+
+  function getBasePayload(tournamentDocId?: string) {
+    const urls = tournamentDocId
+      ? buildTournamentUrls(finalSlugPreview, tournamentDocId)
+      : { registrationUrl: null, publicUrl: null, adminUrl: null };
+
     return {
       title: title.trim(),
       subtitle: subtitle.trim() || null,
@@ -585,6 +674,9 @@ export default function TournamentForm({
       scheduledStartAt: scheduledStartAt ? new Date(scheduledStartAt) : null,
       scheduledEndAt: scheduledEndAt ? new Date(scheduledEndAt) : null,
       boundaryEnabled,
+      registrationUrl: urls.registrationUrl,
+      publicUrl: urls.publicUrl,
+      adminUrl: urls.adminUrl,
       updatedAt: serverTimestamp(),
     };
   }
@@ -598,10 +690,14 @@ export default function TournamentForm({
       throw new Error("Usuário não identificado para criar o torneio.");
     }
 
-    const ref = await addDoc(collection(db, "tournaments"), {
-      ...getBasePayload(),
-      status: "draft",
-      visibility: "draft",
+    await validateUniqueSlug(finalSlugPreview);
+
+    const ref = doc(collection(db, "tournaments"));
+
+    const payload = {
+      ...getBasePayload(ref.id),
+      status: "draft" as TournamentStatus,
+      visibility: "draft" as TournamentVisibility,
       setupStep: stepAfterCreate,
       basicsCompleted: basicsValidation.valid,
       boundaryCompleted: boundaryEnabled ? boundarySummary.isConfigured : true,
@@ -610,7 +706,13 @@ export default function TournamentForm({
       createdBy: resolvedUserId,
       createdByName: resolvedUserName,
       createdAt: serverTimestamp(),
-    });
+    };
+
+    await setDoc(ref, payload);
+
+    setLoadedRegistrationUrl(payload.registrationUrl || null);
+    setLoadedPublicUrl(payload.publicUrl || null);
+    setLoadedAdminUrl(payload.adminUrl || null);
 
     return ref.id;
   }
@@ -625,21 +727,27 @@ export default function TournamentForm({
 
     try {
       const nextStep = options?.nextStep ?? currentStep;
+      await validateUniqueSlug(finalSlugPreview);
 
       if (isEdit && tournamentId) {
         const ref = doc(db, "tournaments", tournamentId);
 
-        await updateDoc(ref, {
-          ...getBasePayload(),
-          status: "draft",
-          visibility: "draft",
+        const payload = {
+          ...getBasePayload(tournamentId),
+          status: "draft" as TournamentStatus,
+          visibility: "draft" as TournamentVisibility,
           setupStep: nextStep,
           basicsCompleted: basicsValidation.valid,
           boundaryCompleted: boundaryEnabled ? boundarySummary.isConfigured : true,
           publishReady: false,
           missingFields: reviewChecklist.missingFields,
-        });
+        };
 
+        await updateDoc(ref, payload);
+
+        setLoadedRegistrationUrl(payload.registrationUrl || null);
+        setLoadedPublicUrl(payload.publicUrl || null);
+        setLoadedAdminUrl(payload.adminUrl || null);
         setStatus("draft");
         setVisibility("draft");
         setMessage(options?.successMessage || "Rascunho salvo com sucesso.");
@@ -745,12 +853,13 @@ export default function TournamentForm({
     setSaving(true);
 
     try {
-      const ref = doc(db, "tournaments", tournamentId);
+      await validateUniqueSlug(finalSlugPreview);
 
-      await updateDoc(ref, {
-        ...getBasePayload(),
-        status: "scheduled",
-        visibility: "published",
+      const ref = doc(db, "tournaments", tournamentId);
+      const payload = {
+        ...getBasePayload(tournamentId),
+        status: "scheduled" as TournamentStatus,
+        visibility: "published" as TournamentVisibility,
         setupStep: 3,
         basicsCompleted: true,
         boundaryCompleted: boundaryEnabled ? boundarySummary.isConfigured : true,
@@ -758,14 +867,21 @@ export default function TournamentForm({
         missingFields: [],
         publishedAt: publishedAt ? new Date(publishedAt) : serverTimestamp(),
         updatedAt: serverTimestamp(),
-      });
+      };
 
+      await updateDoc(ref, payload);
+
+      setLoadedRegistrationUrl(payload.registrationUrl || null);
+      setLoadedPublicUrl(payload.publicUrl || null);
+      setLoadedAdminUrl(payload.adminUrl || null);
       setStatus("scheduled");
       setVisibility("published");
       setMessage("Torneio publicado com sucesso.");
     } catch (err) {
       console.error("Erro ao publicar torneio:", err);
-      setError("Não foi possível publicar o torneio.");
+      setError(
+        err instanceof Error ? err.message : "Não foi possível publicar o torneio."
+      );
     } finally {
       setSaving(false);
     }
@@ -1111,6 +1227,16 @@ O ranking só atualiza após validação da organização.`}
               />
             </div>
 
+            <div style={styles.urlPreviewBox}>
+              <p style={styles.urlPreviewTitle}>URLs geradas</p>
+              <p style={styles.urlPreviewText}>
+                <strong>Pública:</strong> {previewUrls.publicUrl || "—"}
+              </p>
+              <p style={styles.urlPreviewText}>
+                <strong>Inscrição:</strong> {previewUrls.registrationUrl || "—"}
+              </p>
+            </div>
+
             {!basicsValidation.valid ? (
               <div style={styles.warningBox}>
                 <p style={styles.warningTitle}>Antes de avançar</p>
@@ -1246,7 +1372,7 @@ O ranking só atualiza após validação da organização.`}
                 <>
                   <p style={styles.boundaryStatusTitle}>Perímetro desativado</p>
                   <p style={styles.boundaryStatusText}>
-                    O organizador optou por não exigir geofence neste torneio.
+                    O torneio será publicado sem validação por área.
                   </p>
                 </>
               )}
@@ -1255,23 +1381,10 @@ O ranking só atualiza após validação da organização.`}
             <div style={styles.actionsRow}>
               <button
                 type="button"
-                onClick={() => {
-                  setCurrentStep(1);
-                  if (isEdit && tournamentId) {
-                    router.push(`/seller/tournaments/${tournamentId}/edit?step=1`);
-                  }
-                }}
-                style={styles.secondaryButton}
-              >
-                Voltar para informações
-              </button>
-
-              <button
-                type="button"
                 onClick={handleOpenBoundaryEditor}
                 disabled={!isEdit || !tournamentId}
                 style={{
-                  ...styles.secondaryBlueButton,
+                  ...styles.primaryButton,
                   ...((!isEdit || !tournamentId) ? styles.disabledButton : {}),
                 }}
               >
@@ -1280,20 +1393,10 @@ O ranking só atualiza após validação da organização.`}
 
               <button
                 type="button"
-                onClick={() => void loadTournament()}
-                disabled={saving}
-                style={styles.secondaryButton}
-              >
-                Atualizar status do perímetro
-              </button>
-
-              <button
-                type="button"
                 onClick={() =>
                   void saveDraft({
                     nextStep: 2,
-                    successMessage: "Rascunho salvo com sucesso.",
-                    redirectToStep: true,
+                    successMessage: "Perímetro salvo no rascunho.",
                   })
                 }
                 disabled={saving}
@@ -1308,15 +1411,13 @@ O ranking só atualiza após validação da organização.`}
               <button
                 type="button"
                 onClick={() => void handleContinueToReview()}
-                disabled={saving || (boundaryEnabled && !boundarySummary.isConfigured)}
+                disabled={saving}
                 style={{
                   ...styles.primaryButton,
-                  ...((saving || (boundaryEnabled && !boundarySummary.isConfigured))
-                    ? styles.disabledButton
-                    : {}),
+                  ...(saving ? styles.disabledButton : {}),
                 }}
               >
-                Ir para revisão final
+                {saving ? "Salvando..." : "Continuar para revisão"}
               </button>
             </div>
           </section>
@@ -1327,10 +1428,9 @@ O ranking só atualiza após validação da organização.`}
         <>
           <section style={styles.card}>
             <div style={styles.sectionHeader}>
-              <h2 style={styles.sectionTitle}>Etapa 3 · Revisão e publicação</h2>
+              <h2 style={styles.sectionTitle}>Etapa 3 · Revisão final</h2>
               <p style={styles.sectionSub}>
-                Confira o checklist final antes de deixar o torneio visível ao
-                público.
+                Faça a conferência final antes de publicar.
               </p>
             </div>
 
@@ -1343,53 +1443,43 @@ O ranking só atualiza após validação da organização.`}
                     ...(item.ok ? styles.reviewItemOk : styles.reviewItemPending),
                   }}
                 >
-                  <span style={styles.reviewItemIcon}>{item.ok ? "✓" : "!"}</span>
-                  <span style={styles.reviewItemText}>{item.label}</span>
+                  <span style={styles.reviewIcon}>{item.ok ? "✓" : "!"}</span>
+                  <span>{item.label}</span>
                 </div>
               ))}
             </div>
 
             <div style={styles.previewGrid}>
               <PreviewCard label="Título" value={title || "—"} />
-              <PreviewCard label="Slug público" value={finalSlugPreview || "—"} />
-              <PreviewCard label="Local" value={location || "—"} />
+              <PreviewCard label="Slug" value={finalSlugPreview || "—"} />
+              <PreviewCard label="Status" value={getStatusLabel(status)} />
               <PreviewCard
                 label="Inscrição"
                 value={formatMoney(entryFee || 0, currency || "BRL")}
               />
               <PreviewCard
-                label="Perímetro"
-                value={
-                  boundaryEnabled
-                    ? boundarySummary.isConfigured
-                      ? "Configurado"
-                      : "Pendente"
-                    : "Desativado"
-                }
+                label="URL pública"
+                value={previewUrls.publicUrl || "—"}
               />
               <PreviewCard
-                label="Visibilidade"
-                value={
-                  visibility === "published"
-                    ? "Visível ao público"
-                    : "Apenas criador vê"
-                }
+                label="URL inscrição"
+                value={previewUrls.registrationUrl || "—"}
               />
             </div>
 
             {!reviewChecklist.publishReady ? (
               <div style={styles.warningBox}>
-                <p style={styles.warningTitle}>Publicação bloqueada</p>
+                <p style={styles.warningTitle}>Ainda faltam ajustes</p>
                 <p style={styles.warningText}>
-                  Ainda faltam: {reviewChecklist.missingFields.join(", ")}.
+                  {reviewChecklist.missingFields.join(", ")}.
                 </p>
               </div>
             ) : (
               <div style={styles.successBox}>
-                <p style={styles.successBoxTitle}>Tudo pronto para publicar</p>
+                <p style={styles.successTitle}>Tudo pronto</p>
                 <p style={styles.successBoxText}>
-                  Ao publicar, o torneio deixa de ser rascunho e passa a ficar
-                  visível para os usuários realizarem inscrições.
+                  O torneio está consistente para publicação, com slug único e URLs
+                  públicas persistidas.
                 </p>
               </div>
             )}
@@ -1648,128 +1738,114 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "center",
     background: "#0B3C5D",
     color: "#FFFFFF",
-    fontSize: 12,
     fontWeight: 900,
-    flexShrink: 0,
+    fontSize: 12,
   },
 
   stepLabel: {
-    fontSize: 13,
-    fontWeight: 900,
+    fontWeight: 800,
     color: "#0F172A",
+    fontSize: 14,
   },
 
   title: {
     margin: 0,
     fontSize: 28,
-    fontWeight: 1000,
-    color: "#0B3C5D",
-  },
-
-  muted: {
-    margin: "8px 0 0 0",
-    color: "#64748B",
-    fontSize: 14,
-    fontWeight: 700,
+    fontWeight: 900,
+    color: "#0F172A",
   },
 
   sectionHeader: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
     marginBottom: 16,
   },
 
   sectionTitle: {
     margin: 0,
-    fontSize: 18,
-    fontWeight: 1000,
+    fontSize: 20,
+    fontWeight: 900,
     color: "#0F172A",
   },
 
   sectionSub: {
-    margin: "6px 0 0 0",
+    margin: 0,
     color: "#64748B",
-    fontSize: 13,
-    fontWeight: 700,
-    lineHeight: 1.6,
+    lineHeight: 1.55,
+    fontSize: 14,
+  },
+
+  muted: {
+    margin: 0,
+    color: "#64748B",
   },
 
   formGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-    gap: 12,
+    gap: 16,
   },
 
   field: {
     display: "flex",
     flexDirection: "column",
     gap: 8,
-    marginBottom: 14,
+    marginBottom: 16,
   },
 
   label: {
     fontSize: 13,
-    color: "#475569",
-    fontWeight: 900,
-  },
-
-  input: {
-    width: "100%",
-    border: "1px solid rgba(15,23,42,0.12)",
-    borderRadius: 12,
-    padding: "12px 14px",
-    fontSize: 14,
-    color: "#0F172A",
-    background: "#FFFFFF",
-    outline: "none",
-  },
-
-  inputReadonly: {
-    width: "100%",
-    border: "1px solid rgba(15,23,42,0.12)",
-    borderRadius: 12,
-    padding: "12px 14px",
-    fontSize: 14,
-    color: "#475569",
-    background: "#F8FAFC",
-    outline: "none",
-  },
-
-  textarea: {
-    minHeight: 110,
-    resize: "vertical",
-    border: "1px solid rgba(15,23,42,0.12)",
-    borderRadius: 12,
-    padding: "12px 14px",
-    fontSize: 14,
-    color: "#0F172A",
-    background: "#FFFFFF",
-    outline: "none",
-    fontFamily: "system-ui, sans-serif",
-  },
-
-  textareaLarge: {
-    minHeight: 170,
-    resize: "vertical",
-    border: "1px solid rgba(15,23,42,0.12)",
-    borderRadius: 12,
-    padding: "12px 14px",
-    fontSize: 14,
-    color: "#0F172A",
-    background: "#FFFFFF",
-    outline: "none",
-    fontFamily: "system-ui, sans-serif",
-  },
-
-  toggleRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 8,
     fontWeight: 800,
     color: "#0F172A",
   },
 
-  toggleLabel: {
+  input: {
+    width: "100%",
+    borderRadius: 14,
+    border: "1px solid rgba(15,23,42,0.12)",
+    padding: "12px 14px",
     fontSize: 14,
+    color: "#0F172A",
+    outline: "none",
+    background: "#FFFFFF",
+  },
+
+  inputReadonly: {
+    width: "100%",
+    borderRadius: 14,
+    border: "1px solid rgba(15,23,42,0.12)",
+    padding: "12px 14px",
+    fontSize: 14,
+    color: "#64748B",
+    outline: "none",
+    background: "#F8FAFC",
+  },
+
+  textarea: {
+    width: "100%",
+    minHeight: 110,
+    borderRadius: 14,
+    border: "1px solid rgba(15,23,42,0.12)",
+    padding: "12px 14px",
+    fontSize: 14,
+    color: "#0F172A",
+    outline: "none",
+    resize: "vertical",
+    background: "#FFFFFF",
+  },
+
+  textareaLarge: {
+    width: "100%",
+    minHeight: 170,
+    borderRadius: 14,
+    border: "1px solid rgba(15,23,42,0.12)",
+    padding: "12px 14px",
+    fontSize: 14,
+    color: "#0F172A",
+    outline: "none",
+    resize: "vertical",
+    background: "#FFFFFF",
   },
 
   previewGrid: {
@@ -1779,118 +1855,148 @@ const styles: Record<string, CSSProperties> = {
   },
 
   previewCard: {
-    background: "#F8FAFC",
-    border: "1px solid rgba(15,23,42,0.06)",
-    borderRadius: 14,
+    border: "1px solid rgba(15,23,42,0.08)",
+    borderRadius: 16,
     padding: 14,
+    background: "#F8FAFC",
   },
 
   previewLabel: {
     margin: 0,
-    color: "#64748B",
     fontSize: 12,
     fontWeight: 800,
+    color: "#64748B",
   },
 
   previewValue: {
     margin: "6px 0 0 0",
-    color: "#0F172A",
     fontSize: 14,
-    fontWeight: 1000,
-    lineHeight: 1.4,
+    fontWeight: 900,
+    color: "#0F172A",
+    wordBreak: "break-word",
+  },
+
+  urlPreviewBox: {
+    marginTop: 16,
+    borderRadius: 16,
+    background: "#F8FAFC",
+    border: "1px solid rgba(15,23,42,0.08)",
+    padding: 14,
+  },
+
+  urlPreviewTitle: {
+    margin: 0,
+    fontWeight: 900,
+    color: "#0F172A",
+  },
+
+  urlPreviewText: {
+    margin: "8px 0 0 0",
+    color: "#334155",
+    fontSize: 14,
+    lineHeight: 1.45,
+    wordBreak: "break-all",
   },
 
   warningBox: {
     marginTop: 16,
     borderRadius: 16,
-    padding: 16,
     background: "#FEF3C7",
-    border: "1px solid #FDE68A",
+    border: "1px solid #FCD34D",
+    padding: 14,
   },
 
   warningTitle: {
     margin: 0,
-    color: "#92400E",
-    fontSize: 14,
     fontWeight: 900,
+    color: "#92400E",
   },
 
   warningText: {
-    margin: "8px 0 0 0",
+    margin: "6px 0 0 0",
     color: "#92400E",
-    fontSize: 14,
-    fontWeight: 700,
-    lineHeight: 1.6,
+    lineHeight: 1.5,
   },
 
   successBox: {
     marginTop: 16,
     borderRadius: 16,
-    padding: 16,
-    background: "#ECFDF5",
-    border: "1px solid #A7F3D0",
+    background: "#DCFCE7",
+    border: "1px solid #86EFAC",
+    padding: 14,
   },
 
-  successBoxTitle: {
+  successTitle: {
     margin: 0,
-    color: "#166534",
-    fontSize: 14,
     fontWeight: 900,
+    color: "#166534",
   },
 
   successBoxText: {
-    margin: "8px 0 0 0",
+    margin: "6px 0 0 0",
     color: "#166534",
-    fontSize: 14,
+    lineHeight: 1.5,
+  },
+
+  toggleRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 16,
     fontWeight: 700,
-    lineHeight: 1.6,
+    color: "#0F172A",
+  },
+
+  toggleLabel: {
+    fontSize: 14,
+    fontWeight: 800,
+    color: "#0F172A",
   },
 
   boundarySummaryGrid: {
-    marginTop: 16,
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
     gap: 12,
+    marginBottom: 16,
   },
 
   boundaryStatusBox: {
-    marginTop: 16,
     borderRadius: 16,
-    padding: 16,
+    padding: 14,
+    marginBottom: 16,
+    border: "1px solid transparent",
   },
 
   boundaryStatusOk: {
-    background: "#ECFDF5",
-    border: "1px solid #A7F3D0",
+    background: "#DCFCE7",
+    border: "1px solid #86EFAC",
   },
 
   boundaryStatusPending: {
-    background: "#FEF2F2",
-    border: "1px solid #FECACA",
+    background: "#FEF3C7",
+    border: "1px solid #FCD34D",
   },
 
   boundaryStatusNeutral: {
-    background: "#EFF6FF",
-    border: "1px solid #BFDBFE",
+    background: "#E0F2FE",
+    border: "1px solid #7DD3FC",
   },
 
   boundaryStatusTitle: {
     margin: 0,
-    fontSize: 14,
     fontWeight: 900,
     color: "#0F172A",
   },
 
   boundaryStatusText: {
-    margin: "8px 0 0 0",
-    fontSize: 14,
-    fontWeight: 700,
-    lineHeight: 1.6,
-    color: "#475569",
+    margin: "6px 0 0 0",
+    color: "#334155",
+    lineHeight: 1.5,
   },
 
   reviewGrid: {
     display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
     gap: 10,
     marginBottom: 16,
   },
@@ -1901,89 +2007,66 @@ const styles: Record<string, CSSProperties> = {
     gap: 10,
     borderRadius: 14,
     padding: "12px 14px",
+    fontWeight: 800,
   },
 
   reviewItemOk: {
-    background: "#ECFDF5",
-    border: "1px solid #A7F3D0",
+    background: "#F0FDF4",
+    border: "1px solid #BBF7D0",
+    color: "#166534",
   },
 
   reviewItemPending: {
-    background: "#FEF2F2",
-    border: "1px solid #FECACA",
+    background: "#FFF7ED",
+    border: "1px solid #FDBA74",
+    color: "#9A3412",
   },
 
-  reviewItemIcon: {
-    width: 22,
-    height: 22,
-    borderRadius: 999,
+  reviewIcon: {
+    width: 20,
     display: "inline-flex",
-    alignItems: "center",
     justifyContent: "center",
-    background: "#FFFFFF",
-    fontSize: 12,
     fontWeight: 900,
-    flexShrink: 0,
-  },
-
-  reviewItemText: {
-    color: "#0F172A",
-    fontSize: 14,
-    fontWeight: 800,
   },
 
   actionsRow: {
     display: "flex",
-    gap: 10,
+    gap: 12,
     flexWrap: "wrap",
   },
 
   actionsFooter: {
     display: "flex",
-    justifyContent: "flex-start",
+    justifyContent: "flex-end",
   },
 
   primaryButton: {
     border: "none",
-    borderRadius: 12,
+    borderRadius: 14,
     padding: "12px 16px",
     background: "#0B3C5D",
     color: "#FFFFFF",
-    fontSize: 14,
     fontWeight: 900,
     cursor: "pointer",
   },
 
   secondaryButton: {
-    border: "1px solid rgba(15,23,42,0.08)",
-    borderRadius: 12,
+    border: "1px solid rgba(15,23,42,0.12)",
+    borderRadius: 14,
     padding: "12px 16px",
     background: "#FFFFFF",
     color: "#0F172A",
-    fontSize: 14,
-    fontWeight: 900,
-    cursor: "pointer",
-  },
-
-  secondaryBlueButton: {
-    border: "1px solid #BFDBFE",
-    borderRadius: 12,
-    padding: "12px 16px",
-    background: "#EFF6FF",
-    color: "#1D4ED8",
-    fontSize: 14,
     fontWeight: 900,
     cursor: "pointer",
   },
 
   ghostButton: {
-    border: "none",
-    borderRadius: 12,
-    padding: "12px 0",
-    background: "transparent",
-    color: "#475569",
-    fontSize: 14,
-    fontWeight: 900,
+    border: "1px solid rgba(15,23,42,0.08)",
+    borderRadius: 14,
+    padding: "12px 16px",
+    background: "#FFFFFF",
+    color: "#0F172A",
+    fontWeight: 800,
     cursor: "pointer",
   },
 

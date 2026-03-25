@@ -8,7 +8,14 @@ import {
   query,
   where,
 } from "firebase/firestore";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { useSearchParams } from "next/navigation";
 import { db } from "../../../src/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import AppSessionBridge from "../../seller/tournaments/components/AppSessionBridge";
@@ -188,7 +195,59 @@ function getRegistrationBlockMessage(status: TournamentStatus) {
   return null;
 }
 
+function isPubliclyVisibleTournament(raw: Record<string, unknown>) {
+  const status = String(raw.status ?? "draft").toLowerCase();
+  const visibility = String(raw.visibility ?? "").toLowerCase();
+
+  return (
+    visibility === "published" ||
+    (visibility !== "published" && status !== "draft")
+  );
+}
+
+function mapTournamentDoc(
+  tournamentId: string,
+  raw: Record<string, unknown>
+): TournamentPublic {
+  const entryFee =
+    typeof raw.entryFee === "number"
+      ? raw.entryFee
+      : typeof raw.entryFeeAmount === "number"
+      ? raw.entryFeeAmount
+      : typeof raw.price === "number"
+      ? raw.price
+      : null;
+
+  const currency =
+    typeof raw.currency === "string" && raw.currency.trim()
+      ? raw.currency.trim().toUpperCase()
+      : "BRL";
+
+  return {
+    id: tournamentId,
+    title: compactSpaces(raw.title || "Torneio"),
+    subtitle: raw.subtitle ? compactSpaces(raw.subtitle) : null,
+    slug: raw.slug ? compactSpaces(raw.slug) : null,
+    location: compactSpaces(raw.location || "Local não definido"),
+    description: raw.description ? String(raw.description) : null,
+    coverImageUrl: raw.coverImageUrl ? String(raw.coverImageUrl) : null,
+    species: compactSpaces(raw.species || "Espécie não definida"),
+    minSizeCm: Number(raw.minSizeCm ?? 0) || 0,
+    validFishCount: Number(raw.validFishCount ?? 3) || 3,
+    rules: normalizeRules(raw.rules),
+    status: String(raw.status ?? "scheduled"),
+    scheduledStartAt: toIsoStringSafe(raw.scheduledStartAt),
+    scheduledEndAt: toIsoStringSafe(raw.scheduledEndAt),
+    boundaryEnabled: raw.boundaryEnabled !== false,
+    entryFee,
+    currency,
+  };
+}
+
 export default function TournamentPublicClient({ slug }: Props) {
+  const searchParams = useSearchParams();
+  const tournamentIdFromUrl = compactSpaces(searchParams.get("id"));
+
   const { uid, email, loading: authLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
@@ -225,7 +284,7 @@ export default function TournamentPublicClient({ slug }: Props) {
 
   useEffect(() => {
     void loadTournament();
-  }, [slug]);
+  }, [slug, tournamentIdFromUrl]);
 
   useEffect(() => {
     void loadCaptainProfile();
@@ -258,9 +317,37 @@ export default function TournamentPublicClient({ slug }: Props) {
 
     try {
       const slugValue = compactSpaces(slug);
+      const idValue = compactSpaces(tournamentIdFromUrl);
+
+      if (!slugValue && !idValue) {
+        setError("Link do torneio inválido.");
+        return;
+      }
+
+      if (idValue) {
+        const snap = await getDoc(doc(db, "tournaments", idValue));
+
+        if (snap.exists()) {
+          const raw = snap.data() as Record<string, unknown>;
+          const docSlug = compactSpaces(raw.slug);
+
+          if (!isPubliclyVisibleTournament(raw)) {
+            setError("Torneio não encontrado.");
+            return;
+          }
+
+          if (slugValue && docSlug && docSlug !== slugValue) {
+            setError("Torneio não encontrado.");
+            return;
+          }
+
+          setTournament(mapTournamentDoc(snap.id, raw));
+          return;
+        }
+      }
 
       if (!slugValue) {
-        setError("Slug do torneio inválido.");
+        setError("Torneio não encontrado.");
         return;
       }
 
@@ -275,13 +362,11 @@ export default function TournamentPublicClient({ slug }: Props) {
 
       const publishedDoc = snapshot.docs.find((item) => {
         const raw = item.data() as Record<string, unknown>;
-        const status = String(raw.status ?? "draft").toLowerCase();
-        const visibility = String(raw.visibility ?? "").toLowerCase();
 
-        return (
-          visibility === "published" ||
-          (visibility !== "published" && status !== "draft")
-        );
+        if (!isPubliclyVisibleTournament(raw)) return false;
+        if (idValue && item.id !== idValue) return false;
+
+        return true;
       });
 
       if (!publishedDoc) {
@@ -290,40 +375,7 @@ export default function TournamentPublicClient({ slug }: Props) {
       }
 
       const raw = publishedDoc.data() as Record<string, unknown>;
-
-      const entryFee =
-        typeof raw.entryFee === "number"
-          ? raw.entryFee
-          : typeof raw.entryFeeAmount === "number"
-            ? raw.entryFeeAmount
-            : typeof raw.price === "number"
-              ? raw.price
-              : null;
-
-      const currency =
-        typeof raw.currency === "string" && raw.currency.trim()
-          ? raw.currency.trim().toUpperCase()
-          : "BRL";
-
-      setTournament({
-        id: publishedDoc.id,
-        title: compactSpaces(raw.title || "Torneio"),
-        subtitle: raw.subtitle ? compactSpaces(raw.subtitle) : null,
-        slug: raw.slug ? compactSpaces(raw.slug) : null,
-        location: compactSpaces(raw.location || "Local não definido"),
-        description: raw.description ? String(raw.description) : null,
-        coverImageUrl: raw.coverImageUrl ? String(raw.coverImageUrl) : null,
-        species: compactSpaces(raw.species || "Espécie não definida"),
-        minSizeCm: Number(raw.minSizeCm ?? 0) || 0,
-        validFishCount: Number(raw.validFishCount ?? 3) || 3,
-        rules: normalizeRules(raw.rules),
-        status: String(raw.status ?? "scheduled"),
-        scheduledStartAt: toIsoStringSafe(raw.scheduledStartAt),
-        scheduledEndAt: toIsoStringSafe(raw.scheduledEndAt),
-        boundaryEnabled: raw.boundaryEnabled !== false,
-        entryFee,
-        currency,
-      });
+      setTournament(mapTournamentDoc(publishedDoc.id, raw));
     } catch (err) {
       console.error("Erro ao carregar torneio público:", err);
       setError("Não foi possível carregar o torneio.");
@@ -554,7 +606,7 @@ export default function TournamentPublicClient({ slug }: Props) {
     }
   }
 
-  if (loading ){
+  if (loading) {
     return (
       <main style={styles.page}>
         <div style={styles.container}>
@@ -988,7 +1040,7 @@ function Field({
   children,
 }: {
   label: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <label style={styles.field}>
