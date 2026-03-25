@@ -451,11 +451,11 @@ export async function POST(request: NextRequest) {
     });
 
     for (const member of invitedMembers) {
-      const teamMemberDocId = buildTeamMemberDocId(teamId, member.userId);
+      const memberDocId = buildTeamMemberDocId(teamId, member.userId);
 
       const teamMemberRef = db
         .collection("tournamentTeamMembers")
-        .doc(teamMemberDocId);
+        .doc(memberDocId);
 
       const inviteRef = db.collection("tournamentInvites").doc();
 
@@ -501,7 +501,7 @@ export async function POST(request: NextRequest) {
         tournamentTitle,
         teamId,
         teamName,
-        teamMemberDocId,
+        teamMemberDocId: buildTeamMemberDocId(teamId, member.userId),
 
         invitedUserId: member.userId,
         invitedUsername: member.username,
