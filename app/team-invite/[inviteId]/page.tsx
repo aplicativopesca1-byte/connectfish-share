@@ -2,6 +2,7 @@
 
 import AppSessionBridge from "../../seller/tournaments/components/AppSessionBridge";
 import { useAuth } from "@/context/AuthContext";
+import { getAuth } from "firebase/auth";
 import {
   collection,
   doc,
@@ -702,18 +703,27 @@ export default function TeamInvitePage({ params }: PageProps) {
   }
 
   async function handleRespondInvite(action: "accept" | "decline") {
-    if (!invite || !uid) return;
+    if (!invite || !uid || respondingAction || paying) return;
 
     setRespondingAction(action);
     setError(null);
     setMessage(null);
 
     try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+
+      if (!user) {
+        throw new Error("Usuário não autenticado.");
+      }
+
+      const idToken = await user.getIdToken(true);
+
       const response = await fetch("/api/tournaments/team/invite/respond", {
         method: "POST",
-        credentials: "include",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({
           inviteId: invite.inviteId,
@@ -747,7 +757,9 @@ export default function TeamInvitePage({ params }: PageProps) {
   }
 
   async function handleStartPayment() {
-    if (!tournament || !team || !currentMember || !uid) return;
+    if (!tournament || !team || !currentMember || !uid || paying || respondingAction) {
+      return;
+    }
 
     setPaying(true);
     setError(null);
