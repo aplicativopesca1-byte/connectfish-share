@@ -2,6 +2,7 @@
 
 import AppSessionBridge from "../../../../seller/tournaments/components/AppSessionBridge";
 import { useAuth } from "@/context/AuthContext";
+import { getAuth } from "firebase/auth";
 import {
   collection,
   doc,
@@ -615,21 +616,29 @@ export default function MyTournamentInvitesClient() {
     inviteId: string,
     action: "accept" | "decline"
   ) {
-    if (!uid) return;
+    if (!uid || actionLoadingId || payingId) return;
 
     clearFeedback();
     setActionLoadingId(inviteId);
 
     try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+
+      if (!user) {
+        throw new Error("Usuário não autenticado.");
+      }
+
+      const idToken = await user.getIdToken(true);
+
       const response = await fetch("/api/tournaments/team/invite/respond", {
         method: "POST",
-        credentials: "include",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({
           inviteId,
-          userId: uid,
           action,
         }),
       });
@@ -660,7 +669,9 @@ export default function MyTournamentInvitesClient() {
   }
 
   async function handlePay(item: CombinedItem) {
-    if (!uid || !item.team || !item.tournament) return;
+    if (!uid || !item.team || !item.tournament || payingId || actionLoadingId) {
+      return;
+    }
 
     clearFeedback();
     setPayingId(item.membership.id);
@@ -909,7 +920,9 @@ export default function MyTournamentInvitesClient() {
                           disabled={actionLoadingId === invite.id || !!payingId}
                           style={styles.dangerButton}
                         >
-                          Recusar
+                          {actionLoadingId === invite.id
+                            ? "Processando..."
+                            : "Recusar"}
                         </button>
                       </>
                     ) : null}
