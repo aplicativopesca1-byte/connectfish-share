@@ -27,7 +27,6 @@ function normalizeStatus(value: unknown) {
    🔐 AUTH HÍBRIDA (APP + WEB)
 ============================================================ */
 async function getAuthenticatedUserId(request: NextRequest) {
-  // 🔥 1. APP → Bearer Token
   try {
     const authHeader = request.headers.get("authorization") || "";
 
@@ -43,14 +42,11 @@ async function getAuthenticatedUserId(request: NextRequest) {
     console.error("Erro Bearer token:", error);
   }
 
-  // 🔁 2. WEB → Cookie
   try {
     const raw = request.cookies.get("__session")?.value;
     if (!raw) return null;
 
-    const sessionCookie = raw.includes("%")
-      ? decodeURIComponent(raw)
-      : raw;
+    const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
 
     const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
     return decoded.uid || null;
@@ -128,6 +124,33 @@ async function recalculateTeamStatus(teamId: string) {
 }
 
 /* ============================================================
+   🔎 BUSCAR MEMBRO DO TIME COM SEGURANÇA
+============================================================ */
+async function findTeamMemberDoc(teamId: string, userId: string) {
+  const db = adminDb();
+
+  const memberQuery = await db
+    .collection("tournamentTeamMembers")
+    .where("teamId", "==", teamId)
+    .where("userId", "==", userId)
+    .limit(1)
+    .get();
+
+  if (!memberQuery.empty) {
+    return memberQuery.docs[0];
+  }
+
+  const fallbackRef = db.collection("tournamentTeamMembers").doc(`${teamId}_${userId}`);
+  const fallbackSnap = await fallbackRef.get();
+
+  if (fallbackSnap.exists) {
+    return fallbackSnap;
+  }
+
+  return null;
+}
+
+/* ============================================================
    🚀 MAIN
 ============================================================ */
 export async function POST(request: NextRequest) {
@@ -179,7 +202,6 @@ export async function POST(request: NextRequest) {
     const tournamentId = compactSpaces(inviteData.tournamentId);
     const currentInviteStatus = normalizeStatus(inviteData.status);
 
-    // 🔒 valida dono
     if (invitedUserId !== userId) {
       return NextResponse.json(
         {
@@ -204,19 +226,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const teamMemberRef = db
-      .collection("tournamentTeamMembers")
-      .doc(`${teamId}_${userId}`);
+    const teamMemberSnap = await findTeamMemberDoc(teamId, userId);
 
-    const teamMemberSnap = await teamMemberRef.get();
-
-    if (!teamMemberSnap.exists) {
+    if (!teamMemberSnap) {
       return NextResponse.json(
-        { success: false, message: "Participante não encontrado." },
+        {
+          success: false,
+          message:
+            "Participante não encontrado no time. Verifique a criação dos membros da equipe.",
+        },
         { status: 404 }
       );
     }
 
+    const teamMemberRef = teamMemberSnap.ref;
     const batch = db.batch();
 
     if (action === "accept") {
@@ -256,6 +279,8 @@ export async function POST(request: NextRequest) {
       teamId,
       tournamentId,
       action,
+      registrationStatus:
+        action === "accept" ? "awaiting_payment" : "cancelled",
     });
   } catch (error) {
     console.error("Erro ao responder convite:", error);
