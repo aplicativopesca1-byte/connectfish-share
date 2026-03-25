@@ -362,29 +362,34 @@ function getStepFromSearchParam(raw: string | null): SetupStep {
   return 1;
 }
 
-function buildTournamentPublicPath(slug: string, tournamentId?: string | null) {
+function buildTournamentPublicPath(slug: string, tournamentId: string) {
   const safeSlug = safeTrim(slug);
   const safeId = safeTrim(tournamentId);
 
-  if (!safeSlug) return null;
-
-  const path = `/tournaments/${safeSlug}`;
-
-  if (!safeId) {
-    return `${APP_BASE_URL}${path}`;
-  }
+  if (!safeSlug || !safeId) return null;
 
   const params = new URLSearchParams({ id: safeId });
-  return `${APP_BASE_URL}${path}?${params.toString()}`;
+  return `${APP_BASE_URL}/tournaments/${safeSlug}?${params.toString()}`;
 }
 
 function buildTournamentUrls(slug: string, tournamentId: string) {
   const safeId = safeTrim(tournamentId);
+  const safeSlug = safeTrim(slug);
+
+  if (!safeId || !safeSlug) {
+    return {
+      publicUrl: null,
+      registrationUrl: null,
+      adminUrl: null,
+    };
+  }
+
+  const publicUrl = buildTournamentPublicPath(safeSlug, safeId);
 
   return {
-    publicUrl: buildTournamentPublicPath(slug, safeId),
-    registrationUrl: buildTournamentPublicPath(slug, safeId),
-    adminUrl: safeId ? `${APP_BASE_URL}/seller/tournaments/${safeId}` : null,
+    publicUrl,
+    registrationUrl: publicUrl,
+    adminUrl: `${APP_BASE_URL}/seller/tournaments/${safeId}`,
   };
 }
 
@@ -459,10 +464,15 @@ export default function TournamentForm({
   const parsedRules = useMemo(() => parseRules(rulesText), [rulesText]);
 
   const previewUrls = useMemo(() => {
-    const urls = buildTournamentUrls(
-      finalSlugPreview,
-      tournamentId || "novo-torneio"
-    );
+    if (!tournamentId || !finalSlugPreview) {
+      return {
+        publicUrl: loadedPublicUrl || null,
+        registrationUrl: loadedRegistrationUrl || null,
+        adminUrl: loadedAdminUrl || null,
+      };
+    }
+
+    const urls = buildTournamentUrls(finalSlugPreview, tournamentId);
 
     return {
       publicUrl: loadedPublicUrl || urls.publicUrl,
@@ -654,14 +664,24 @@ export default function TournamentForm({
   }
 
   function getBasePayload(tournamentDocId?: string) {
-    const urls = tournamentDocId
-      ? buildTournamentUrls(finalSlugPreview, tournamentDocId)
-      : { registrationUrl: null, publicUrl: null, adminUrl: null };
+    if (!finalSlugPreview) {
+      throw new Error("Slug obrigatório.");
+    }
+
+    if (!tournamentDocId) {
+      throw new Error("ID do torneio obrigatório para gerar as URLs.");
+    }
+
+    const urls = buildTournamentUrls(finalSlugPreview, tournamentDocId);
+
+    if (!urls.publicUrl || !urls.registrationUrl || !urls.adminUrl) {
+      throw new Error("Erro ao gerar URLs do torneio.");
+    }
 
     return {
       title: title.trim(),
       subtitle: subtitle.trim() || null,
-      slug: finalSlugPreview || null,
+      slug: finalSlugPreview,
       location: location.trim(),
       description: description.trim() || null,
       coverImageUrl: coverImageUrl.trim() || null,
@@ -688,6 +708,10 @@ export default function TournamentForm({
 
     if (!resolvedUserId) {
       throw new Error("Usuário não identificado para criar o torneio.");
+    }
+
+    if (!finalSlugPreview) {
+      throw new Error("Slug não pode ser vazio.");
     }
 
     await validateUniqueSlug(finalSlugPreview);
@@ -727,6 +751,11 @@ export default function TournamentForm({
 
     try {
       const nextStep = options?.nextStep ?? currentStep;
+
+      if (!finalSlugPreview) {
+        throw new Error("Slug obrigatório.");
+      }
+
       await validateUniqueSlug(finalSlugPreview);
 
       if (isEdit && tournamentId) {
@@ -853,6 +882,10 @@ export default function TournamentForm({
     setSaving(true);
 
     try {
+      if (!finalSlugPreview) {
+        throw new Error("Slug obrigatório.");
+      }
+
       await validateUniqueSlug(finalSlugPreview);
 
       const ref = doc(db, "tournaments", tournamentId);

@@ -75,13 +75,20 @@ type InviteDoc = {
   id: string;
   inviteId: string;
   tournamentId: string;
+  tournamentSlug: string | null;
+  tournamentTitle: string | null;
   teamId: string;
+  teamName: string | null;
+  teamMemberDocId: string | null;
   invitedUserId: string;
   invitedUsername: string | null;
   invitedDisplayName: string | null;
   invitedByUserId: string | null;
   invitedByUsername: string | null;
   status: InviteStatus;
+  amount: number | null;
+  currency: string;
+  paymentMode: string;
   createdAt: string | null;
   updatedAt: string | null;
   respondedAt: string | null;
@@ -139,11 +146,20 @@ type InviteRespondResponse = {
   teamId?: string;
   tournamentId?: string;
   action?: string;
+  registrationStatus?: string;
   message?: string;
 };
 
 function compactSpaces(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function assertRequired(value: unknown, field: string) {
+  const normalized = compactSpaces(value);
+  if (!normalized) {
+    throw new Error(`Campo obrigatório inválido: ${field}`);
+  }
+  return normalized;
 }
 
 function toIsoStringSafe(value: unknown): string | null {
@@ -421,8 +437,7 @@ function canStartPayment(params: {
 
   return (
     params.registrationStatus === "awaiting_payment" ||
-    params.registrationStatus === "payment_failed" ||
-    params.registrationStatus === "invited"
+    params.registrationStatus === "payment_failed"
   );
 }
 
@@ -470,10 +485,11 @@ export default function TeamInvitePage({ params }: PageProps) {
       return;
     }
 
+    if (authLoading) return;
     if (!uid) return;
 
     void loadPage();
-  }, [inviteId, uid]);
+  }, [inviteId, uid, authLoading]);
 
   async function loadPage() {
     setLoading(true);
@@ -503,14 +519,21 @@ export default function TeamInvitePage({ params }: PageProps) {
       const mappedInvite: InviteDoc = {
         id: inviteSnap.id,
         inviteId: compactSpaces(inviteRaw.inviteId) || inviteSnap.id,
-        tournamentId: compactSpaces(inviteRaw.tournamentId),
-        teamId: compactSpaces(inviteRaw.teamId),
-        invitedUserId: compactSpaces(inviteRaw.invitedUserId),
+        tournamentId: assertRequired(inviteRaw.tournamentId, "invite.tournamentId"),
+        tournamentSlug: compactSpaces(inviteRaw.tournamentSlug) || null,
+        tournamentTitle: compactSpaces(inviteRaw.tournamentTitle) || null,
+        teamId: assertRequired(inviteRaw.teamId, "invite.teamId"),
+        teamName: compactSpaces(inviteRaw.teamName) || null,
+        teamMemberDocId: compactSpaces(inviteRaw.teamMemberDocId) || null,
+        invitedUserId: assertRequired(inviteRaw.invitedUserId, "invite.invitedUserId"),
         invitedUsername: compactSpaces(inviteRaw.invitedUsername) || null,
         invitedDisplayName: compactSpaces(inviteRaw.invitedDisplayName) || null,
         invitedByUserId: compactSpaces(inviteRaw.invitedByUserId) || null,
         invitedByUsername: compactSpaces(inviteRaw.invitedByUsername) || null,
         status: normalizeInviteStatus(inviteRaw.status),
+        amount: typeof inviteRaw.amount === "number" ? inviteRaw.amount : null,
+        currency: compactSpaces(inviteRaw.currency).toUpperCase() || "BRL",
+        paymentMode: compactSpaces(inviteRaw.paymentMode) || "individual",
         createdAt: toIsoStringSafe(inviteRaw.createdAt),
         updatedAt: toIsoStringSafe(inviteRaw.updatedAt),
         respondedAt: toIsoStringSafe(inviteRaw.respondedAt),
@@ -557,7 +580,7 @@ export default function TeamInvitePage({ params }: PageProps) {
       const mappedTournament: TournamentPublic = {
         id: tournamentSnap.id,
         slug: compactSpaces(tournamentRaw.slug) || null,
-        title: compactSpaces(tournamentRaw.title || "Torneio"),
+        title: compactSpaces(tournamentRaw.title || mappedInvite.tournamentTitle || "Torneio"),
         subtitle: compactSpaces(tournamentRaw.subtitle) || null,
         location: compactSpaces(tournamentRaw.location || "Local não definido"),
         description: tournamentRaw.description ? String(tournamentRaw.description) : null,
@@ -582,8 +605,8 @@ export default function TeamInvitePage({ params }: PageProps) {
       const mappedTeam: TeamDoc = {
         id: teamSnap.id,
         teamId: compactSpaces(teamRaw.teamId) || teamSnap.id,
-        tournamentId: compactSpaces(teamRaw.tournamentId),
-        teamName: compactSpaces(teamRaw.teamName) || "Equipe sem nome",
+        tournamentId: assertRequired(teamRaw.tournamentId, "team.tournamentId"),
+        teamName: compactSpaces(teamRaw.teamName) || mappedInvite.teamName || "Equipe sem nome",
         captainUserId: compactSpaces(teamRaw.captainUserId) || null,
         captainUsername: compactSpaces(teamRaw.captainUsername) || null,
         captainDisplayName: compactSpaces(teamRaw.captainDisplayName) || null,
@@ -606,11 +629,19 @@ export default function TeamInvitePage({ params }: PageProps) {
         .map((item) => {
           const raw = item.data() as Record<string, unknown>;
 
+          const userIdValue = compactSpaces(raw.userId);
+          const teamIdValue = compactSpaces(raw.teamId);
+          const tournamentIdValue = compactSpaces(raw.tournamentId);
+
+          if (!userIdValue || !teamIdValue || !tournamentIdValue) {
+            return null;
+          }
+
           return {
             id: item.id,
-            teamId: compactSpaces(raw.teamId),
-            tournamentId: compactSpaces(raw.tournamentId),
-            userId: compactSpaces(raw.userId),
+            teamId: teamIdValue,
+            tournamentId: tournamentIdValue,
+            userId: userIdValue,
             username: compactSpaces(raw.username) || null,
             displayName: compactSpaces(raw.displayName) || null,
             photoUrl: compactSpaces(raw.photoUrl) || null,
@@ -627,19 +658,32 @@ export default function TeamInvitePage({ params }: PageProps) {
             createdAt: toIsoStringSafe(raw.createdAt),
           } as TeamMemberDoc;
         })
+        .filter(Boolean)
         .sort((a, b) => {
-          if (a.role === "captain" && b.role !== "captain") return -1;
-          if (a.role !== "captain" && b.role === "captain") return 1;
+          if (a!.role === "captain" && b!.role !== "captain") return -1;
+          if (a!.role !== "captain" && b!.role === "captain") return 1;
 
-          return (a.displayName || a.username || "").localeCompare(
-            b.displayName || b.username || "",
+          return (a!.displayName || a!.username || "").localeCompare(
+            b!.displayName || b!.username || "",
             "pt-BR"
           );
-        });
+        }) as TeamMemberDoc[];
 
       setMembers(mappedMembers);
 
-      const current = mappedMembers.find((member) => member.userId === uid) || null;
+      let current: TeamMemberDoc | null = null;
+
+      if (mappedInvite.teamMemberDocId) {
+        current =
+          mappedMembers.find((member) => member.id === mappedInvite.teamMemberDocId) ||
+          null;
+      }
+
+      if (!current) {
+        current =
+          mappedMembers.find((member) => member.userId === uid) || null;
+      }
+
       setCurrentMember(current);
 
       if (!current) {
@@ -647,7 +691,11 @@ export default function TeamInvitePage({ params }: PageProps) {
       }
     } catch (err) {
       console.error("Erro ao carregar convite:", err);
-      setError("Não foi possível carregar os dados do convite.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível carregar os dados do convite."
+      );
     } finally {
       setLoading(false);
     }
@@ -669,7 +717,6 @@ export default function TeamInvitePage({ params }: PageProps) {
         },
         body: JSON.stringify({
           inviteId: invite.inviteId,
-          userId: uid,
           action,
         }),
       });
@@ -741,7 +788,7 @@ export default function TeamInvitePage({ params }: PageProps) {
     }
   }
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <main style={styles.page}>
         <div style={styles.container}>
@@ -749,6 +796,22 @@ export default function TeamInvitePage({ params }: PageProps) {
           <section style={styles.card}>
             <h1 style={styles.title}>Carregando convite...</h1>
             <p style={styles.muted}>Aguarde enquanto buscamos os dados da sua equipe.</p>
+          </section>
+        </div>
+      </main>
+    );
+  }
+
+  if (!uid) {
+    return (
+      <main style={styles.page}>
+        <div style={styles.container}>
+          <AppSessionBridge />
+          <section style={styles.card}>
+            <h1 style={styles.title}>Faça login para continuar</h1>
+            <p style={styles.errorText}>
+              Entre com a conta convidada para visualizar e responder este convite.
+            </p>
           </section>
         </div>
       </main>
@@ -799,8 +862,8 @@ export default function TeamInvitePage({ params }: PageProps) {
                 <span style={getTournamentStatusBadgeStyle(tournament?.status || "scheduled")}>
                   {getTournamentStatusLabel(tournament?.status || "scheduled")}
                 </span>
-                <span style={getInviteBadgeStyle(currentMember?.inviteStatus || "pending")}>
-                  Convite: {getInviteLabel(currentMember?.inviteStatus || "pending")}
+                <span style={getInviteBadgeStyle(currentMember?.inviteStatus || invite?.status || "pending")}>
+                  Convite: {getInviteLabel(currentMember?.inviteStatus || invite?.status || "pending")}
                 </span>
                 <span style={getPaymentBadgeStyle(currentMember?.paymentStatus || "pending")}>
                   Pagamento: {getMemberPaymentLabel(currentMember?.paymentStatus || "pending")}
@@ -821,8 +884,8 @@ export default function TeamInvitePage({ params }: PageProps) {
               <InfoCard
                 label="Sua inscrição"
                 value={formatMoney(
-                  currentMember?.amount ?? team?.amountPerParticipant ?? null,
-                  currentMember?.currency || team?.currency || "BRL"
+                  currentMember?.amount ?? invite?.amount ?? team?.amountPerParticipant ?? null,
+                  currentMember?.currency || invite?.currency || team?.currency || "BRL"
                 )}
               />
               <InfoCard
@@ -851,7 +914,7 @@ export default function TeamInvitePage({ params }: PageProps) {
               </p>
 
               <div style={styles.summaryCard}>
-                <SummaryRow label="Equipe" value={team?.teamName || "Equipe"} />
+                <SummaryRow label="Equipe" value={team?.teamName || invite?.teamName || "Equipe"} />
                 <SummaryRow
                   label="Capitão"
                   value={
@@ -866,7 +929,7 @@ export default function TeamInvitePage({ params }: PageProps) {
                 />
                 <SummaryRow
                   label="Pagamento"
-                  value={team?.paymentMode === "individual" ? "Individual" : team?.paymentMode || "Individual"}
+                  value={team?.paymentMode === "individual" ? "Individual" : team?.paymentMode || invite?.paymentMode || "Individual"}
                 />
               </div>
             </section>
@@ -956,8 +1019,8 @@ export default function TeamInvitePage({ params }: PageProps) {
                   <span style={styles.priceLabel}>Sua vaga</span>
                   <strong style={styles.priceValue}>
                     {formatMoney(
-                      currentMember?.amount ?? team?.amountPerParticipant ?? null,
-                      currentMember?.currency || team?.currency || "BRL"
+                      currentMember?.amount ?? invite?.amount ?? team?.amountPerParticipant ?? null,
+                      currentMember?.currency || invite?.currency || team?.currency || "BRL"
                     )}
                   </strong>
                 </div>
@@ -968,10 +1031,10 @@ export default function TeamInvitePage({ params }: PageProps) {
 
                 <div style={styles.summaryCard}>
                   <SummaryRow label="Torneio" value={tournament?.title || "Torneio"} />
-                  <SummaryRow label="Equipe" value={team?.teamName || "Equipe"} />
+                  <SummaryRow label="Equipe" value={team?.teamName || invite?.teamName || "Equipe"} />
                   <SummaryRow
                     label="Convite"
-                    value={getInviteLabel(currentMember?.inviteStatus || "pending")}
+                    value={getInviteLabel(currentMember?.inviteStatus || invite?.status || "pending")}
                   />
                   <SummaryRow
                     label="Inscrição"
@@ -991,7 +1054,7 @@ export default function TeamInvitePage({ params }: PageProps) {
                   <div style={styles.processingBox}>
                     <p style={styles.sectionText}>
                       Você foi convidado para participar da equipe{" "}
-                      <strong>{team?.teamName || "Equipe"}</strong>. Aceite para liberar
+                      <strong>{team?.teamName || invite?.teamName || "Equipe"}</strong>. Aceite para liberar
                       o pagamento da sua vaga ou recuse caso não queira participar.
                     </p>
 

@@ -126,6 +126,16 @@ function compactSpaces(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function assertValidId(value: unknown, field: string) {
+  const normalized = compactSpaces(value);
+
+  if (!normalized) {
+    throw new Error(`Campo obrigatório inválido: ${field}`);
+  }
+
+  return normalized;
+}
+
 function toIsoStringSafe(value: unknown): string | null {
   if (!value) return null;
 
@@ -240,10 +250,13 @@ function normalizeMemberPaymentStatus(value: unknown): MemberPaymentStatus {
 }
 
 function mapTeamDoc(id: string, raw: Record<string, unknown>): TournamentTeam {
+  const teamId = assertValidId(raw.teamId || id, "teamId");
+  const tournamentId = assertValidId(raw.tournamentId, "tournamentId");
+
   return {
     id,
-    teamId: compactSpaces(raw.teamId) || id,
-    tournamentId: compactSpaces(raw.tournamentId),
+    teamId,
+    tournamentId,
     teamName: compactSpaces(raw.teamName) || "Equipe sem nome",
     captainUserId: compactSpaces(raw.captainUserId) || null,
     captainUsername: compactSpaces(raw.captainUsername) || null,
@@ -266,12 +279,21 @@ function mapTeamDoc(id: string, raw: Record<string, unknown>): TournamentTeam {
 function mapMemberDoc(
   id: string,
   raw: Record<string, unknown>
-): TournamentTeamMember {
+): TournamentTeamMember | null {
+  const teamId = compactSpaces(raw.teamId);
+  const tournamentId = compactSpaces(raw.tournamentId);
+  const userId = compactSpaces(raw.userId);
+
+  if (!teamId || !tournamentId || !userId) {
+    console.warn("Membro ignorado por dados inválidos:", raw);
+    return null;
+  }
+
   return {
     id,
-    teamId: compactSpaces(raw.teamId),
-    tournamentId: compactSpaces(raw.tournamentId),
-    userId: compactSpaces(raw.userId),
+    teamId,
+    tournamentId,
+    userId,
     username: compactSpaces(raw.username) || null,
     displayName: compactSpaces(raw.displayName) || null,
     photoUrl: compactSpaces(raw.photoUrl) || null,
@@ -573,7 +595,9 @@ export default function TournamentTeamsClient({ tournamentId }: Props) {
     setError(null);
 
     try {
-      if (!compactSpaces(tournamentId)) {
+      const normalizedTournamentId = compactSpaces(tournamentId);
+
+      if (!normalizedTournamentId) {
         setError("ID do torneio inválido.");
         return;
       }
@@ -610,9 +634,16 @@ export default function TournamentTeamsClient({ tournamentId }: Props) {
 
     const teamsSnap = await getDocs(teamsQuery);
 
-    const mappedTeams = teamsSnap.docs.map((item) =>
-      mapTeamDoc(item.id, item.data() as Record<string, unknown>)
-    );
+    const mappedTeams = teamsSnap.docs
+      .map((item) => {
+        try {
+          return mapTeamDoc(item.id, item.data() as Record<string, unknown>);
+        } catch (err) {
+          console.warn("Equipe ignorada por dados inválidos:", item.id, err);
+          return null;
+        }
+      })
+      .filter(Boolean) as TournamentTeam[];
 
     const membersSnap = await getDocs(
       query(
@@ -621,13 +652,17 @@ export default function TournamentTeamsClient({ tournamentId }: Props) {
       )
     );
 
-    const members = membersSnap.docs.map((item) =>
-      mapMemberDoc(item.id, item.data() as Record<string, unknown>)
-    );
+    const members = membersSnap.docs
+      .map((item) =>
+        mapMemberDoc(item.id, item.data() as Record<string, unknown>)
+      )
+      .filter(Boolean) as TournamentTeamMember[];
 
     const membersByTeamId = new Map<string, TournamentTeamMember[]>();
 
     for (const member of members) {
+      if (!member.teamId) continue;
+
       const list = membersByTeamId.get(member.teamId) || [];
       list.push(member);
       membersByTeamId.set(member.teamId, list);

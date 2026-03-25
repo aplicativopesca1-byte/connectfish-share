@@ -23,6 +23,16 @@ function normalizeStatus(value: unknown) {
   return compactSpaces(value).toLowerCase();
 }
 
+function assertRequired(value: unknown, field: string) {
+  const normalized = compactSpaces(value);
+
+  if (!normalized) {
+    throw new Error(`Campo obrigatório inválido: ${field}`);
+  }
+
+  return normalized;
+}
+
 /* ============================================================
    🔐 AUTH HÍBRIDA (APP + WEB)
 ============================================================ */
@@ -47,8 +57,8 @@ async function getAuthenticatedUserId(request: NextRequest) {
     if (!raw) return null;
 
     const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
-
     const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
+
     return decoded.uid || null;
   } catch (error) {
     console.error("Erro session cookie:", error);
@@ -64,6 +74,7 @@ async function recalculateTeamStatus(teamId: string) {
 
   const teamRef = db.collection("tournamentTeams").doc(teamId);
   const teamSnap = await teamRef.get();
+
   if (!teamSnap.exists) return;
 
   const membersSnap = await db
@@ -71,24 +82,24 @@ async function recalculateTeamStatus(teamId: string) {
     .where("teamId", "==", teamId)
     .get();
 
-  const members = membersSnap.docs.map((d) => d.data());
+  const members = membersSnap.docs.map((docSnap) => docSnap.data());
 
   const totalSlots = members.length;
 
   const acceptedMembersCount = members.filter(
-    (m) => normalizeStatus(m.inviteStatus) === "accepted"
+    (member) => normalizeStatus(member.inviteStatus) === "accepted"
   ).length;
 
   const paidMembersCount = members.filter(
-    (m) => normalizeStatus(m.paymentStatus) === "approved"
+    (member) => normalizeStatus(member.paymentStatus) === "approved"
   ).length;
 
   const hasPendingInvites = members.some(
-    (m) => normalizeStatus(m.inviteStatus) === "pending"
+    (member) => normalizeStatus(member.inviteStatus) === "pending"
   );
 
   const hasDeclinedMembers = members.some(
-    (m) => normalizeStatus(m.inviteStatus) === "declined"
+    (member) => normalizeStatus(member.inviteStatus) === "declined"
   );
 
   let teamStatus = "building";
@@ -126,13 +137,35 @@ async function recalculateTeamStatus(teamId: string) {
 /* ============================================================
    🔎 BUSCAR MEMBRO DO TIME COM SEGURANÇA
 ============================================================ */
-async function findTeamMemberDoc(teamId: string, userId: string) {
+async function findTeamMemberDoc(params: {
+  teamId: string;
+  userId: string;
+  teamMemberDocId?: string | null;
+}) {
   const db = adminDb();
+
+  const explicitDocId = compactSpaces(params.teamMemberDocId);
+  if (explicitDocId) {
+    const explicitSnap = await db
+      .collection("tournamentTeamMembers")
+      .doc(explicitDocId)
+      .get();
+
+    if (explicitSnap.exists) {
+      const raw = explicitSnap.data() as Record<string, unknown>;
+      const explicitTeamId = compactSpaces(raw.teamId);
+      const explicitUserId = compactSpaces(raw.userId);
+
+      if (explicitTeamId === params.teamId && explicitUserId === params.userId) {
+        return explicitSnap;
+      }
+    }
+  }
 
   const memberQuery = await db
     .collection("tournamentTeamMembers")
-    .where("teamId", "==", teamId)
-    .where("userId", "==", userId)
+    .where("teamId", "==", params.teamId)
+    .where("userId", "==", params.userId)
     .limit(1)
     .get();
 
@@ -140,8 +173,11 @@ async function findTeamMemberDoc(teamId: string, userId: string) {
     return memberQuery.docs[0];
   }
 
-  const fallbackRef = db.collection("tournamentTeamMembers").doc(`${teamId}_${userId}`);
-  const fallbackSnap = await fallbackRef.get();
+  const fallbackDocId = `${params.teamId}_${params.userId}`;
+  const fallbackSnap = await db
+    .collection("tournamentTeamMembers")
+    .doc(fallbackDocId)
+    .get();
 
   if (fallbackSnap.exists) {
     return fallbackSnap;
@@ -197,9 +233,16 @@ export async function POST(request: NextRequest) {
 
     const inviteData = inviteSnap.data() as Record<string, unknown>;
 
-    const invitedUserId = compactSpaces(inviteData.invitedUserId);
-    const teamId = compactSpaces(inviteData.teamId);
-    const tournamentId = compactSpaces(inviteData.tournamentId);
+    const invitedUserId = assertRequired(
+      inviteData.invitedUserId,
+      "invite.invitedUserId"
+    );
+    const teamId = assertRequired(inviteData.teamId, "invite.teamId");
+    const tournamentId = assertRequired(
+      inviteData.tournamentId,
+      "invite.tournamentId"
+    );
+    const teamMemberDocId = compactSpaces(inviteData.teamMemberDocId) || null;
     const currentInviteStatus = normalizeStatus(inviteData.status);
 
     if (invitedUserId !== userId) {
@@ -212,13 +255,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!teamId || !tournamentId) {
-      return NextResponse.json(
-        { success: false, message: "Convite inválido." },
-        { status: 400 }
-      );
-    }
-
     if (currentInviteStatus !== "pending") {
       return NextResponse.json(
         { success: false, message: "Convite já respondido." },
@@ -226,7 +262,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const teamMemberSnap = await findTeamMemberDoc(teamId, userId);
+    const teamSnap = await db.collection("tournamentTeams").doc(teamId).get();
+
+    if (!teamSnap.exists) {
+      return NextResponse.json(
+        { success: false, message: "Equipe não encontrada." },
+        { status: 404 }
+      );
+    }
+
+    const teamData = teamSnap.data() as Record<string, unknown>;
+    const teamTournamentId = compactSpaces(teamData.tournamentId);
+
+    if (teamTournamentId !== tournamentId) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Convite inconsistente com a equipe informada.",
+        },
+        { status: 409 }
+      );
+    }
+
+    const teamMemberSnap = await findTeamMemberDoc({
+      teamId,
+      userId,
+      teamMemberDocId,
+    });
 
     if (!teamMemberSnap) {
       return NextResponse.json(
@@ -236,6 +298,20 @@ export async function POST(request: NextRequest) {
             "Participante não encontrado no time. Verifique a criação dos membros da equipe.",
         },
         { status: 404 }
+      );
+    }
+
+    const teamMemberData = teamMemberSnap.data() as Record<string, unknown>;
+    const memberTeamId = compactSpaces(teamMemberData.teamId);
+    const memberUserId = compactSpaces(teamMemberData.userId);
+
+    if (memberTeamId !== teamId || memberUserId !== userId) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Participante inconsistente com o convite recebido.",
+        },
+        { status: 409 }
       );
     }
 
@@ -276,6 +352,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      inviteId,
       teamId,
       tournamentId,
       action,
@@ -285,12 +362,22 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Erro ao responder convite:", error);
 
+    const message =
+      error instanceof Error && /Campo obrigatório inválido/i.test(error.message)
+        ? error.message
+        : "Erro interno ao responder convite.";
+
+    const status =
+      error instanceof Error && /Campo obrigatório inválido/i.test(error.message)
+        ? 400
+        : 500;
+
     return NextResponse.json(
       {
         success: false,
-        message: "Erro interno ao responder convite.",
+        message,
       },
-      { status: 500 }
+      { status }
     );
   }
 }

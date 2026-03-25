@@ -21,6 +21,8 @@ type UserRecord = {
   displayName: string | null;
 };
 
+const MAX_ADDITIONAL_MEMBERS = 3;
+
 function compactSpaces(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
@@ -43,13 +45,33 @@ function buildTeamMemberDocId(teamId: string, userId: string) {
 }
 
 async function getAuthenticatedUserId(request: NextRequest) {
-  const raw = request.cookies.get("__session")?.value;
-  if (!raw) return null;
+  try {
+    const authHeader = request.headers.get("authorization") || "";
 
-  const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
-  const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
+    if (authHeader.toLowerCase().startsWith("bearer ")) {
+      const token = authHeader.slice(7).trim();
 
-  return decoded.uid || null;
+      if (token) {
+        const decoded = await adminAuth().verifyIdToken(token, true);
+        return decoded.uid || null;
+      }
+    }
+  } catch (error) {
+    console.error("Erro Bearer token:", error);
+  }
+
+  try {
+    const raw = request.cookies.get("__session")?.value;
+    if (!raw) return null;
+
+    const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
+    const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
+
+    return decoded.uid || null;
+  } catch (error) {
+    console.error("Erro session cookie:", error);
+    return null;
+  }
 }
 
 async function getUserById(userId: string): Promise<UserRecord | null> {
@@ -66,8 +88,8 @@ async function getUserById(userId: string): Promise<UserRecord | null> {
     email: data.email ? String(data.email) : null,
     photoUrl: data.photoUrl ? String(data.photoUrl) : null,
     displayName:
-      compactSpaces((data as Record<string, unknown>).displayName) ||
-      compactSpaces((data as Record<string, unknown>).name) ||
+      compactSpaces(data.displayName) ||
+      compactSpaces(data.name) ||
       compactSpaces(data.username) ||
       null,
   };
@@ -93,6 +115,22 @@ async function userAlreadyInTournament(params: {
     .get();
 
   return !memberSnap.empty;
+}
+
+async function userAlreadyCaptainInTournament(params: {
+  tournamentId: string;
+  userId: string;
+}) {
+  const db = adminDb();
+
+  const snap = await db
+    .collection("tournamentTeams")
+    .where("tournamentId", "==", params.tournamentId)
+    .where("captainUserId", "==", params.userId)
+    .limit(1)
+    .get();
+
+  return !snap.empty;
 }
 
 async function teamNameAlreadyExists(params: {
@@ -128,8 +166,16 @@ function getTournamentStatus(raw: Record<string, unknown>) {
   return compactSpaces(raw.status).toLowerCase() || "scheduled";
 }
 
-function isTournamentAcceptingRegistrations(status: string) {
-  return status === "scheduled" || status === "live";
+function getTournamentVisibility(raw: Record<string, unknown>) {
+  return compactSpaces(raw.visibility).toLowerCase() || "draft";
+}
+
+function isTournamentAcceptingRegistrations(params: {
+  status: string;
+  visibility: string;
+}) {
+  const { status, visibility } = params;
+  return visibility === "published" && (status === "scheduled" || status === "live");
 }
 
 export async function POST(request: NextRequest) {
@@ -146,12 +192,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = (await request.json()) as RequestBody;
+    const body = (await request.json().catch(() => ({}))) as RequestBody;
 
     const tournamentId = compactSpaces(body.tournamentId);
     const captainUserId = authenticatedUserId;
     const teamName = normalizeTeamName(body.teamName);
-    const source = compactSpaces(body.source || "app_team_create");
+    const source = compactSpaces(body.source || "public_tournament_web");
     const rawMemberUserIds = normalizeIdList(body.memberUserIds);
 
     if (!tournamentId) {
@@ -175,6 +221,16 @@ export async function POST(request: NextRequest) {
       rawMemberUserIds.filter((userId) => userId !== captainUserId)
     );
 
+    if (memberUserIds.length > MAX_ADDITIONAL_MEMBERS) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `Número máximo de membros excedido. Limite: ${MAX_ADDITIONAL_MEMBERS}.`,
+        },
+        { status: 400 }
+      );
+    }
+
     const db = adminDb();
 
     const tournamentRef = db.collection("tournaments").doc(tournamentId);
@@ -189,8 +245,14 @@ export async function POST(request: NextRequest) {
 
     const tournamentRaw = tournamentSnap.data() as Record<string, unknown>;
     const tournamentStatus = getTournamentStatus(tournamentRaw);
+    const tournamentVisibility = getTournamentVisibility(tournamentRaw);
 
-    if (!isTournamentAcceptingRegistrations(tournamentStatus)) {
+    if (
+      !isTournamentAcceptingRegistrations({
+        status: tournamentStatus,
+        visibility: tournamentVisibility,
+      })
+    ) {
       return NextResponse.json(
         {
           success: false,
@@ -232,6 +294,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (invitedMembers.some((member) => !member.username)) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "Um ou mais membros convidados não possuem username válido.",
+        },
+        { status: 400 }
+      );
+    }
+
     const duplicatedIds = uniqueStrings([captainUserId, ...memberUserIds]);
     if (duplicatedIds.length !== 1 + memberUserIds.length) {
       return NextResponse.json(
@@ -258,27 +331,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    for (const userId of [captainUserId, ...memberUserIds]) {
-      const alreadyInTournament = await userAlreadyInTournament({
-        tournamentId,
-        userId,
-      });
+    const alreadyCaptain = await userAlreadyCaptainInTournament({
+      tournamentId,
+      userId: captainUserId,
+    });
 
-      if (alreadyInTournament) {
-        return NextResponse.json(
-          {
-            success: false,
-            message:
-              "Um dos participantes já pertence a uma equipe deste torneio.",
-          },
-          { status: 409 }
-        );
-      }
+    if (alreadyCaptain) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Você já criou uma equipe neste torneio.",
+        },
+        { status: 409 }
+      );
+    }
+
+    const usersToCheck = [captainUserId, ...memberUserIds];
+    const checks = await Promise.all(
+      usersToCheck.map((userId) =>
+        userAlreadyInTournament({ tournamentId, userId })
+      )
+    );
+
+    if (checks.some(Boolean)) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "Um dos participantes já pertence a uma equipe deste torneio.",
+        },
+        { status: 409 }
+      );
     }
 
     const amountPerParticipant = getTournamentEntryFee(tournamentRaw);
     const currency = getTournamentCurrency(tournamentRaw);
     const tournamentSlug = compactSpaces(tournamentRaw.slug) || null;
+    const tournamentTitle = compactSpaces(tournamentRaw.title) || "Torneio";
 
     const teamRef = db.collection("tournamentTeams").doc();
     const teamId = teamRef.id;
@@ -295,6 +384,7 @@ export async function POST(request: NextRequest) {
       teamId,
       tournamentId,
       tournamentSlug,
+      tournamentTitle,
 
       teamName,
 
@@ -306,7 +396,7 @@ export async function POST(request: NextRequest) {
       paymentMode: "individual",
       teamStatus,
 
-      maxMembers: memberUserIds.length,
+      maxMembers: MAX_ADDITIONAL_MEMBERS,
       totalSlots,
       acceptedMembersCount,
       paidMembersCount,
@@ -320,13 +410,16 @@ export async function POST(request: NextRequest) {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
+    const captainMemberDocId = buildTeamMemberDocId(teamId, captain.userId);
     const captainMemberRef = db
       .collection("tournamentTeamMembers")
-      .doc(buildTeamMemberDocId(teamId, captain.userId));
+      .doc(captainMemberDocId);
 
     batch.set(captainMemberRef, {
       teamId,
       tournamentId,
+      tournamentSlug,
+      teamName,
 
       userId: captain.userId,
       username: captain.username,
@@ -358,15 +451,19 @@ export async function POST(request: NextRequest) {
     });
 
     for (const member of invitedMembers) {
+      const teamMemberDocId = buildTeamMemberDocId(teamId, member.userId);
+
       const teamMemberRef = db
         .collection("tournamentTeamMembers")
-        .doc(buildTeamMemberDocId(teamId, member.userId));
+        .doc(teamMemberDocId);
 
       const inviteRef = db.collection("tournamentInvites").doc();
 
       batch.set(teamMemberRef, {
         teamId,
         tournamentId,
+        tournamentSlug,
+        teamName,
 
         userId: member.userId,
         username: member.username,
@@ -400,7 +497,11 @@ export async function POST(request: NextRequest) {
       batch.set(inviteRef, {
         inviteId: inviteRef.id,
         tournamentId,
+        tournamentSlug,
+        tournamentTitle,
         teamId,
+        teamName,
+        teamMemberDocId,
 
         invitedUserId: member.userId,
         invitedUsername: member.username,
@@ -410,6 +511,12 @@ export async function POST(request: NextRequest) {
         invitedByUsername: captain.username,
 
         status: "pending",
+
+        amount: amountPerParticipant,
+        currency,
+        paymentMode: "individual",
+
+        source,
 
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
