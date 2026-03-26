@@ -42,8 +42,10 @@ type RegistrationDoc = {
   members?: NormalizedMember[];
   registrationStatus?: string;
   paymentStatus?: string;
+  paymentStatusDetail?: string | null;
   externalReference?: string | null;
   preferenceId?: string | null;
+  checkoutUrl?: string | null;
   amount?: number;
   currency?: string;
   createdAt?: Timestamp;
@@ -146,7 +148,9 @@ function isPendingLikeStatus(value: unknown) {
   return (
     status === "pending" ||
     status === "in_process" ||
-    status === "awaiting_payment"
+    status === "awaiting_payment" ||
+    status === "checkout_created" ||
+    status === "awaiting_checkout"
   );
 }
 
@@ -244,6 +248,12 @@ function splitCaptainName(fullName: string) {
     firstName: parts[0],
     lastName: parts.slice(1).join(" "),
   };
+}
+
+function buildCheckoutUrlFromPreference(
+  mpData: MercadoPagoPreferenceResponse | null
+) {
+  return mpData?.init_point ?? mpData?.sandbox_init_point ?? null;
 }
 
 export async function POST(request: Request) {
@@ -398,6 +408,9 @@ export async function POST(request: Request) {
       const existingRegistrationStatus = String(existing.registrationStatus ?? "")
         .trim()
         .toLowerCase();
+      const existingCheckoutUrl = compactSpaces(existing.checkoutUrl);
+      const existingPreferenceId = compactSpaces(existing.preferenceId);
+      const existingExternalReference = compactSpaces(existing.externalReference);
 
       if (
         isConfirmedStatus(existingPaymentStatus) ||
@@ -414,18 +427,21 @@ export async function POST(request: Request) {
       }
 
       if (
-        isPendingLikeStatus(existingPaymentStatus) ||
-        isPendingLikeStatus(existingRegistrationStatus)
+        (isPendingLikeStatus(existingPaymentStatus) ||
+          isPendingLikeStatus(existingRegistrationStatus)) &&
+        existingCheckoutUrl &&
+        existingPreferenceId
       ) {
         return NextResponse.json(
           {
-            success: false,
-            message:
-              "Já existe uma inscrição pendente para esta equipe. Finalize o pagamento existente ou aguarde a atualização do sistema.",
+            success: true,
+            reusedExistingCheckout: true,
             registrationId: existingRegistrationDoc.id,
-            externalReference: existing.externalReference ?? null,
+            preferenceId: existingPreferenceId,
+            externalReference: existingExternalReference || null,
+            checkoutUrl: existingCheckoutUrl,
           },
-          { status: 409 }
+          { status: 200 }
         );
       }
     }
@@ -450,9 +466,9 @@ export async function POST(request: Request) {
       members,
       source,
 
-      registrationStatus: "awaiting_payment",
+      registrationStatus: "checkout_created",
       paymentProvider: "mercado_pago",
-      paymentStatus: "pending",
+      paymentStatus: "awaiting_checkout",
       paymentStatusDetail: null,
 
       paymentId: null,
@@ -467,7 +483,8 @@ export async function POST(request: Request) {
 
       amountPaid: null,
       paymentCurrency: null,
-      payerEmail: captainEmail,
+      payerEmail: null,
+      checkoutUrl: null,
 
       paymentStartedAt: FieldValue.serverTimestamp(),
       preferenceCreatedAt: null,
@@ -501,7 +518,6 @@ export async function POST(request: Request) {
         },
       ],
       payer: {
-        email: captainEmail,
         first_name: firstName,
         last_name: lastName,
       },
@@ -570,12 +586,15 @@ export async function POST(request: Request) {
       );
     }
 
-    const checkoutUrl = mpData.init_point ?? mpData.sandbox_init_point ?? null;
+    const checkoutUrl = buildCheckoutUrlFromPreference(mpData);
 
     await registrationRef.update({
       preferenceId: mpData.id,
       externalReference,
       checkoutUrl,
+      registrationStatus: "awaiting_payment",
+      paymentStatus: "pending",
+      paymentStatusDetail: "checkout_created",
       preferenceCreatedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
