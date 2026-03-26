@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 type Props = {
   params: {
@@ -9,6 +9,8 @@ type Props = {
   };
   searchParams?: {
     registrationId?: string;
+    teamId?: string;
+    userId?: string;
   };
 };
 
@@ -79,73 +81,199 @@ export default function TournamentPaymentPendingPage({
   const [registrationId, setRegistrationId] = useState(
     searchParams?.registrationId ?? ""
   );
+  const [teamId, setTeamId] = useState(searchParams?.teamId ?? "");
+  const [userId, setUserId] = useState(searchParams?.userId ?? "");
 
   const [status, setStatus] = useState<PaymentStatus>("checking");
   const [checking, setChecking] = useState(true);
+
+  const attemptsRef = useRef(0);
+  const isCheckingRef = useRef(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const url = new URL(window.location.href);
-    const id =
+
+    const regId =
       url.searchParams.get("registrationId") ||
       searchParams?.registrationId ||
       "";
 
-    if (id) {
-      setRegistrationId(id);
-      void checkRegistrationStatus(id);
+    const tId = url.searchParams.get("teamId") || searchParams?.teamId || "";
+
+    const uId = url.searchParams.get("userId") || searchParams?.userId || "";
+
+    setRegistrationId(regId);
+    setTeamId(tId);
+    setUserId(uId);
+
+    if (regId) {
+      void checkCaptain(regId);
+    } else if (tId && uId) {
+      void checkMember(tId, uId);
     } else {
-      setStatus("pending");
+      setStatus("failed");
       setChecking(false);
     }
-  }, [searchParams?.registrationId]);
 
-  async function checkRegistrationStatus(id: string) {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      isCheckingRef.current = false;
+    };
+  }, [searchParams?.registrationId, searchParams?.teamId, searchParams?.userId]);
+
+  async function scheduleRetry(kind: "captain" | "member", a: string, b?: string) {
+    if (attemptsRef.current >= 30) {
+      setChecking(false);
+      setStatus("pending");
+      return;
+    }
+
+    attemptsRef.current += 1;
+
+    timeoutRef.current = setTimeout(() => {
+      isCheckingRef.current = false;
+
+      if (kind === "captain") {
+        void checkCaptain(a);
+      } else if (b) {
+        void checkMember(a, b);
+      }
+    }, 2000);
+  }
+
+  async function checkCaptain(id: string) {
+    if (!id || isCheckingRef.current) return;
+
+    isCheckingRef.current = true;
+    setChecking(true);
+
     try {
-      setChecking(true);
-      setStatus("checking");
-
       const response = await fetch(
         `/api/tournaments/registration-status?registrationId=${encodeURIComponent(id)}`,
         { cache: "no-store" }
       );
 
-      const data = await response.json().catch(() => null);
+      const data = await response.json().catch(() => ({}));
+      const result = handleStatus(data, id);
 
-      if (!response.ok) {
-        throw new Error(data?.message || "Erro ao validar pagamento");
-      }
-
-      const resolvedStatus = String(data?.resolvedStatus || "")
-        .trim()
-        .toLowerCase();
-
-      const paymentStatus = String(data?.paymentStatus || "")
-        .trim()
-        .toLowerCase();
-
-      // ✅ aprovado → redireciona
-      if (resolvedStatus === "approved" || paymentStatus === "approved") {
-        window.location.replace(
-          `/tournaments/${slug}/payment/success?registrationId=${encodeURIComponent(id)}`
-        );
+      if (result === "retry") {
+        await scheduleRetry("captain", id);
         return;
       }
-
-      // ❌ falhou
-      if (resolvedStatus === "failed") {
-        setStatus("failed");
-        return;
-      }
-
-      // ⏳ padrão → pending
-      setStatus("pending");
     } catch (error) {
-      console.error("[PendingPage] erro:", error);
+      console.error("[PendingPage][Captain] erro:", error);
       setStatus("pending");
+      await scheduleRetry("captain", id);
+      return;
     } finally {
       setChecking(false);
+      isCheckingRef.current = false;
+    }
+  }
+
+  async function checkMember(currentTeamId: string, currentUserId: string) {
+    if (!currentTeamId || !currentUserId || isCheckingRef.current) return;
+
+    isCheckingRef.current = true;
+    setChecking(true);
+
+    try {
+      const response = await fetch(
+        `/api/tournaments/registration-status?teamId=${encodeURIComponent(currentTeamId)}&userId=${encodeURIComponent(currentUserId)}`,
+        { cache: "no-store" }
+      );
+
+      const data = await response.json().catch(() => ({}));
+      const result = handleStatus(data, undefined, currentTeamId, currentUserId);
+
+      if (result === "retry") {
+        await scheduleRetry("member", currentTeamId, currentUserId);
+        return;
+      }
+    } catch (error) {
+      console.error("[PendingPage][Member] erro:", error);
+      setStatus("pending");
+      await scheduleRetry("member", currentTeamId, currentUserId);
+      return;
+    } finally {
+      setChecking(false);
+      isCheckingRef.current = false;
+    }
+  }
+
+  function handleStatus(
+    data: any,
+    currentRegistrationId?: string,
+    currentTeamId?: string,
+    currentUserId?: string
+  ): "approved" | "failed" | "retry" {
+    const resolvedStatus = String(data?.resolvedStatus || "")
+      .trim()
+      .toLowerCase();
+
+    const paymentStatus = String(data?.paymentStatus || "")
+      .trim()
+      .toLowerCase();
+
+    const registrationStatus = String(data?.registrationStatus || "")
+      .trim()
+      .toLowerCase();
+
+    const isApproved =
+      resolvedStatus === "approved" ||
+      paymentStatus === "approved" ||
+      registrationStatus === "confirmed";
+
+    if (isApproved) {
+      setStatus("approved");
+
+      if (currentRegistrationId) {
+        window.location.replace(
+          `/tournaments/${slug}/payment/success?registrationId=${encodeURIComponent(
+            currentRegistrationId
+          )}`
+        );
+      } else if (currentTeamId && currentUserId) {
+        window.location.replace(
+          `/tournaments/${slug}/payment/success?teamId=${encodeURIComponent(
+            currentTeamId
+          )}&userId=${encodeURIComponent(currentUserId)}`
+        );
+      }
+
+      return "approved";
+    }
+
+    const isFailed =
+      resolvedStatus === "failed" ||
+      registrationStatus === "payment_failed" ||
+      registrationStatus === "cancelled" ||
+      paymentStatus === "rejected" ||
+      paymentStatus === "cancelled" ||
+      paymentStatus === "error";
+
+    if (isFailed) {
+      setStatus("failed");
+      return "failed";
+    }
+
+    setStatus("pending");
+    return "retry";
+  }
+
+  function handleManualRefresh() {
+    attemptsRef.current = 0;
+
+    if (registrationId) {
+      void checkCaptain(registrationId);
+      return;
+    }
+
+    if (teamId && userId) {
+      void checkMember(teamId, userId);
     }
   }
 
@@ -157,10 +285,6 @@ export default function TournamentPaymentPendingPage({
         <section style={styles.card}>
           {checking || status === "checking" ? (
             <>
-              <div style={styles.iconWrapChecking}>
-                <span style={styles.iconChecking}>…</span>
-              </div>
-
               <h1 style={styles.title}>Validando pagamento</h1>
               <p style={styles.text}>
                 Estamos consultando o status mais recente da sua inscrição.
@@ -168,34 +292,19 @@ export default function TournamentPaymentPendingPage({
             </>
           ) : status === "failed" ? (
             <>
-              <div style={styles.iconWrapFailure}>
-                <span style={styles.iconFailure}>×</span>
-              </div>
-
               <h1 style={styles.title}>Pagamento não concluído</h1>
               <p style={styles.text}>
-                O pagamento não foi confirmado. Você pode tentar novamente.
+                O pagamento não foi confirmado pelo sistema.
               </p>
             </>
           ) : (
             <>
-              <div style={styles.iconWrapPending}>
-                <span style={styles.icon}>!</span>
-              </div>
-
               <h1 style={styles.title}>Pagamento pendente</h1>
               <p style={styles.text}>
-                Seu pagamento está em processamento. Assim que confirmado, sua
-                inscrição será automaticamente validada.
+                Seu pagamento foi recebido e ainda está sendo processado. Isso pode
+                levar alguns segundos.
               </p>
             </>
-          )}
-
-          {registrationId && (
-            <div style={styles.infoBox}>
-              <span style={styles.infoLabel}>Inscrição</span>
-              <strong style={styles.infoValue}>{registrationId}</strong>
-            </div>
           )}
 
           <div style={styles.actions}>
@@ -203,19 +312,16 @@ export default function TournamentPaymentPendingPage({
               Voltar ao torneio
             </Link>
 
-            {status === "pending" && registrationId ? (
-              <button
-                type="button"
-                style={styles.secondaryButton}
-                onClick={() => void checkRegistrationStatus(registrationId)}
-              >
-                Atualizar status
-              </button>
-            ) : (
-              <Link href="/" style={styles.secondaryButton}>
-                Ir para a home
-              </Link>
-            )}
+            {status === "pending" &&
+              (registrationId || (teamId && userId)) && (
+                <button
+                  type="button"
+                  style={styles.secondaryButton}
+                  onClick={handleManualRefresh}
+                >
+                  Atualizar status
+                </button>
+              )}
           </div>
         </section>
       </div>
@@ -242,110 +348,54 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 12,
     background: "#EFF6FF",
     border: "1px solid #BFDBFE",
+    textAlign: "center",
     color: "#1E40AF",
     fontSize: 14,
     fontWeight: 700,
-    textAlign: "center",
   },
   card: {
     background: "#FFFFFF",
-    border: "1px solid rgba(15,23,42,0.08)",
     borderRadius: 24,
     padding: 32,
-    boxShadow: "0 10px 30px rgba(15,23,42,0.05)",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
     textAlign: "center",
-  },
-  iconWrapChecking: {
-    width: 84,
-    height: 84,
-    borderRadius: 999,
-    background: "#DBEAFE",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 18,
-  },
-  iconChecking: {
-    fontSize: 36,
-    fontWeight: 900,
-    color: "#1D4ED8",
-  },
-  iconWrapPending: {
-    width: 84,
-    height: 84,
-    borderRadius: 999,
-    background: "#FEF3C7",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 18,
-  },
-  iconWrapFailure: {
-    width: 84,
-    height: 84,
-    borderRadius: 999,
-    background: "#FEE2E2",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 18,
-  },
-  icon: {
-    fontSize: 36,
-    fontWeight: 900,
-    color: "#92400E",
-  },
-  iconFailure: {
-    fontSize: 40,
-    fontWeight: 900,
-    color: "#B91C1C",
+    boxShadow: "0 10px 30px rgba(15,23,42,0.08)",
   },
   title: {
-    fontSize: 34,
-    fontWeight: 1000,
+    fontSize: 32,
+    fontWeight: 900,
     color: "#0B3C5D",
   },
   text: {
     marginTop: 12,
     color: "#475569",
-  },
-  infoBox: {
-    marginTop: 20,
-    background: "#F8FAFC",
-    borderRadius: 16,
-    padding: "14px 18px",
-  },
-  infoLabel: {
-    fontSize: 12,
-    fontWeight: 800,
-    color: "#64748B",
-  },
-  infoValue: {
-    fontSize: 14,
-    fontWeight: 900,
+    fontSize: 16,
+    lineHeight: 1.6,
+    maxWidth: 560,
+    marginLeft: "auto",
+    marginRight: "auto",
   },
   actions: {
-    marginTop: 24,
+    marginTop: 20,
     display: "flex",
-    gap: 12,
+    gap: 10,
+    justifyContent: "center",
+    flexWrap: "wrap",
   },
   primaryButton: {
-    padding: "13px 18px",
+    padding: "12px 16px",
     background: "#0B3C5D",
     color: "#fff",
-    borderRadius: 12,
+    borderRadius: 8,
     textDecoration: "none",
+    fontWeight: 700,
   },
   secondaryButton: {
-    padding: "13px 18px",
+    padding: "12px 16px",
     background: "#E2E8F0",
-    borderRadius: 12,
+    borderRadius: 8,
     border: "none",
     cursor: "pointer",
-    textDecoration: "none",
     color: "#0F172A",
+    fontWeight: 700,
   },
 };

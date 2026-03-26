@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 type Props = {
   params: {
@@ -87,6 +87,10 @@ export default function TournamentPaymentPage({
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<PageStatus>("checking");
 
+  const attemptsRef = useRef(0);
+  const isCheckingRef = useRef(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -107,13 +111,11 @@ export default function TournamentPaymentPage({
     setTeamId(tId);
     setUserId(uId);
 
-    // 🔥 fluxo capitão
     if (regId) {
       void checkCaptain(regId);
       return;
     }
 
-    // 🔥 fluxo membro
     if (tId && uId) {
       void checkMember(tId, uId);
       return;
@@ -121,41 +123,90 @@ export default function TournamentPaymentPage({
 
     setStatus("failed");
     setLoading(false);
+
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      isCheckingRef.current = false;
+    };
   }, []);
 
+  async function scheduleRetry(kind: "captain" | "member", a: string, b?: string) {
+    if (attemptsRef.current >= 30) {
+      setLoading(false);
+      setStatus("pending");
+      return;
+    }
+
+    attemptsRef.current += 1;
+
+    timeoutRef.current = setTimeout(() => {
+      isCheckingRef.current = false;
+
+      if (kind === "captain") {
+        void checkCaptain(a);
+      } else if (b) {
+        void checkMember(a, b);
+      }
+    }, 2000);
+  }
+
   async function checkCaptain(id: string) {
+    if (!id || isCheckingRef.current) return;
+
+    isCheckingRef.current = true;
+
     try {
       const res = await fetch(
         `/api/tournaments/registration-status?registrationId=${encodeURIComponent(id)}`,
         { cache: "no-store" }
       );
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
-      handleStatus(data, id);
+      const result = handleStatus(data, id);
+
+      if (result === "retry") {
+        await scheduleRetry("captain", id);
+        return;
+      }
     } catch (err) {
       console.error(err);
-      setStatus("failed");
+      setStatus("pending");
+      await scheduleRetry("captain", id);
+      return;
     } finally {
       setLoading(false);
+      isCheckingRef.current = false;
     }
   }
 
   async function checkMember(teamId: string, userId: string) {
+    if (!teamId || !userId || isCheckingRef.current) return;
+
+    isCheckingRef.current = true;
+
     try {
       const res = await fetch(
         `/api/tournaments/registration-status?teamId=${teamId}&userId=${userId}`,
         { cache: "no-store" }
       );
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
-      handleStatus(data, undefined, teamId, userId);
+      const result = handleStatus(data, undefined, teamId, userId);
+
+      if (result === "retry") {
+        await scheduleRetry("member", teamId, userId);
+        return;
+      }
     } catch (err) {
       console.error(err);
-      setStatus("failed");
+      setStatus("pending");
+      await scheduleRetry("member", teamId, userId);
+      return;
     } finally {
       setLoading(false);
+      isCheckingRef.current = false;
     }
   }
 
@@ -164,12 +215,19 @@ export default function TournamentPaymentPage({
     registrationId?: string,
     teamId?: string,
     userId?: string
-  ) {
+  ): "approved" | "failed" | "retry" {
     const resolvedStatus = String(data?.resolvedStatus || "").toLowerCase();
     const paymentStatus = String(data?.paymentStatus || "").toLowerCase();
+    const registrationStatus = String(data?.registrationStatus || "").toLowerCase();
 
-    // aprovado → success
-    if (resolvedStatus === "approved" || paymentStatus === "approved") {
+    const isApproved =
+      resolvedStatus === "approved" ||
+      paymentStatus === "approved" ||
+      registrationStatus === "confirmed";
+
+    if (isApproved) {
+      setStatus("approved");
+
       if (registrationId) {
         window.location.replace(
           `/tournaments/${slug}/payment/success?registrationId=${registrationId}`
@@ -179,17 +237,24 @@ export default function TournamentPaymentPage({
           `/tournaments/${slug}/payment/success?teamId=${teamId}&userId=${userId}`
         );
       }
-      return;
+
+      return "approved";
     }
 
-    // pending
-    if (resolvedStatus === "pending" || paymentStatus === "pending") {
-      setStatus("pending");
-      return;
+    const isFailed =
+      resolvedStatus === "failed" ||
+      registrationStatus === "payment_failed" ||
+      paymentStatus === "rejected" ||
+      paymentStatus === "cancelled" ||
+      paymentStatus === "error";
+
+    if (isFailed) {
+      setStatus("failed");
+      return "failed";
     }
 
-    // failed
-    setStatus("failed");
+    setStatus("pending");
+    return "retry";
   }
 
   if (loading) {
@@ -213,17 +278,17 @@ export default function TournamentPaymentPage({
             <>
               <h1 style={styles.title}>Pagamento em processamento</h1>
               <p style={styles.text}>
-                Seu pagamento ainda está sendo confirmado.
+                Seu pagamento foi recebido e está sendo confirmado.
               </p>
             </>
-          ) : (
+          ) : status === "failed" ? (
             <>
               <h1 style={styles.title}>Pagamento não concluído</h1>
               <p style={styles.text}>
                 Não foi possível concluir o pagamento.
               </p>
             </>
-          )}
+          ) : null}
 
           <div style={styles.actions}>
             <Link href={`/tournaments/${slug}`} style={styles.primaryButton}>

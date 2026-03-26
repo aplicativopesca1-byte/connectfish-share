@@ -131,7 +131,11 @@ function mapCaptureDoc(
         ? Number(raw.approvedLengthCm)
         : null,
     photoUrl: raw.photoUrl ? String(raw.photoUrl) : "",
-    thumbnailUrl: raw.thumbnailUrl ? String(raw.thumbnailUrl) : null,
+    thumbnailUrl: raw.thumbnailUrl
+      ? String(raw.thumbnailUrl)
+      : raw.photoThumbnailUrl
+      ? String(raw.photoThumbnailUrl)
+      : null,
     capturedAt: toIsoStringSafe(raw.capturedAt),
     submittedAt: toIsoStringSafe(raw.submittedAt),
     latitude:
@@ -233,6 +237,11 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
     () => captures.find((item) => item.id === selectedCaptureId) || null,
     [captures, selectedCaptureId]
   );
+
+  const selectedCaptureImageSrc = useMemo(() => {
+    if (!selectedCapture) return null;
+    return selectedCapture.photoUrl || selectedCapture.thumbnailUrl || null;
+  }, [selectedCapture]);
 
   const selectedCaptureAlerts = useMemo(() => {
     if (!selectedCapture) return [];
@@ -583,9 +592,9 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
             ) : (
               <div style={styles.detailWrap}>
                 <div style={styles.imageCard}>
-                  {selectedCapture.photoUrl ? (
+                  {selectedCaptureImageSrc ? (
                     <img
-                      src={selectedCapture.photoUrl}
+                      src={selectedCaptureImageSrc}
                       alt="Captura enviada"
                       style={styles.captureImage}
                     />
