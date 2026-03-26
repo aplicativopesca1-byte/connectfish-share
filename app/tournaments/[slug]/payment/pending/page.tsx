@@ -12,6 +12,8 @@ type Props = {
   };
 };
 
+type PaymentStatus = "checking" | "pending" | "approved" | "failed";
+
 function AppSessionBridgeInline() {
   const [processing, setProcessing] = useState(false);
 
@@ -52,9 +54,7 @@ function AppSessionBridgeInline() {
         }
       } catch (error) {
         console.error("[PaymentPendingBridge] erro:", error);
-        if (!cancelled) {
-          setProcessing(false);
-        }
+        if (!cancelled) setProcessing(false);
       }
     }
 
@@ -80,17 +80,74 @@ export default function TournamentPaymentPendingPage({
     searchParams?.registrationId ?? ""
   );
 
+  const [status, setStatus] = useState<PaymentStatus>("checking");
+  const [checking, setChecking] = useState(true);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const currentUrl = new URL(window.location.href);
-    const registrationIdFromUrl =
-      currentUrl.searchParams.get("registrationId") || "";
+    const url = new URL(window.location.href);
+    const id =
+      url.searchParams.get("registrationId") ||
+      searchParams?.registrationId ||
+      "";
 
-    if (registrationIdFromUrl) {
-      setRegistrationId(registrationIdFromUrl);
+    if (id) {
+      setRegistrationId(id);
+      void checkRegistrationStatus(id);
+    } else {
+      setStatus("pending");
+      setChecking(false);
     }
-  }, []);
+  }, [searchParams?.registrationId]);
+
+  async function checkRegistrationStatus(id: string) {
+    try {
+      setChecking(true);
+      setStatus("checking");
+
+      const response = await fetch(
+        `/api/tournaments/registration-status?registrationId=${encodeURIComponent(id)}`,
+        { cache: "no-store" }
+      );
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(data?.message || "Erro ao validar pagamento");
+      }
+
+      const resolvedStatus = String(data?.resolvedStatus || "")
+        .trim()
+        .toLowerCase();
+
+      const paymentStatus = String(data?.paymentStatus || "")
+        .trim()
+        .toLowerCase();
+
+      // ✅ aprovado → redireciona
+      if (resolvedStatus === "approved" || paymentStatus === "approved") {
+        window.location.replace(
+          `/tournaments/${slug}/payment/success?registrationId=${encodeURIComponent(id)}`
+        );
+        return;
+      }
+
+      // ❌ falhou
+      if (resolvedStatus === "failed") {
+        setStatus("failed");
+        return;
+      }
+
+      // ⏳ padrão → pending
+      setStatus("pending");
+    } catch (error) {
+      console.error("[PendingPage] erro:", error);
+      setStatus("pending");
+    } finally {
+      setChecking(false);
+    }
+  }
 
   return (
     <main style={styles.page}>
@@ -98,46 +155,67 @@ export default function TournamentPaymentPendingPage({
         <AppSessionBridgeInline />
 
         <section style={styles.card}>
-          <div style={styles.iconWrapPending}>
-            <span style={styles.icon}>!</span>
-          </div>
+          {checking || status === "checking" ? (
+            <>
+              <div style={styles.iconWrapChecking}>
+                <span style={styles.iconChecking}>…</span>
+              </div>
 
-          <h1 style={styles.title}>Pagamento pendente</h1>
+              <h1 style={styles.title}>Validando pagamento</h1>
+              <p style={styles.text}>
+                Estamos consultando o status mais recente da sua inscrição.
+              </p>
+            </>
+          ) : status === "failed" ? (
+            <>
+              <div style={styles.iconWrapFailure}>
+                <span style={styles.iconFailure}>×</span>
+              </div>
 
-          <p style={styles.text}>
-            Seu pagamento foi iniciado, mas ainda está como pendente no sistema
-            do Mercado Pago.
-          </p>
+              <h1 style={styles.title}>Pagamento não concluído</h1>
+              <p style={styles.text}>
+                O pagamento não foi confirmado. Você pode tentar novamente.
+              </p>
+            </>
+          ) : (
+            <>
+              <div style={styles.iconWrapPending}>
+                <span style={styles.icon}>!</span>
+              </div>
 
-          <p style={styles.text}>
-            Isso pode acontecer em pagamentos por boleto, Pix em processamento
-            ou cartão ainda em análise.
-          </p>
+              <h1 style={styles.title}>Pagamento pendente</h1>
+              <p style={styles.text}>
+                Seu pagamento está em processamento. Assim que confirmado, sua
+                inscrição será automaticamente validada.
+              </p>
+            </>
+          )}
 
-          {registrationId ? (
+          {registrationId && (
             <div style={styles.infoBox}>
               <span style={styles.infoLabel}>Inscrição</span>
               <strong style={styles.infoValue}>{registrationId}</strong>
             </div>
-          ) : null}
-
-          <div style={styles.alertPending}>
-            <p style={styles.alertTitle}>O que acontece agora</p>
-            <p style={styles.alertText}>
-              Sua inscrição permanece aguardando pagamento. Assim que o Mercado
-              Pago confirmar a operação, o webhook atualizará o status
-              automaticamente.
-            </p>
-          </div>
+          )}
 
           <div style={styles.actions}>
             <Link href={`/tournaments/${slug}`} style={styles.primaryButton}>
               Voltar ao torneio
             </Link>
 
-            <Link href="/" style={styles.secondaryButton}>
-              Ir para a home
-            </Link>
+            {status === "pending" && registrationId ? (
+              <button
+                type="button"
+                style={styles.secondaryButton}
+                onClick={() => void checkRegistrationStatus(registrationId)}
+              >
+                Atualizar status
+              </button>
+            ) : (
+              <Link href="/" style={styles.secondaryButton}>
+                Ir para a home
+              </Link>
+            )}
           </div>
         </section>
       </div>
@@ -180,6 +258,21 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     textAlign: "center",
   },
+  iconWrapChecking: {
+    width: 84,
+    height: 84,
+    borderRadius: 999,
+    background: "#DBEAFE",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 18,
+  },
+  iconChecking: {
+    fontSize: 36,
+    fontWeight: 900,
+    color: "#1D4ED8",
+  },
   iconWrapPending: {
     width: 84,
     height: 84,
@@ -190,95 +283,69 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "center",
     marginBottom: 18,
   },
+  iconWrapFailure: {
+    width: 84,
+    height: 84,
+    borderRadius: 999,
+    background: "#FEE2E2",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 18,
+  },
   icon: {
     fontSize: 36,
     fontWeight: 900,
     color: "#92400E",
-    lineHeight: 1,
+  },
+  iconFailure: {
+    fontSize: 40,
+    fontWeight: 900,
+    color: "#B91C1C",
   },
   title: {
-    margin: 0,
     fontSize: 34,
     fontWeight: 1000,
     color: "#0B3C5D",
   },
   text: {
-    margin: "14px 0 0 0",
-    fontSize: 15,
-    lineHeight: 1.7,
+    marginTop: 12,
     color: "#475569",
-    fontWeight: 600,
-    maxWidth: 560,
   },
   infoBox: {
     marginTop: 20,
     background: "#F8FAFC",
     borderRadius: 16,
     padding: "14px 18px",
-    minWidth: 280,
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-    border: "1px solid rgba(15,23,42,0.06)",
   },
   infoLabel: {
     fontSize: 12,
     fontWeight: 800,
     color: "#64748B",
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
   },
   infoValue: {
     fontSize: 14,
     fontWeight: 900,
-    color: "#0F172A",
-    wordBreak: "break-all",
-  },
-  alertPending: {
-    marginTop: 20,
-    width: "100%",
-    background: "#FFFBEB",
-    border: "1px solid #FDE68A",
-    borderRadius: 16,
-    padding: 16,
-    textAlign: "left",
-  },
-  alertTitle: {
-    margin: 0,
-    fontSize: 14,
-    fontWeight: 900,
-    color: "#92400E",
-  },
-  alertText: {
-    margin: "8px 0 0 0",
-    fontSize: 14,
-    lineHeight: 1.6,
-    fontWeight: 700,
-    color: "#B45309",
   },
   actions: {
     marginTop: 24,
     display: "flex",
     gap: 12,
-    flexWrap: "wrap",
-    justifyContent: "center",
   },
   primaryButton: {
-    textDecoration: "none",
-    borderRadius: 12,
     padding: "13px 18px",
     background: "#0B3C5D",
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: 900,
+    color: "#fff",
+    borderRadius: 12,
+    textDecoration: "none",
   },
   secondaryButton: {
-    textDecoration: "none",
-    borderRadius: 12,
     padding: "13px 18px",
     background: "#E2E8F0",
+    borderRadius: 12,
+    border: "none",
+    cursor: "pointer",
+    textDecoration: "none",
     color: "#0F172A",
-    fontSize: 14,
-    fontWeight: 900,
   },
 };

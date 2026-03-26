@@ -1,16 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 type Props = {
-  params: {
-    slug: string;
-  };
-  searchParams?: {
-    registrationId?: string;
-  };
+  params: { slug: string };
+  searchParams?: { registrationId?: string };
 };
+
+type Status = "checking" | "approved" | "pending" | "failed";
 
 function AppSessionBridgeInline() {
   const [processing, setProcessing] = useState(false);
@@ -52,9 +50,7 @@ function AppSessionBridgeInline() {
         }
       } catch (error) {
         console.error("[PaymentSuccessBridge] erro:", error);
-        if (!cancelled) {
-          setProcessing(false);
-        }
+        if (!cancelled) setProcessing(false);
       }
     }
 
@@ -84,17 +80,80 @@ export default function TournamentPaymentSuccessPage({
     searchParams?.registrationId ?? ""
   );
 
+  const [status, setStatus] = useState<Status>("checking");
+
+  const attemptsRef = useRef(0);
+  const isCheckingRef = useRef(false);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const currentUrl = new URL(window.location.href);
-    const registrationIdFromUrl =
-      currentUrl.searchParams.get("registrationId") || "";
+    const url = new URL(window.location.href);
+    const id =
+      url.searchParams.get("registrationId") ||
+      searchParams?.registrationId ||
+      "";
 
-    if (registrationIdFromUrl) {
-      setRegistrationId(registrationIdFromUrl);
+    if (!id) {
+      setStatus("failed");
+      return;
     }
+
+    setRegistrationId(id);
+    checkStatus(id);
   }, []);
+
+  async function checkStatus(id: string) {
+    if (isCheckingRef.current) return;
+
+    isCheckingRef.current = true;
+
+    try {
+      const res = await fetch(
+        `/api/tournaments/registration-status?registrationId=${encodeURIComponent(id)}`,
+        { cache: "no-store" }
+      );
+
+      const data = await res.json();
+
+      const resolvedStatus = String(data?.resolvedStatus || "")
+        .trim()
+        .toLowerCase();
+
+      const paymentStatus = String(data?.paymentStatus || "")
+        .trim()
+        .toLowerCase();
+
+      // ✅ aprovado
+      if (resolvedStatus === "approved" || paymentStatus === "approved") {
+        setStatus("approved");
+        return;
+      }
+
+      // ❌ falhou
+      if (resolvedStatus === "failed") {
+        setStatus("failed");
+        return;
+      }
+
+      // ⏳ pending → retry
+      setStatus("pending");
+
+      if (attemptsRef.current < 10) {
+        attemptsRef.current += 1;
+
+        setTimeout(() => {
+          isCheckingRef.current = false;
+          checkStatus(id);
+        }, 2000);
+      }
+    } catch (err) {
+      console.error("[SuccessPage] erro:", err);
+      setStatus("failed");
+    } finally {
+      isCheckingRef.current = false;
+    }
+  }
 
   return (
     <main style={styles.page}>
@@ -102,46 +161,64 @@ export default function TournamentPaymentSuccessPage({
         <AppSessionBridgeInline />
 
         <section style={styles.card}>
-          <div style={styles.iconWrapSuccess}>
-            <span style={styles.icon}>✓</span>
-          </div>
+          {status === "checking" && (
+            <>
+              <h1 style={styles.title}>Validando pagamento...</h1>
+              <p style={styles.text}>
+                Estamos confirmando sua inscrição com o sistema.
+              </p>
+            </>
+          )}
 
-          <h1 style={styles.title}>Pagamento recebido</h1>
+          {status === "pending" && (
+            <>
+              <h1 style={styles.title}>Pagamento em análise</h1>
+              <p style={styles.text}>
+                Seu pagamento foi recebido e está sendo processado.
+              </p>
+            </>
+          )}
 
-          <p style={styles.text}>
-            Recebemos o retorno do seu pagamento. Agora estamos validando a
-            inscrição da sua equipe no torneio.
-          </p>
+          {status === "approved" && (
+            <>
+              <div style={styles.iconWrapSuccess}>
+                <span style={styles.icon}>✓</span>
+              </div>
 
-          <p style={styles.text}>
-            Assim que a aprovação for confirmada, sua equipe ficará com status
-            confirmado no sistema.
-          </p>
+              <h1 style={styles.title}>Inscrição confirmada</h1>
 
-          {registrationId ? (
+              <p style={styles.text}>
+                Pagamento aprovado com sucesso. Sua equipe está confirmada no torneio.
+              </p>
+            </>
+          )}
+
+          {status === "failed" && (
+            <>
+              <h1 style={styles.title}>Erro na confirmação</h1>
+              <p style={styles.text}>
+                Não conseguimos confirmar o pagamento. Tente novamente.
+              </p>
+            </>
+          )}
+
+          {registrationId && (
             <div style={styles.infoBox}>
               <span style={styles.infoLabel}>Inscrição</span>
               <strong style={styles.infoValue}>{registrationId}</strong>
             </div>
-          ) : null}
-
-          <div style={styles.alertSuccess}>
-            <p style={styles.alertTitle}>Importante</p>
-            <p style={styles.alertText}>
-              O status final da inscrição depende da confirmação do pagamento no
-              webhook. Mesmo após voltar do checkout, a aprovação oficial pode
-              levar alguns instantes.
-            </p>
-          </div>
+          )}
 
           <div style={styles.actions}>
             <Link href={`/tournaments/${slug}`} style={styles.primaryButton}>
               Voltar ao torneio
             </Link>
 
-            <Link href="/" style={styles.secondaryButton}>
-              Ir para a home
-            </Link>
+            {status === "failed" && (
+              <Link href={`/tournaments/${slug}`} style={styles.secondaryButton}>
+                Tentar novamente
+              </Link>
+            )}
           </div>
         </section>
       </div>
@@ -175,10 +252,8 @@ const styles: Record<string, CSSProperties> = {
   },
   card: {
     background: "#FFFFFF",
-    border: "1px solid rgba(15,23,42,0.08)",
     borderRadius: 24,
     padding: 32,
-    boxShadow: "0 10px 30px rgba(15,23,42,0.05)",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
@@ -198,91 +273,42 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 36,
     fontWeight: 900,
     color: "#166534",
-    lineHeight: 1,
   },
   title: {
-    margin: 0,
-    fontSize: 34,
-    fontWeight: 1000,
+    fontSize: 32,
+    fontWeight: 900,
     color: "#0B3C5D",
   },
   text: {
-    margin: "14px 0 0 0",
-    fontSize: 15,
-    lineHeight: 1.7,
+    marginTop: 12,
     color: "#475569",
-    fontWeight: 600,
-    maxWidth: 560,
   },
   infoBox: {
     marginTop: 20,
-    background: "#F8FAFC",
-    borderRadius: 16,
-    padding: "14px 18px",
-    minWidth: 280,
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-    border: "1px solid rgba(15,23,42,0.06)",
   },
   infoLabel: {
     fontSize: 12,
-    fontWeight: 800,
-    color: "#64748B",
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
   },
   infoValue: {
     fontSize: 14,
     fontWeight: 900,
-    color: "#0F172A",
-    wordBreak: "break-all",
-  },
-  alertSuccess: {
-    marginTop: 20,
-    width: "100%",
-    background: "#ECFDF5",
-    border: "1px solid #A7F3D0",
-    borderRadius: 16,
-    padding: 16,
-    textAlign: "left",
-  },
-  alertTitle: {
-    margin: 0,
-    fontSize: 14,
-    fontWeight: 900,
-    color: "#065F46",
-  },
-  alertText: {
-    margin: "8px 0 0 0",
-    fontSize: 14,
-    lineHeight: 1.6,
-    fontWeight: 700,
-    color: "#047857",
   },
   actions: {
-    marginTop: 24,
+    marginTop: 20,
     display: "flex",
-    gap: 12,
-    flexWrap: "wrap",
-    justifyContent: "center",
+    gap: 10,
   },
   primaryButton: {
-    textDecoration: "none",
-    borderRadius: 12,
-    padding: "13px 18px",
+    padding: "12px 16px",
     background: "#0B3C5D",
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: 900,
+    color: "#fff",
+    borderRadius: 8,
+    textDecoration: "none",
   },
   secondaryButton: {
-    textDecoration: "none",
-    borderRadius: 12,
-    padding: "13px 18px",
+    padding: "12px 16px",
     background: "#E2E8F0",
-    color: "#0F172A",
-    fontSize: 14,
-    fontWeight: 900,
+    borderRadius: 8,
+    textDecoration: "none",
   },
 };

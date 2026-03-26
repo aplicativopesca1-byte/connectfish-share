@@ -11,7 +11,7 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
+  onSnapshot,
   orderBy,
   query,
   serverTimestamp,
@@ -32,6 +32,10 @@ type FirestoreTimestampLike = {
 type TournamentDoc = {
   title?: string;
   location?: string;
+  species?: string;
+  minSizeCm?: number;
+  scheduledStartAt?: unknown;
+  scheduledEndAt?: unknown;
 };
 
 type CaptureStatus = "pending" | "approved" | "rejected";
@@ -62,6 +66,12 @@ type TournamentCapture = {
 };
 
 type FilterStatus = "all" | CaptureStatus;
+
+type CaptureAlert = {
+  key: string;
+  label: string;
+  tone: "red" | "yellow";
+};
 
 function toIsoStringSafe(value: unknown): string | null {
   if (!value) return null;
@@ -143,6 +153,59 @@ function mapCaptureDoc(
   };
 }
 
+function deriveCaptureAlerts(params: {
+  capture: TournamentCapture;
+  minSizeCm: number;
+  scheduledStartAt: string | null;
+  scheduledEndAt: string | null;
+}) {
+  const alerts: CaptureAlert[] = [];
+
+  if (params.minSizeCm > 0 && params.capture.declaredLengthCm < params.minSizeCm) {
+    alerts.push({
+      key: "min_size",
+      label: `Peixe abaixo do mínimo (${params.minSizeCm} cm)`,
+      tone: "red",
+    });
+  }
+
+  if (params.capture.insideBoundary === false) {
+    alerts.push({
+      key: "boundary",
+      label: "Captura fora da área permitida",
+      tone: "red",
+    });
+  }
+
+  if (params.scheduledStartAt && params.capture.capturedAt) {
+    const startMs = new Date(params.scheduledStartAt).getTime();
+    const captureMs = new Date(params.capture.capturedAt).getTime();
+
+    if (!Number.isNaN(startMs) && !Number.isNaN(captureMs) && captureMs < startMs) {
+      alerts.push({
+        key: "before_start",
+        label: "Captura realizada antes do início",
+        tone: "yellow",
+      });
+    }
+  }
+
+  if (params.scheduledEndAt && params.capture.capturedAt) {
+    const endMs = new Date(params.scheduledEndAt).getTime();
+    const captureMs = new Date(params.capture.capturedAt).getTime();
+
+    if (!Number.isNaN(endMs) && !Number.isNaN(captureMs) && captureMs > endMs) {
+      alerts.push({
+        key: "after_end",
+        label: "Captura realizada após o encerramento",
+        tone: "red",
+      });
+    }
+  }
+
+  return alerts;
+}
+
 export default function TournamentValidationCapturesClient({ tournamentId }: Props) {
   const router = useRouter();
 
@@ -151,6 +214,9 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
 
   const [tournamentTitle, setTournamentTitle] = useState("Torneio");
   const [tournamentLocation, setTournamentLocation] = useState("Local não definido");
+  const [tournamentMinSizeCm, setTournamentMinSizeCm] = useState(0);
+  const [scheduledStartAt, setScheduledStartAt] = useState<string | null>(null);
+  const [scheduledEndAt, setScheduledEndAt] = useState<string | null>(null);
 
   const [captures, setCaptures] = useState<TournamentCapture[]>([]);
   const [selectedCaptureId, setSelectedCaptureId] = useState<string | null>(null);
@@ -168,6 +234,16 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
     [captures, selectedCaptureId]
   );
 
+  const selectedCaptureAlerts = useMemo(() => {
+    if (!selectedCapture) return [];
+    return deriveCaptureAlerts({
+      capture: selectedCapture,
+      minSizeCm: tournamentMinSizeCm,
+      scheduledStartAt,
+      scheduledEndAt,
+    });
+  }, [selectedCapture, tournamentMinSizeCm, scheduledStartAt, scheduledEndAt]);
+
   const filteredCaptures = useMemo(() => {
     if (filterStatus === "all") return captures;
     return captures.filter((item) => item.status === filterStatus);
@@ -177,17 +253,112 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
     const pending = captures.filter((item) => item.status === "pending").length;
     const approved = captures.filter((item) => item.status === "approved").length;
     const rejected = captures.filter((item) => item.status === "rejected").length;
+    const flagged = captures.filter(
+      (item) =>
+        deriveCaptureAlerts({
+          capture: item,
+          minSizeCm: tournamentMinSizeCm,
+          scheduledStartAt,
+          scheduledEndAt,
+        }).length > 0
+    ).length;
 
     return {
       total: captures.length,
       pending,
       approved,
       rejected,
+      flagged,
     };
-  }, [captures]);
+  }, [captures, tournamentMinSizeCm, scheduledStartAt, scheduledEndAt]);
 
   useEffect(() => {
-    void loadPage();
+    if (!tournamentId?.trim()) {
+      setError("ID do torneio inválido.");
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    const unsubscribers: Array<() => void> = [];
+
+    const tournamentRef = doc(db, "tournaments", tournamentId);
+    const capturesQuery = query(
+      collection(db, "tournamentCaptures"),
+      where("tournamentId", "==", tournamentId),
+      orderBy("submittedAt", "desc")
+    );
+
+    let tournamentLoaded = false;
+    let capturesLoaded = false;
+
+    const resolveLoading = () => {
+      if (tournamentLoaded && capturesLoaded) {
+        setLoading(false);
+      }
+    };
+
+    unsubscribers.push(
+      onSnapshot(
+        tournamentRef,
+        (snap) => {
+          if (!snap.exists()) {
+            setError("Torneio não encontrado.");
+            tournamentLoaded = true;
+            resolveLoading();
+            return;
+          }
+
+          const data = snap.data() as TournamentDoc;
+          setTournamentTitle(data.title || "Torneio");
+          setTournamentLocation(data.location || "Local não definido");
+          setTournamentMinSizeCm(Number(data.minSizeCm ?? 0) || 0);
+          setScheduledStartAt(toIsoStringSafe(data.scheduledStartAt));
+          setScheduledEndAt(toIsoStringSafe(data.scheduledEndAt));
+
+          tournamentLoaded = true;
+          resolveLoading();
+        },
+        (err) => {
+          console.error("Erro realtime torneio:", err);
+          setError("Não foi possível carregar os dados do torneio.");
+          tournamentLoaded = true;
+          resolveLoading();
+        }
+      )
+    );
+
+    unsubscribers.push(
+      onSnapshot(
+        capturesQuery,
+        (snapshot) => {
+          const items = snapshot.docs.map((item) =>
+            mapCaptureDoc(item.id, item.data() as Record<string, unknown>, tournamentId)
+          );
+
+          setCaptures(items);
+          setSelectedCaptureId((prev) => {
+            if (prev && items.some((item) => item.id === prev)) return prev;
+            return items[0]?.id || null;
+          });
+
+          capturesLoaded = true;
+          resolveLoading();
+        },
+        (err) => {
+          console.error("Erro realtime capturas:", err);
+          setError("Não foi possível carregar as capturas do torneio.");
+          capturesLoaded = true;
+          resolveLoading();
+        }
+      )
+    );
+
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
   }, [tournamentId]);
 
   useEffect(() => {
@@ -203,58 +374,6 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
     );
   }, [selectedCapture]);
 
-  async function loadPage() {
-    setLoading(true);
-    setError(null);
-
-    try {
-      if (!tournamentId?.trim()) {
-        setError("ID do torneio inválido.");
-        return;
-      }
-
-      await Promise.all([loadTournament(), loadCaptures()]);
-    } catch (err) {
-      console.error("Erro ao carregar página de capturas:", err);
-      setError("Não foi possível carregar as capturas do torneio.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadTournament() {
-    const ref = doc(db, "tournaments", tournamentId);
-    const snap = await getDoc(ref);
-
-    if (!snap.exists()) return;
-
-    const data = snap.data() as TournamentDoc;
-    setTournamentTitle(data.title || "Torneio");
-    setTournamentLocation(data.location || "Local não definido");
-  }
-
-  async function loadCaptures() {
-    const capturesRef = collection(db, "tournamentCaptures");
-    const capturesQuery = query(
-      capturesRef,
-      where("tournamentId", "==", tournamentId),
-      orderBy("submittedAt", "desc")
-    );
-
-    const snapshot = await getDocs(capturesQuery);
-
-    const items = snapshot.docs.map((item) =>
-      mapCaptureDoc(item.id, item.data() as Record<string, unknown>, tournamentId)
-    );
-
-    setCaptures(items);
-
-    setSelectedCaptureId((prev) => {
-      if (prev && items.some((item) => item.id === prev)) return prev;
-      return items[0]?.id || null;
-    });
-  }
-
   async function handleApprove() {
     if (!selectedCapture) return;
 
@@ -263,11 +382,23 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
     setMessage(null);
 
     try {
+      const normalizedApprovedLength = Number(approvedLengthCm || 0);
+
+      if (normalizedApprovedLength <= 0) {
+        setError("Informe uma medida aprovada válida.");
+        return;
+      }
+
+      if (tournamentMinSizeCm > 0 && normalizedApprovedLength < tournamentMinSizeCm) {
+        setError(`A medida aprovada precisa ser de no mínimo ${tournamentMinSizeCm} cm.`);
+        return;
+      }
+
       const ref = doc(db, "tournamentCaptures", selectedCapture.id);
 
       await updateDoc(ref, {
         status: "approved",
-        approvedLengthCm: Number(approvedLengthCm || 0),
+        approvedLengthCm: normalizedApprovedLength,
         judgeName: judgeName.trim() || "Organização",
         judgeNotes: judgeNotes.trim() || null,
         approvedAt: serverTimestamp(),
@@ -275,7 +406,6 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
       });
 
       setMessage("Captura aprovada com sucesso.");
-      await loadCaptures();
     } catch (err) {
       console.error("Erro ao aprovar captura:", err);
       setError("Não foi possível aprovar a captura.");
@@ -292,18 +422,22 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
     setMessage(null);
 
     try {
+      if (!judgeNotes.trim()) {
+        setError("Informe o motivo da reprovação para registrar a decisão.");
+        return;
+      }
+
       const ref = doc(db, "tournamentCaptures", selectedCapture.id);
 
       await updateDoc(ref, {
         status: "rejected",
         judgeName: judgeName.trim() || "Organização",
-        judgeNotes: judgeNotes.trim() || null,
+        judgeNotes: judgeNotes.trim(),
         rejectedAt: serverTimestamp(),
         approvedAt: null,
       });
 
       setMessage("Captura reprovada com sucesso.");
-      await loadCaptures();
     } catch (err) {
       console.error("Erro ao reprovar captura:", err);
       setError("Não foi possível reprovar a captura.");
@@ -363,6 +497,7 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
             <StatCard label="Pendentes" value={String(stats.pending)} />
             <StatCard label="Aprovadas" value={String(stats.approved)} />
             <StatCard label="Reprovadas" value={String(stats.rejected)} />
+            <StatCard label="Com alerta" value={String(stats.flagged)} />
           </div>
         </div>
 
@@ -385,6 +520,12 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
               <div style={styles.captureList}>
                 {filteredCaptures.map((capture) => {
                   const isActive = capture.id === selectedCaptureId;
+                  const alerts = deriveCaptureAlerts({
+                    capture,
+                    minSizeCm: tournamentMinSizeCm,
+                    scheduledStartAt,
+                    scheduledEndAt,
+                  });
 
                   return (
                     <button
@@ -408,6 +549,23 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
                         <MiniInfo label="Medida" value={`${capture.declaredLengthCm} cm`} />
                         <MiniInfo label="Enviado" value={formatDateTime(capture.submittedAt)} />
                       </div>
+
+                      {alerts.length ? (
+                        <div style={styles.inlineAlertsWrap}>
+                          {alerts.map((alert) => (
+                            <span
+                              key={`${capture.id}-${alert.key}`}
+                              style={
+                                alert.tone === "red"
+                                  ? styles.alertBadgeDanger
+                                  : styles.alertBadgeWarning
+                              }
+                            >
+                              {alert.label}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </button>
                   );
                 })}
@@ -436,10 +594,38 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
                   )}
                 </div>
 
+                {selectedCaptureAlerts.length ? (
+                  <div style={styles.alertPanel}>
+                    <p style={styles.alertPanelTitle}>Alertas automáticos</p>
+                    <div style={styles.alertsWrap}>
+                      {selectedCaptureAlerts.map((alert) => (
+                        <span
+                          key={alert.key}
+                          style={
+                            alert.tone === "red"
+                              ? styles.alertBadgeDanger
+                              : styles.alertBadgeWarning
+                          }
+                        >
+                          {alert.label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={styles.okPanel}>
+                    <p style={styles.okPanelTitle}>Nenhum alerta automático detectado</p>
+                    <p style={styles.okPanelText}>
+                      A captura não apresenta inconsistências básicas de medida, janela do torneio ou perímetro.
+                    </p>
+                  </div>
+                )}
+
                 <div style={styles.infoGrid}>
                   <InfoCard label="Equipe" value={selectedCapture.teamName} />
                   <InfoCard label="Espécie" value={selectedCapture.species} />
                   <InfoCard label="Medida enviada" value={`${selectedCapture.declaredLengthCm} cm`} />
+                  <InfoCard label="Mínimo do torneio" value={`${tournamentMinSizeCm} cm`} />
                   <InfoCard label="Capturado em" value={formatDateTime(selectedCapture.capturedAt)} />
                   <InfoCard label="Enviado em" value={formatDateTime(selectedCapture.submittedAt)} />
                   <InfoCard label="Geofence" value={formatBoundaryValue(selectedCapture.insideBoundary)} />
@@ -662,10 +848,19 @@ const styles: Record<string, CSSProperties> = {
   miniInfoCard: { background: "#F8FAFC", borderRadius: 12, padding: 10 },
   miniInfoLabel: { margin: 0, color: "#64748B", fontSize: 11, fontWeight: 800 },
   miniInfoValue: { margin: "4px 0 0 0", color: "#0F172A", fontSize: 13, fontWeight: 800, lineHeight: 1.4 },
+  inlineAlertsWrap: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 },
   detailWrap: { display: "flex", flexDirection: "column", gap: 16 },
   imageCard: { borderRadius: 18, overflow: "hidden", border: "1px solid rgba(15,23,42,0.08)", background: "#F8FAFC" },
   captureImage: { width: "100%", maxHeight: 460, objectFit: "cover", display: "block" },
   imageFallback: { minHeight: 260, display: "flex", alignItems: "center", justifyContent: "center", color: "#64748B", fontWeight: 700 },
+  alertPanel: { background: "#FFF7ED", border: "1px solid #FDBA74", borderRadius: 16, padding: 16 },
+  alertPanelTitle: { margin: 0, color: "#9A3412", fontSize: 14, fontWeight: 900 },
+  okPanel: { background: "#ECFDF5", border: "1px solid #A7F3D0", borderRadius: 16, padding: 16 },
+  okPanelTitle: { margin: 0, color: "#065F46", fontSize: 14, fontWeight: 900 },
+  okPanelText: { margin: "8px 0 0 0", color: "#047857", fontSize: 14, fontWeight: 700, lineHeight: 1.6 },
+  alertsWrap: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 },
+  alertBadgeDanger: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "#FEE2E2", color: "#991B1B", fontSize: 12, fontWeight: 900 },
+  alertBadgeWarning: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "#FEF3C7", color: "#92400E", fontSize: 12, fontWeight: 900 },
   infoGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 },
   infoCard: { background: "#F8FAFC", borderRadius: 14, padding: 14 },
   infoLabel: { margin: 0, color: "#64748B", fontSize: 12, fontWeight: 800 },
