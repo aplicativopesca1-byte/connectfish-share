@@ -15,7 +15,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { db } from "../../../src/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import AppSessionBridge from "../../seller/tournaments/components/AppSessionBridge";
@@ -80,6 +80,9 @@ type CreateMemberPreferenceResponse = {
   externalReference?: string;
   message?: string;
 };
+
+const LOGIN_PATH = "/login";
+const SIGNUP_PATH = "/signup";
 
 function compactSpaces(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -213,10 +216,10 @@ function mapTournamentDoc(
     typeof raw.entryFee === "number"
       ? raw.entryFee
       : typeof raw.entryFeeAmount === "number"
-      ? raw.entryFeeAmount
-      : typeof raw.price === "number"
-      ? raw.price
-      : null;
+        ? raw.entryFeeAmount
+        : typeof raw.price === "number"
+          ? raw.price
+          : null;
 
   const currency =
     typeof raw.currency === "string" && raw.currency.trim()
@@ -245,6 +248,7 @@ function mapTournamentDoc(
 }
 
 export default function TournamentPublicClient({ slug }: Props) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const tournamentIdFromUrl = compactSpaces(searchParams.get("id"));
 
@@ -252,17 +256,22 @@ export default function TournamentPublicClient({ slug }: Props) {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [searchingUsers, setSearchingUsers] = useState(false);
+  const [searchingCaptain, setSearchingCaptain] = useState(false);
+  const [searchingMembers, setSearchingMembers] = useState(false);
 
   const [tournament, setTournament] = useState<TournamentPublic | null>(null);
-  const [captainProfile, setCaptainProfile] = useState<UserProfile | null>(null);
+  const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
 
   const [teamName, setTeamName] = useState("");
+  const [captainQuery, setCaptainQuery] = useState("");
+  const [captainResults, setCaptainResults] = useState<UserSearchResult[]>([]);
+  const [selectedCaptain, setSelectedCaptain] = useState<UserSearchResult | null>(null);
+
   const [memberQuery, setMemberQuery] = useState("");
   const [memberResults, setMemberResults] = useState<UserSearchResult[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<UserSearchResult[]>([]);
-  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -287,27 +296,76 @@ export default function TournamentPublicClient({ slug }: Props) {
   }, [slug, tournamentIdFromUrl]);
 
   useEffect(() => {
-    void loadCaptainProfile();
+    void loadCurrentUserProfile();
   }, [uid, email]);
 
   useEffect(() => {
-    const queryValue = compactSpaces(memberQuery);
+    if (!isLoggedIn || selectedCaptain) {
+      setCaptainResults([]);
+      return;
+    }
 
-    if (!isLoggedIn || !queryValue || queryValue.length < 2) {
+    const queryValue = compactSpaces(captainQuery);
+    if (!queryValue || queryValue.length < 2) {
+      setCaptainResults([]);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      void searchUsers(queryValue, "captain");
+    }, 250);
+
+    return () => clearTimeout(timeout);
+  }, [captainQuery, isLoggedIn, selectedCaptain, selectedMembers, uid]);
+
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setMemberResults([]);
+      return;
+    }
+
+    const queryValue = compactSpaces(memberQuery);
+    if (!queryValue || queryValue.length < 2) {
       setMemberResults([]);
       return;
     }
 
     const timeout = setTimeout(() => {
-      void searchUsers(queryValue);
+      void searchUsers(queryValue, "member");
     }, 250);
 
     return () => clearTimeout(timeout);
-  }, [memberQuery, isLoggedIn, selectedMembers, uid]);
+  }, [memberQuery, isLoggedIn, selectedCaptain, selectedMembers, uid]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !currentUserProfile || selectedCaptain) return;
+
+    setSelectedCaptain({
+      userId: currentUserProfile.userId,
+      username: currentUserProfile.username,
+      email: currentUserProfile.email,
+      photoUrl: currentUserProfile.photoUrl,
+    });
+  }, [isLoggedIn, currentUserProfile, selectedCaptain]);
 
   function clearFeedback() {
     if (error) setError(null);
     if (message) setMessage(null);
+  }
+
+  function buildReturnUrl() {
+    if (typeof window === "undefined") return "/";
+    return window.location.pathname + window.location.search;
+  }
+
+  function goToLogin() {
+    const next = encodeURIComponent(buildReturnUrl());
+    router.push(`${LOGIN_PATH}?next=${next}`);
+  }
+
+  function goToSignup() {
+    const next = encodeURIComponent(buildReturnUrl());
+    router.push(`${SIGNUP_PATH}?next=${next}`);
   }
 
   async function loadTournament() {
@@ -384,9 +442,10 @@ export default function TournamentPublicClient({ slug }: Props) {
     }
   }
 
-  async function loadCaptainProfile() {
+  async function loadCurrentUserProfile() {
     if (!uid) {
-      setCaptainProfile(null);
+      setCurrentUserProfile(null);
+      setSelectedCaptain(null);
       return;
     }
 
@@ -394,7 +453,7 @@ export default function TournamentPublicClient({ slug }: Props) {
       const userSnap = await getDoc(doc(db, "users", uid));
 
       if (!userSnap.exists()) {
-        setCaptainProfile({
+        setCurrentUserProfile({
           userId: uid,
           username: "",
           email: email || null,
@@ -407,7 +466,7 @@ export default function TournamentPublicClient({ slug }: Props) {
       const raw = userSnap.data() as Record<string, unknown>;
       const username = compactSpaces(raw.username).toLowerCase();
 
-      setCaptainProfile({
+      setCurrentUserProfile({
         userId: userSnap.id,
         username,
         email: raw.email ? String(raw.email) : email || null,
@@ -420,8 +479,8 @@ export default function TournamentPublicClient({ slug }: Props) {
           "Usuário logado",
       });
     } catch (err) {
-      console.error("Erro ao carregar perfil do capitão:", err);
-      setCaptainProfile({
+      console.error("Erro ao carregar perfil do usuário:", err);
+      setCurrentUserProfile({
         userId: uid,
         username: "",
         email: email || null,
@@ -431,9 +490,13 @@ export default function TournamentPublicClient({ slug }: Props) {
     }
   }
 
-  async function searchUsers(queryValue: string) {
+  async function searchUsers(queryValue: string, target: "captain" | "member") {
     try {
-      setSearchingUsers(true);
+      if (target === "captain") {
+        setSearchingCaptain(true);
+      } else {
+        setSearchingMembers(true);
+      }
 
       const response = await fetch(
         `/api/users/search?query=${encodeURIComponent(queryValue)}`,
@@ -450,22 +513,74 @@ export default function TournamentPublicClient({ slug }: Props) {
       }
 
       const currentUid = uid || "";
-      const selectedIds = new Set(selectedMembers.map((member) => member.userId));
+      const selectedMemberIds = new Set(selectedMembers.map((member) => member.userId));
+      const selectedCaptainId = selectedCaptain?.userId || "";
 
       const filtered = (data.results || []).filter((item) => {
         if (!item.userId) return false;
-        if (item.userId === currentUid) return false;
-        if (selectedIds.has(item.userId)) return false;
+
+        if (target === "captain") {
+          if (item.userId !== currentUid && item.userId !== selectedCaptainId) {
+            return false;
+          }
+          if (selectedMemberIds.has(item.userId)) return false;
+          return true;
+        }
+
+        if (item.userId === selectedCaptainId) return false;
+        if (selectedMemberIds.has(item.userId)) return false;
         return true;
       });
 
-      setMemberResults(filtered);
+      if (target === "captain") {
+        setCaptainResults(filtered);
+      } else {
+        setMemberResults(filtered);
+      }
     } catch (err) {
       console.error("Erro ao buscar usuários:", err);
-      setMemberResults([]);
+      if (target === "captain") {
+        setCaptainResults([]);
+      } else {
+        setMemberResults([]);
+      }
     } finally {
-      setSearchingUsers(false);
+      if (target === "captain") {
+        setSearchingCaptain(false);
+      } else {
+        setSearchingMembers(false);
+      }
     }
+  }
+
+  function selectCaptain(user: UserSearchResult) {
+    clearFeedback();
+
+    if (selectedMembers.some((member) => member.userId === user.userId)) {
+      setError("Este usuário já está na lista de membros.");
+      return;
+    }
+
+    setSelectedCaptain(user);
+    setCaptainQuery("");
+    setCaptainResults([]);
+  }
+
+  function clearCaptain() {
+    if (!currentUserProfile) {
+      setSelectedCaptain(null);
+      return;
+    }
+
+    clearFeedback();
+    setSelectedCaptain({
+      userId: currentUserProfile.userId,
+      username: currentUserProfile.username,
+      email: currentUserProfile.email,
+      photoUrl: currentUserProfile.photoUrl,
+    });
+    setCaptainQuery("");
+    setCaptainResults([]);
   }
 
   function addMember(user: UserSearchResult) {
@@ -473,6 +588,11 @@ export default function TournamentPublicClient({ slug }: Props) {
 
     if (selectedMembers.length >= maxAdditionalMembers) {
       setError(`Você pode adicionar no máximo ${maxAdditionalMembers} membros.`);
+      return;
+    }
+
+    if (selectedCaptain?.userId === user.userId) {
+      setError("O capitão não pode ser adicionado como membro.");
       return;
     }
 
@@ -497,7 +617,7 @@ export default function TournamentPublicClient({ slug }: Props) {
     if (!tournament) return "Torneio inválido.";
 
     if (!isLoggedIn || !uid) {
-      return "Você precisa estar logado para criar uma equipe.";
+      return "Para realizar a inscrição, é obrigatório ter uma conta ConnectFish.";
     }
 
     if (!canAcceptRegistration(tournament.status)) {
@@ -505,6 +625,14 @@ export default function TournamentPublicClient({ slug }: Props) {
         getRegistrationBlockMessage(tournament.status) ??
         "Inscrições indisponíveis."
       );
+    }
+
+    if (!selectedCaptain?.userId) {
+      return "Selecione o capitão da equipe.";
+    }
+
+    if (selectedCaptain.userId !== uid) {
+      return "O capitão da equipe precisa ser a conta ConnectFish atualmente logada.";
     }
 
     if (!compactSpaces(teamName) || compactSpaces(teamName).length < 3) {
@@ -519,7 +647,7 @@ export default function TournamentPublicClient({ slug }: Props) {
   }
 
   async function handleCreateTeamAndPay() {
-    if (!tournament || !uid) return;
+    if (!tournament || !selectedCaptain?.userId) return;
 
     setSaving(true);
     setError(null);
@@ -530,7 +658,6 @@ export default function TournamentPublicClient({ slug }: Props) {
 
       if (validationError) {
         setError(validationError);
-        setSaving(false);
         return;
       }
 
@@ -543,23 +670,20 @@ export default function TournamentPublicClient({ slug }: Props) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-  tournamentId: tournament.id,
-  teamName: compactSpaces(teamName),
-
-  captain: {
-    userId: uid,
-    name: captainProfile?.displayName || "",
-    email: captainProfile?.email || "",
-  },
-
-  members: selectedMembers.map((member) => ({
-    userId: member.userId,
-    name: member.username,
-    email: member.email || null,
-  })),
-
-  source: "public_tournament_web",
-}),
+          tournamentId: tournament.id,
+          teamName: compactSpaces(teamName),
+          captain: {
+            userId: selectedCaptain.userId,
+            name: selectedCaptain.username || selectedCaptain.email || "",
+            email: selectedCaptain.email || "",
+          },
+          members: selectedMembers.map((member) => ({
+            userId: member.userId,
+            name: member.username || member.email || "",
+            email: member.email || null,
+          })),
+          source: "public_tournament_web",
+        }),
       });
 
       const createTeamData = (await createTeamResponse.json()) as CreateTeamResponse;
@@ -754,9 +878,9 @@ export default function TournamentPublicClient({ slug }: Props) {
                   <span style={styles.checkoutEyebrow}>Equipe e pagamento</span>
                   <h2 style={styles.checkoutTitle}>Criar minha equipe</h2>
                   <p style={styles.sectionText}>
-                   "Defina quem será o capitão da equipe. Ele será responsável pelas capturas e validações no app."
-                    Depois disso, você pode convidar membros pelo @username e
-                    seguir para o pagamento individual do capitão.
+                    Para participar deste torneio, é obrigatório ter uma conta
+                    ConnectFish. Com sua conta, você cria a equipe, define o
+                    capitão, recebe convites e registra capturas no app.
                   </p>
                 </div>
 
@@ -777,38 +901,110 @@ export default function TournamentPublicClient({ slug }: Props) {
 
               {!isLoggedIn ? (
                 <div style={styles.loginBox}>
-                  <p style={styles.loginTitle}>Faça login para continuar</p>
+                  <p style={styles.loginTitle}>Conta ConnectFish obrigatória</p>
                   <p style={styles.loginText}>
-                    Para criar uma equipe, definir o capitão e enviar convites,
-                    é necessário estar logado no ConnectFish.
+                    Para realizar a inscrição, é obrigatório ter uma conta
+                    ConnectFish. Faça login para continuar ou crie sua conta
+                    agora.
                   </p>
+
+                  <div style={styles.loginActions}>
+                    <button
+                      type="button"
+                      onClick={goToLogin}
+                      style={styles.primaryButton}
+                    >
+                      Entrar na minha conta
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={goToSignup}
+                      style={styles.secondaryButton}
+                    >
+                      Criar conta ConnectFish
+                    </button>
+                  </div>
                 </div>
               ) : null}
 
               <div style={styles.checkoutSection}>
                 <p style={styles.checkoutSectionTitle}>Capitão da equipe</p>
 
-                <div style={styles.captainCard}>
-                  <div style={styles.captainAvatar}>
-                    {captainProfile?.username?.charAt(0)?.toUpperCase() ||
-                      captainProfile?.displayName?.charAt(0)?.toUpperCase() ||
-                      "@"}
-                  </div>
+                {!selectedCaptain ? (
+                  <>
+                    <Field label="Buscar capitão por @username">
+                      <input
+                        type="text"
+                        value={captainQuery}
+                        onChange={(e) => {
+                          clearFeedback();
+                          setCaptainQuery(e.target.value.replace(/^@+/, ""));
+                        }}
+                        style={styles.input}
+                        placeholder="Ex.: pescador_sp"
+                        disabled={isFormDisabled}
+                        maxLength={40}
+                      />
+                    </Field>
 
-                  <div style={styles.captainInfo}>
-                    <strong style={styles.captainName}>
-                      {captainProfile?.displayName || "Usuário logado"}
-                    </strong>
-                    <span style={styles.captainUsername}>
-                      {captainProfile?.username
-                        ? `@${captainProfile.username}`
-                        : email || "Capitão definido pela sessão"}
-                    </span>
-                    <span style={styles.captainMeta}>
-                      Capitão responsável pela equipe
-                    </span>
+                    {searchingCaptain ? (
+                      <p style={styles.helperText}>Buscando capitão...</p>
+                    ) : null}
+
+                    {captainResults.length > 0 ? (
+                      <div style={styles.searchResults}>
+                        {captainResults.map((user) => (
+                          <button
+                            key={user.userId}
+                            type="button"
+                            onClick={() => selectCaptain(user)}
+                            style={styles.searchResultButton}
+                            disabled={isFormDisabled}
+                          >
+                            <span style={styles.searchResultUsername}>
+                              @{user.username}
+                            </span>
+                            <span style={styles.searchResultMeta}>
+                              {user.email || "Usuário ConnectFish"}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={styles.helperText}>
+                        O capitão da equipe deve ser a conta ConnectFish logada.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <div style={styles.captainCard}>
+                    <div style={styles.captainAvatar}>
+                      {selectedCaptain.username?.charAt(0)?.toUpperCase() || "@"}
+                    </div>
+
+                    <div style={styles.captainInfo}>
+                      <strong style={styles.captainName}>
+                        @{selectedCaptain.username}
+                      </strong>
+                      <span style={styles.captainUsername}>
+                        {selectedCaptain.email || "Capitão selecionado"}
+                      </span>
+                      <span style={styles.captainMeta}>
+                        Capitão responsável pela equipe
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={clearCaptain}
+                      style={styles.removeMemberButton}
+                      disabled={isFormDisabled}
+                    >
+                      Recarregar
+                    </button>
                   </div>
-                </div>
+                )}
               </div>
 
               <div style={styles.checkoutSection}>
@@ -846,17 +1042,13 @@ export default function TournamentPublicClient({ slug }: Props) {
                     style={styles.input}
                     placeholder="Ex.: pescador_sp"
                     disabled={
-                      saving ||
-                      !isLoggedIn ||
-                      !!authLoading ||
-                      !!registrationBlockedMessage ||
-                      selectedMembers.length >= maxAdditionalMembers
+                      isFormDisabled || selectedMembers.length >= maxAdditionalMembers
                     }
                     maxLength={40}
                   />
                 </Field>
 
-                {searchingUsers ? (
+                {searchingMembers ? (
                   <p style={styles.helperText}>Buscando usuários...</p>
                 ) : null}
 
@@ -888,8 +1080,7 @@ export default function TournamentPublicClient({ slug }: Props) {
 
                   {selectedMembers.length === 0 ? (
                     <p style={styles.helperText}>
-                      Você pode convidar até {maxAdditionalMembers} membros para a
-                      equipe.
+                      Você pode convidar até {maxAdditionalMembers} membros para a equipe.
                     </p>
                   ) : (
                     <div style={styles.selectedMembersList}>
@@ -931,9 +1122,9 @@ export default function TournamentPublicClient({ slug }: Props) {
                   <SummaryRow
                     label="Capitão"
                     value={
-                      captainProfile?.username
-                        ? `@${captainProfile.username}`
-                        : email || "Usuário autenticado"
+                      selectedCaptain?.username
+                        ? `@${selectedCaptain.username}`
+                        : "Faça login para definir o capitão"
                     }
                   />
                   <SummaryRow
@@ -960,25 +1151,25 @@ export default function TournamentPublicClient({ slug }: Props) {
                     <div style={styles.paymentInfoRow}>
                       <span style={styles.paymentInfoDot}>1</span>
                       <span style={styles.paymentInfoText}>
-                        Defina o capitão da equipe (normalmente quem está criando).
+                        Faça login ou crie sua conta ConnectFish.
                       </span>
                     </div>
                     <div style={styles.paymentInfoRow}>
                       <span style={styles.paymentInfoDot}>2</span>
                       <span style={styles.paymentInfoText}>
-                        Os membros são adicionados por @username e recebem convite.
+                        A conta logada será usada como capitão da equipe.
                       </span>
                     </div>
                     <div style={styles.paymentInfoRow}>
                       <span style={styles.paymentInfoDot}>3</span>
                       <span style={styles.paymentInfoText}>
-                        O capitão já segue para o próprio pagamento individual.
+                        Adicione os membros por @username e envie os convites.
                       </span>
                     </div>
                     <div style={styles.paymentInfoRow}>
                       <span style={styles.paymentInfoDot}>4</span>
                       <span style={styles.paymentInfoText}>
-                        Cada membro aceito paga sua própria inscrição.
+                        O capitão paga agora e os demais membros pagam após aceitarem.
                       </span>
                     </div>
                   </div>
@@ -1028,13 +1219,20 @@ export default function TournamentPublicClient({ slug }: Props) {
                     ...(isFormDisabled ? styles.disabledButton : {}),
                   }}
                 >
-                  {saving ? "Criando equipe..." : "Criar equipe e pagar minha inscrição"}
+                  {saving ? "Criando equipe..." : "Criar equipe e pagar inscrição do capitão"}
                 </button>
 
-                <p style={styles.securityText}>
-                  Os demais participantes receberão convite e pagarão a própria
-                  inscrição após aceitarem entrar na equipe.
-                </p>
+                {!isLoggedIn ? (
+                  <p style={styles.securityText}>
+                    Ao criar sua conta ConnectFish, você volta para este torneio
+                    e pode concluir a inscrição normalmente.
+                  </p>
+                ) : (
+                  <p style={styles.securityText}>
+                    Os demais participantes receberão convite e pagarão a própria
+                    inscrição após aceitarem entrar na equipe.
+                  </p>
+                )}
               </div>
 
               {message ? <p style={styles.successText}>{message}</p> : null}
@@ -1239,28 +1437,30 @@ const styles: Record<string, CSSProperties> = {
   },
   infoCard: {
     background: "#F8FAFC",
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 14,
-    border: "1px solid rgba(15,23,42,0.05)",
+    border: "1px solid rgba(15,23,42,0.06)",
   },
   infoLabel: {
     margin: 0,
-    color: "#64748B",
     fontSize: 12,
     fontWeight: 800,
+    color: "#64748B",
+    textTransform: "uppercase",
+    letterSpacing: 0.2,
   },
   infoValue: {
-    margin: "6px 0 0 0",
-    color: "#0F172A",
-    fontSize: 14,
+    margin: "8px 0 0 0",
+    fontSize: 15,
     fontWeight: 900,
+    color: "#0F172A",
     lineHeight: 1.5,
   },
   rulesList: {
     marginTop: 14,
     display: "flex",
     flexDirection: "column",
-    gap: 10,
+    gap: 12,
   },
   ruleRow: {
     display: "flex",
@@ -1268,95 +1468,105 @@ const styles: Record<string, CSSProperties> = {
     gap: 10,
   },
   ruleDot: {
-    color: "#0B3C5D",
-    fontWeight: 900,
+    color: "#1D4ED8",
+    fontWeight: 1000,
+    lineHeight: 1.6,
   },
   ruleText: {
-    color: "#0F172A",
+    color: "#334155",
     fontSize: 14,
     fontWeight: 700,
-    lineHeight: 1.6,
+    lineHeight: 1.7,
   },
   checkoutTop: {
     display: "flex",
-    alignItems: "flex-start",
     justifyContent: "space-between",
+    alignItems: "flex-start",
     gap: 16,
-    flexWrap: "wrap",
   },
   checkoutEyebrow: {
-    display: "inline-block",
-    fontSize: 12,
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "6px 10px",
+    borderRadius: 999,
+    background: "#DBEAFE",
+    color: "#1D4ED8",
+    fontSize: 11,
     fontWeight: 900,
     textTransform: "uppercase",
-    letterSpacing: 0.6,
-    color: "#1D4ED8",
-    marginBottom: 8,
+    letterSpacing: 0.3,
   },
   checkoutTitle: {
-    margin: 0,
+    margin: "10px 0 0 0",
     fontSize: 24,
     fontWeight: 1000,
     color: "#0F172A",
   },
   priceCard: {
-    minWidth: 220,
-    background: "linear-gradient(135deg, #0B3C5D 0%, #145374 100%)",
-    color: "#FFFFFF",
-    borderRadius: 18,
+    minWidth: 150,
+    background: "#F8FAFC",
+    borderRadius: 16,
     padding: 16,
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-    boxShadow: "0 16px 30px rgba(11,60,93,0.18)",
+    border: "1px solid rgba(15,23,42,0.06)",
   },
   priceLabel: {
+    display: "block",
+    color: "#64748B",
     fontSize: 12,
     fontWeight: 800,
-    opacity: 0.85,
+    marginBottom: 6,
   },
   priceValue: {
-    fontSize: 28,
+    color: "#0B3C5D",
+    fontSize: 22,
     fontWeight: 1000,
     lineHeight: 1.1,
   },
   warningBox: {
+    background: "#FFF7ED",
+    border: "1px solid #FED7AA",
     borderRadius: 16,
-    padding: 16,
-    background: "#FEF2F2",
-    border: "1px solid #FECACA",
+    padding: 14,
   },
   warningTitle: {
     margin: 0,
-    color: "#991B1B",
+    color: "#9A3412",
     fontSize: 14,
     fontWeight: 900,
   },
   warningText: {
     margin: "8px 0 0 0",
-    color: "#B91C1C",
-    fontSize: 14,
+    color: "#9A3412",
+    fontSize: 13,
     fontWeight: 700,
     lineHeight: 1.6,
   },
   loginBox: {
-    borderRadius: 16,
-    padding: 16,
     background: "#EFF6FF",
     border: "1px solid #BFDBFE",
+    borderRadius: 16,
+    padding: 16,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
   },
   loginTitle: {
     margin: 0,
-    color: "#1D4ED8",
-    fontSize: 14,
+    color: "#1E3A8A",
+    fontSize: 15,
     fontWeight: 900,
   },
   loginText: {
-    margin: "8px 0 0 0",
-    color: "#1E40AF",
-    fontSize: 14,
+    margin: 0,
+    color: "#1D4ED8",
+    fontSize: 13,
     fontWeight: 700,
     lineHeight: 1.6,
+  },
+  loginActions: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
   },
   checkoutSection: {
     display: "flex",
@@ -1366,7 +1576,7 @@ const styles: Record<string, CSSProperties> = {
   checkoutSectionTitle: {
     margin: 0,
     color: "#0F172A",
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: 900,
   },
   captainCard: {
@@ -1395,6 +1605,8 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 2,
+    flex: 1,
+    minWidth: 0,
   },
   captainName: {
     color: "#0F172A",
@@ -1522,6 +1734,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     fontWeight: 900,
     cursor: "pointer",
+    flexShrink: 0,
   },
   summaryCard: {
     background: "#F8FAFC",
@@ -1604,13 +1817,13 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "center",
     background: "#DBEAFE",
     color: "#1D4ED8",
-    fontWeight: 900,
     fontSize: 12,
+    fontWeight: 1000,
     flexShrink: 0,
   },
   paymentInfoText: {
     color: "#475569",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 700,
     lineHeight: 1.6,
   },
@@ -1618,10 +1831,6 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 10,
-    background: "#F8FAFC",
-    borderRadius: 16,
-    padding: 16,
-    border: "1px solid rgba(15,23,42,0.06)",
   },
   miniRuleItem: {
     display: "flex",
@@ -1629,12 +1838,13 @@ const styles: Record<string, CSSProperties> = {
     gap: 10,
   },
   miniRuleDot: {
-    color: "#0B3C5D",
-    fontWeight: 900,
+    color: "#1D4ED8",
+    fontWeight: 1000,
+    lineHeight: 1.6,
   },
   miniRuleText: {
     color: "#475569",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 700,
     lineHeight: 1.6,
   },
@@ -1646,40 +1856,45 @@ const styles: Record<string, CSSProperties> = {
   primaryButton: {
     border: "none",
     borderRadius: 14,
-    padding: "15px 18px",
+    padding: "14px 18px",
     background: "#0B3C5D",
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: 1000,
     cursor: "pointer",
-    width: "100%",
-    boxShadow: "0 14px 28px rgba(11,60,93,0.18)",
+  },
+  secondaryButton: {
+    border: "1px solid rgba(15,23,42,0.08)",
+    borderRadius: 14,
+    padding: "12px 16px",
+    background: "#FFFFFF",
+    color: "#0F172A",
+    fontSize: 14,
+    fontWeight: 900,
+    cursor: "pointer",
   },
   disabledButton: {
-    opacity: 0.6,
+    opacity: 0.55,
     cursor: "not-allowed",
-    boxShadow: "none",
   },
   securityText: {
     margin: 0,
     color: "#64748B",
     fontSize: 12,
-    lineHeight: 1.6,
     fontWeight: 700,
-    textAlign: "center",
+    lineHeight: 1.6,
   },
   successText: {
     margin: 0,
     color: "#166534",
-    fontWeight: 800,
-    fontSize: 14,
-    lineHeight: 1.6,
+    fontSize: 13,
+    fontWeight: 900,
   },
   errorText: {
     margin: 0,
     color: "#B91C1C",
-    fontWeight: 800,
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: 900,
     lineHeight: 1.6,
   },
 };
