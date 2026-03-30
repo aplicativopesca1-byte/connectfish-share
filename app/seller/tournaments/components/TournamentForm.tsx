@@ -73,7 +73,7 @@ type RegistrationFieldConfig = {
   required: boolean;
   enabled: boolean;
   appliesTo: RegistrationFieldRole[];
-  options?: string[];
+  options?: string[] | null;
   helpText?: string | null;
 };
 
@@ -217,7 +217,7 @@ function cloneDefaultRegistrationFields() {
   return DEFAULT_REGISTRATION_FIELDS.map((field) => ({
     ...field,
     appliesTo: [...field.appliesTo],
-    options: field.options ? [...field.options] : undefined,
+    options: field.options ? [...field.options] : null,
   }));
 }
 
@@ -979,7 +979,7 @@ export default function TournamentForm({
         fields: registrationFields.map((field) => ({
           ...field,
           appliesTo: [...field.appliesTo],
-          options: field.options ? [...field.options] : undefined,
+          options: field.options ? [...field.options] : null,
           helpText: field.helpText || null,
         })),
       },
