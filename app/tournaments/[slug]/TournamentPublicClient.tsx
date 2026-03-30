@@ -754,7 +754,7 @@ export default function TournamentPublicClient({ slug }: Props) {
                   <span style={styles.checkoutEyebrow}>Equipe e pagamento</span>
                   <h2 style={styles.checkoutTitle}>Criar minha equipe</h2>
                   <p style={styles.sectionText}>
-                    O usuário logado será definido automaticamente como capitão.
+                   "Defina quem será o capitão da equipe. Ele será responsável pelas capturas e validações no app."
                     Depois disso, você pode convidar membros pelo @username e
                     seguir para o pagamento individual do capitão.
                   </p>
@@ -805,7 +805,7 @@ export default function TournamentPublicClient({ slug }: Props) {
                         : email || "Capitão definido pela sessão"}
                     </span>
                     <span style={styles.captainMeta}>
-                      Capitão definido automaticamente pelo login atual
+                      Capitão responsável pela equipe
                     </span>
                   </div>
                 </div>
@@ -960,7 +960,7 @@ export default function TournamentPublicClient({ slug }: Props) {
                     <div style={styles.paymentInfoRow}>
                       <span style={styles.paymentInfoDot}>1</span>
                       <span style={styles.paymentInfoText}>
-                        Você cria a equipe e automaticamente vira o capitão.
+                        Defina o capitão da equipe (normalmente quem está criando).
                       </span>
                     </div>
                     <div style={styles.paymentInfoRow}>
