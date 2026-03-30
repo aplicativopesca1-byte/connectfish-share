@@ -543,11 +543,23 @@ export default function TournamentPublicClient({ slug }: Props) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          tournamentId: tournament.id,
-          teamName: compactSpaces(teamName),
-          memberUserIds: selectedMembers.map((member) => member.userId),
-          source: "public_tournament_web",
-        }),
+  tournamentId: tournament.id,
+  teamName: compactSpaces(teamName),
+
+  captain: {
+    userId: uid,
+    name: captainProfile?.displayName || "",
+    email: captainProfile?.email || "",
+  },
+
+  members: selectedMembers.map((member) => ({
+    userId: member.userId,
+    name: member.username,
+    email: member.email || null,
+  })),
+
+  source: "public_tournament_web",
+}),
       });
 
       const createTeamData = (await createTeamResponse.json()) as CreateTeamResponse;

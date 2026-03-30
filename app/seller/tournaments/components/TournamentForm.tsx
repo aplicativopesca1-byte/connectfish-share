@@ -55,6 +55,28 @@ type PolygonBoundary = {
 
 type TournamentBoundary = CircleBoundary | PolygonBoundary | null;
 
+type RegistrationMode = "individual" | "team" | "both";
+type RegistrationFieldRole = "captain" | "member" | "individual";
+type RegistrationFieldType =
+  | "text"
+  | "email"
+  | "tel"
+  | "date"
+  | "select"
+  | "textarea"
+  | "number";
+
+type RegistrationFieldConfig = {
+  key: string;
+  label: string;
+  type: RegistrationFieldType;
+  required: boolean;
+  enabled: boolean;
+  appliesTo: RegistrationFieldRole[];
+  options?: string[];
+  helpText?: string | null;
+};
+
 type TournamentDoc = {
   title?: string;
   subtitle?: string | null;
@@ -89,6 +111,13 @@ type TournamentDoc = {
   publishedAt?: unknown;
   startedAt?: unknown;
   finishedAt?: unknown;
+  registrationMode?: RegistrationMode;
+  requiresBoatLicense?: boolean;
+  teamSizeMin?: number;
+  teamSizeMax?: number;
+  registrationFormConfig?: {
+    fields?: RegistrationFieldConfig[];
+  } | null;
 };
 
 type BoundarySummary = {
@@ -104,8 +133,177 @@ const APP_BASE_URL =
   process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") ||
   "https://connectfish.app";
 
+const DEFAULT_REGISTRATION_FIELDS: RegistrationFieldConfig[] = [
+  {
+    key: "fullName",
+    label: "Nome completo",
+    type: "text",
+    required: true,
+    enabled: true,
+    appliesTo: ["captain", "member", "individual"],
+  },
+  {
+    key: "email",
+    label: "E-mail",
+    type: "email",
+    required: true,
+    enabled: true,
+    appliesTo: ["captain", "member", "individual"],
+  },
+  {
+    key: "phone",
+    label: "Telefone / WhatsApp",
+    type: "tel",
+    required: true,
+    enabled: true,
+    appliesTo: ["captain", "individual"],
+  },
+  {
+    key: "birthDate",
+    label: "Data de nascimento",
+    type: "date",
+    required: true,
+    enabled: true,
+    appliesTo: ["captain", "member", "individual"],
+  },
+  {
+    key: "sex",
+    label: "Sexo",
+    type: "select",
+    required: false,
+    enabled: false,
+    appliesTo: ["captain", "member", "individual"],
+    options: ["Masculino", "Feminino", "Outro", "Prefiro não informar"],
+  },
+  {
+    key: "city",
+    label: "Cidade",
+    type: "text",
+    required: false,
+    enabled: false,
+    appliesTo: ["captain", "member", "individual"],
+  },
+  {
+    key: "state",
+    label: "Estado",
+    type: "text",
+    required: false,
+    enabled: false,
+    appliesTo: ["captain", "member", "individual"],
+  },
+  {
+    key: "emergencyContact",
+    label: "Contato de emergência",
+    type: "text",
+    required: false,
+    enabled: false,
+    appliesTo: ["captain", "individual"],
+  },
+  {
+    key: "observations",
+    label: "Observações",
+    type: "textarea",
+    required: false,
+    enabled: false,
+    appliesTo: ["captain", "individual"],
+  },
+];
+
 function safeTrim(value: unknown) {
   return String(value ?? "").trim();
+}
+
+function cloneDefaultRegistrationFields() {
+  return DEFAULT_REGISTRATION_FIELDS.map((field) => ({
+    ...field,
+    appliesTo: [...field.appliesTo],
+    options: field.options ? [...field.options] : undefined,
+  }));
+}
+
+function normalizeRegistrationMode(value: unknown): RegistrationMode {
+  if (value === "individual" || value === "team" || value === "both") {
+    return value;
+  }
+
+  return "team";
+}
+
+function normalizeRegistrationFields(
+  value: unknown
+): RegistrationFieldConfig[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    return cloneDefaultRegistrationFields();
+  }
+
+  const baseMap = new Map(
+    cloneDefaultRegistrationFields().map((field) => [field.key, field])
+  );
+
+  return value
+    .map((raw) => {
+      if (!raw || typeof raw !== "object") return null;
+
+      const item = raw as Record<string, unknown>;
+      const key = safeTrim(item.key);
+      if (!key) return null;
+
+      const fallback = baseMap.get(key);
+
+      const label = safeTrim(item.label) || fallback?.label || key;
+      const typeRaw = safeTrim(item.type).toLowerCase();
+      const type: RegistrationFieldType =
+        typeRaw === "email" ||
+        typeRaw === "tel" ||
+        typeRaw === "date" ||
+        typeRaw === "select" ||
+        typeRaw === "textarea" ||
+        typeRaw === "number"
+          ? (typeRaw as RegistrationFieldType)
+          : fallback?.type || "text";
+
+      const appliesToRaw = Array.isArray(item.appliesTo) ? item.appliesTo : [];
+      const appliesTo = appliesToRaw
+        .map((role) => safeTrim(role).toLowerCase())
+        .filter(
+          (role): role is RegistrationFieldRole =>
+            role === "captain" || role === "member" || role === "individual"
+        );
+
+      return {
+        key,
+        label,
+        type,
+        required:
+          typeof item.required === "boolean"
+            ? item.required
+            : fallback?.required || false,
+        enabled:
+          typeof item.enabled === "boolean"
+            ? item.enabled
+            : fallback?.enabled || false,
+        appliesTo: appliesTo.length
+          ? appliesTo
+          : fallback?.appliesTo || ["captain", "member", "individual"],
+        options: Array.isArray(item.options)
+          ? item.options.map((option) => safeTrim(option)).filter(Boolean)
+          : fallback?.options,
+        helpText: safeTrim(item.helpText) || fallback?.helpText || null,
+      } satisfies RegistrationFieldConfig;
+    })
+    .filter(Boolean) as RegistrationFieldConfig[];
+}
+
+function getRegistrationModeLabel(mode: RegistrationMode) {
+  if (mode === "individual") return "Individual";
+  if (mode === "both") return "Individual + equipe";
+  return "Equipe";
+}
+
+function getRegistrationRoleLabel(role: RegistrationFieldRole) {
+  if (role === "captain") return "Capitão";
+  if (role === "member") return "Membro";
+  return "Individual";
 }
 
 function toDateTimeLocalInput(value: unknown): string {
@@ -431,6 +629,14 @@ export default function TournamentForm({
   const [scheduledStartAt, setScheduledStartAt] = useState("");
   const [scheduledEndAt, setScheduledEndAt] = useState("");
   const [boundaryEnabled, setBoundaryEnabled] = useState(true);
+  const [registrationMode, setRegistrationMode] =
+    useState<RegistrationMode>("team");
+  const [requiresBoatLicense, setRequiresBoatLicense] = useState(false);
+  const [teamSizeMin, setTeamSizeMin] = useState<number>(2);
+  const [teamSizeMax, setTeamSizeMax] = useState<number>(3);
+  const [registrationFields, setRegistrationFields] = useState<
+    RegistrationFieldConfig[]
+  >(cloneDefaultRegistrationFields());
 
   const [publishedAt, setPublishedAt] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<string | null>(null);
@@ -462,6 +668,59 @@ export default function TournamentForm({
   const canEditStructure = !isOperationallyLocked;
 
   const parsedRules = useMemo(() => parseRules(rulesText), [rulesText]);
+
+  const enabledRegistrationFields = useMemo(
+    () => registrationFields.filter((field) => field.enabled),
+    [registrationFields]
+  );
+
+  const registrationValidation = useMemo(() => {
+    const missing: string[] = [];
+
+    const captainFields = enabledRegistrationFields.filter((field) =>
+      field.appliesTo.includes("captain")
+    );
+    const memberFields = enabledRegistrationFields.filter((field) =>
+      field.appliesTo.includes("member")
+    );
+    const individualFields = enabledRegistrationFields.filter((field) =>
+      field.appliesTo.includes("individual")
+    );
+
+    if (registrationMode === "team" || registrationMode === "both") {
+      if (teamSizeMin < 1) missing.push("Mínimo de participantes por equipe");
+      if (teamSizeMax < 1) missing.push("Máximo de participantes por equipe");
+      if (teamSizeMax < teamSizeMin) {
+        missing.push("Faixa de participantes por equipe inválida");
+      }
+      if (captainFields.length === 0) {
+        missing.push("Ao menos um campo ativo para capitão");
+      }
+      if (memberFields.length === 0) {
+        missing.push("Ao menos um campo ativo para membro");
+      }
+    }
+
+    if (registrationMode === "individual" || registrationMode === "both") {
+      if (individualFields.length === 0) {
+        missing.push("Ao menos um campo ativo para inscrição individual");
+      }
+    }
+
+    const requiredCoreKeys = ["fullName", "email", "phone", "birthDate"];
+    for (const key of requiredCoreKeys) {
+      const field = registrationFields.find((item) => item.key === key);
+      if (!field || !field.enabled || !field.required) {
+        missing.push(`Campo básico obrigatório: ${key}`);
+      }
+    }
+
+    return {
+      valid: missing.length === 0,
+      missing,
+      enabledCount: enabledRegistrationFields.length,
+    };
+  }, [enabledRegistrationFields, registrationFields, registrationMode, teamSizeMax, teamSizeMin]);
 
   const previewUrls = useMemo(() => {
     if (!tournamentId || !finalSlugPreview) {
@@ -550,6 +809,10 @@ export default function TournamentForm({
         ok: !!previewUrls.registrationUrl && !!previewUrls.publicUrl,
       },
       {
+        label: "Formulário de inscrição configurado",
+        ok: registrationValidation.valid,
+      },
+      {
         label: "Torneio em rascunho antes de publicar",
         ok: status === "draft" || status === "scheduled",
       },
@@ -557,6 +820,9 @@ export default function TournamentForm({
 
     const missingFields: string[] = [
       ...basicsValidation.missing,
+      ...(!registrationValidation.valid
+        ? registrationValidation.missing
+        : []),
       ...(boundaryEnabled && !boundarySummary.isConfigured
         ? ["Perímetro do torneio"]
         : []),
@@ -577,6 +843,8 @@ export default function TournamentForm({
     finalSlugPreview,
     previewUrls.registrationUrl,
     previewUrls.publicUrl,
+    registrationValidation.valid,
+    registrationValidation.missing,
     status,
   ]);
 
@@ -626,6 +894,13 @@ export default function TournamentForm({
       setScheduledStartAt(toDateTimeLocalInput(data.scheduledStartAt));
       setScheduledEndAt(toDateTimeLocalInput(data.scheduledEndAt));
       setBoundaryEnabled(data.boundaryEnabled !== false);
+      setRegistrationMode(normalizeRegistrationMode(data.registrationMode));
+      setRequiresBoatLicense(Boolean(data.requiresBoatLicense));
+      setTeamSizeMin(Math.max(1, Number(data.teamSizeMin ?? 2) || 2));
+      setTeamSizeMax(Math.max(1, Number(data.teamSizeMax ?? 3) || 3));
+      setRegistrationFields(
+        normalizeRegistrationFields(data.registrationFormConfig?.fields)
+      );
       setPublishedAt(toIsoStringSafe(data.publishedAt));
       setStartedAt(toIsoStringSafe(data.startedAt));
       setFinishedAt(toIsoStringSafe(data.finishedAt));
@@ -694,6 +969,20 @@ export default function TournamentForm({
       scheduledStartAt: scheduledStartAt ? new Date(scheduledStartAt) : null,
       scheduledEndAt: scheduledEndAt ? new Date(scheduledEndAt) : null,
       boundaryEnabled,
+      registrationMode,
+      requiresBoatLicense,
+      teamSizeMin:
+        registrationMode === "individual" ? 1 : Math.max(1, Number(teamSizeMin || 1)),
+      teamSizeMax:
+        registrationMode === "individual" ? 1 : Math.max(1, Number(teamSizeMax || 1)),
+      registrationFormConfig: {
+        fields: registrationFields.map((field) => ({
+          ...field,
+          appliesTo: [...field.appliesTo],
+          options: field.options ? [...field.options] : undefined,
+          helpText: field.helpText || null,
+        })),
+      },
       registrationUrl: urls.registrationUrl,
       publicUrl: urls.publicUrl,
       adminUrl: urls.adminUrl,
@@ -1239,6 +1528,218 @@ O ranking só atualiza após validação da organização.`}
 
           <section style={styles.card}>
             <div style={styles.sectionHeader}>
+              <h2 style={styles.sectionTitle}>Inscrição</h2>
+              <p style={styles.sectionSub}>
+                Defina como os participantes vão se registrar neste torneio.
+              </p>
+            </div>
+
+            <div style={styles.formGrid}>
+              <Field label="Formato de inscrição *">
+                <select
+                  value={registrationMode}
+                  onChange={(e) => {
+                    clearFeedback();
+                    const nextMode = normalizeRegistrationMode(e.target.value);
+                    setRegistrationMode(nextMode);
+
+                    if (nextMode === "individual") {
+                      setTeamSizeMin(1);
+                      setTeamSizeMax(1);
+                    } else {
+                      setTeamSizeMin((prev) => Math.max(2, prev || 2));
+                      setTeamSizeMax((prev) => Math.max(2, prev || 3));
+                    }
+                  }}
+                  style={styles.input}
+                  disabled={!canEditStructure}
+                >
+                  <option value="team">Somente equipe</option>
+                  <option value="individual">Somente individual</option>
+                  <option value="both">Equipe e individual</option>
+                </select>
+              </Field>
+
+              {(registrationMode === "team" || registrationMode === "both") ? (
+                <>
+                  <Field label="Mínimo de participantes por equipe *">
+                    <input
+                      type="number"
+                      min={1}
+                      value={teamSizeMin}
+                      onChange={(e) => {
+                        clearFeedback();
+                        setTeamSizeMin(Number(e.target.value));
+                      }}
+                      style={styles.input}
+                      disabled={!canEditStructure}
+                    />
+                  </Field>
+
+                  <Field label="Máximo de participantes por equipe *">
+                    <input
+                      type="number"
+                      min={1}
+                      value={teamSizeMax}
+                      onChange={(e) => {
+                        clearFeedback();
+                        setTeamSizeMax(Number(e.target.value));
+                      }}
+                      style={styles.input}
+                      disabled={!canEditStructure}
+                    />
+                  </Field>
+                </>
+              ) : null}
+            </div>
+
+            <label style={styles.toggleRow}>
+              <input
+                type="checkbox"
+                checked={requiresBoatLicense}
+                onChange={(e) => {
+                  clearFeedback();
+                  setRequiresBoatLicense(e.target.checked);
+                }}
+                disabled={!canEditStructure}
+              />
+              <span style={styles.toggleLabel}>
+                Exigir habilitação náutica do capitão/piloto
+              </span>
+            </label>
+
+            <div style={styles.infoBox}>
+              <p style={styles.infoTitle}>Campos básicos da plataforma</p>
+              <p style={styles.infoText}>
+                Nome completo, e-mail, telefone e data de nascimento permanecem
+                obrigatórios para manter a sincronização entre web e app mais
+                estável.
+              </p>
+            </div>
+          </section>
+
+          <section style={styles.card}>
+            <div style={styles.sectionHeader}>
+              <h2 style={styles.sectionTitle}>Campos do formulário</h2>
+              <p style={styles.sectionSub}>
+                Ative os campos que o organizador deseja coletar e defina onde
+                eles aparecem.
+              </p>
+            </div>
+
+            <div style={styles.fieldsList}>
+              {registrationFields.map((field, index) => (
+                <div key={field.key} style={styles.fieldConfigCard}>
+                  <div style={styles.fieldConfigHeader}>
+                    <div>
+                      <p style={styles.fieldConfigTitle}>{field.label}</p>
+                      <p style={styles.fieldConfigKey}>
+                        Chave: {field.key} · Tipo: {field.type}
+                      </p>
+                    </div>
+
+                    <div style={styles.inlineChecks}>
+                      <label style={styles.smallCheckLabel}>
+                        <input
+                          type="checkbox"
+                          checked={field.enabled}
+                          onChange={(e) => {
+                            clearFeedback();
+                            setRegistrationFields((prev) => {
+                              const next = [...prev];
+                              next[index] = {
+                                ...next[index],
+                                enabled: e.target.checked,
+                              };
+                              return next;
+                            });
+                          }}
+                          disabled={!canEditStructure}
+                        />
+                        <span>Ativo</span>
+                      </label>
+
+                      <label style={styles.smallCheckLabel}>
+                        <input
+                          type="checkbox"
+                          checked={field.required}
+                          onChange={(e) => {
+                            clearFeedback();
+                            setRegistrationFields((prev) => {
+                              const next = [...prev];
+                              next[index] = {
+                                ...next[index],
+                                required: e.target.checked,
+                              };
+                              return next;
+                            });
+                          }}
+                          disabled={!canEditStructure}
+                        />
+                        <span>Obrigatório</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div style={styles.roleChipsRow}>
+                    {(["captain", "member", "individual"] as RegistrationFieldRole[]).map(
+                      (role) => (
+                        <label key={role} style={styles.roleChip}>
+                          <input
+                            type="checkbox"
+                            checked={field.appliesTo.includes(role)}
+                            onChange={(e) => {
+                              clearFeedback();
+                              setRegistrationFields((prev) => {
+                                const next = [...prev];
+                                const currentRoles = new Set(next[index].appliesTo);
+
+                                if (e.target.checked) {
+                                  currentRoles.add(role);
+                                } else {
+                                  currentRoles.delete(role);
+                                }
+
+                                next[index] = {
+                                  ...next[index],
+                                  appliesTo: Array.from(currentRoles),
+                                };
+
+                                return next;
+                              });
+                            }}
+                            disabled={!canEditStructure}
+                          />
+                          <span>{getRegistrationRoleLabel(role)}</span>
+                        </label>
+                      )
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {!registrationValidation.valid ? (
+              <div style={styles.warningBox}>
+                <p style={styles.warningTitle}>Configuração de inscrição pendente</p>
+                <p style={styles.warningText}>
+                  Ajuste os pontos a seguir antes de publicar:{" "}
+                  {registrationValidation.missing.join(", ")}.
+                </p>
+              </div>
+            ) : (
+              <div style={styles.successBox}>
+                <p style={styles.successTitle}>Configuração de inscrição pronta</p>
+                <p style={styles.successBoxText}>
+                  {enabledRegistrationFields.length} campo(s) ativo(s) serão
+                  exibidos para os participantes.
+                </p>
+              </div>
+            )}
+          </section>
+
+          <section style={styles.card}>
+            <div style={styles.sectionHeader}>
               <h2 style={styles.sectionTitle}>Preview rápido</h2>
               <p style={styles.sectionSub}>
                 Confira os dados principais antes de seguir para o perímetro.
@@ -1249,6 +1750,10 @@ O ranking só atualiza após validação da organização.`}
               <PreviewCard label="Título" value={title || "—"} />
               <PreviewCard label="Slug" value={finalSlugPreview || "—"} />
               <PreviewCard label="Espécie" value={species || "—"} />
+              <PreviewCard
+                label="Formato"
+                value={getRegistrationModeLabel(registrationMode)}
+              />
               <PreviewCard
                 label="Inscrição"
                 value={formatMoney(entryFee || 0, currency || "BRL")}
@@ -1879,6 +2384,96 @@ const styles: Record<string, CSSProperties> = {
     outline: "none",
     resize: "vertical",
     background: "#FFFFFF",
+  },
+
+  infoBox: {
+    marginTop: 16,
+    borderRadius: 16,
+    background: "#EFF6FF",
+    border: "1px solid #BFDBFE",
+    padding: 14,
+  },
+
+  infoTitle: {
+    margin: 0,
+    fontWeight: 900,
+    color: "#1D4ED8",
+  },
+
+  infoText: {
+    margin: "6px 0 0 0",
+    color: "#1E3A8A",
+    lineHeight: 1.5,
+  },
+
+  fieldsList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+
+  fieldConfigCard: {
+    borderRadius: 16,
+    border: "1px solid rgba(15,23,42,0.08)",
+    background: "#F8FAFC",
+    padding: 14,
+  },
+
+  fieldConfigHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+
+  fieldConfigTitle: {
+    margin: 0,
+    fontSize: 15,
+    fontWeight: 900,
+    color: "#0F172A",
+  },
+
+  fieldConfigKey: {
+    margin: "4px 0 0 0",
+    fontSize: 12,
+    color: "#64748B",
+    fontWeight: 700,
+  },
+
+  inlineChecks: {
+    display: "flex",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+
+  smallCheckLabel: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#0F172A",
+  },
+
+  roleChipsRow: {
+    marginTop: 14,
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+
+  roleChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 10px",
+    borderRadius: 999,
+    background: "#FFFFFF",
+    border: "1px solid rgba(15,23,42,0.10)",
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#0F172A",
   },
 
   previewGrid: {

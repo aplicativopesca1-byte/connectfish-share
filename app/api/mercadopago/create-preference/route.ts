@@ -8,11 +8,27 @@ import { adminDb } from "../../../../src/lib/firebaseAdmin";
 type MemberInput = {
   userId?: string | null;
   name?: string | null;
+  email?: string | null;
+  phone?: string | null;
 };
 
 type NormalizedMember = {
   userId: string | null;
   name: string;
+  email: string | null;
+  phone: string | null;
+};
+
+type ParticipantRole = "captain" | "member";
+type ParticipantStatus = "linked" | "pending";
+
+type ParticipantDoc = {
+  role: ParticipantRole;
+  userId: string | null;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  status: ParticipantStatus;
 };
 
 type RequestBody = {
@@ -22,6 +38,7 @@ type RequestBody = {
   captainName?: string;
   captainEmail?: string;
   captainPhone?: string | null;
+  captainUserId?: string | null;
   members?: MemberInput[];
   source?: string | null;
 };
@@ -39,7 +56,10 @@ type RegistrationDoc = {
   captainName?: string;
   captainEmail?: string;
   captainPhone?: string | null;
+  captainUserId?: string | null;
+  captainStatus?: ParticipantStatus;
   members?: NormalizedMember[];
+  participants?: ParticipantDoc[];
   registrationStatus?: string;
   paymentStatus?: string;
   paymentStatusDetail?: string | null;
@@ -75,6 +95,11 @@ function normalizePhone(value: unknown) {
   return digits || null;
 }
 
+function normalizeEmail(value: unknown) {
+  const email = compactSpaces(value).toLowerCase();
+  return email || null;
+}
+
 function normalizeMembers(value: unknown): NormalizedMember[] {
   if (!Array.isArray(value)) return [];
 
@@ -90,15 +115,23 @@ function normalizeMembers(value: unknown): NormalizedMember[] {
         : null;
 
     const name = compactSpaces(raw.name);
+    const email = normalizeEmail(raw.email);
+    const phone = normalizePhone(raw.phone);
+
     if (!name) continue;
 
-    const dedupeKey = name.toLocaleLowerCase("pt-BR");
+    const dedupeKey = [name.toLocaleLowerCase("pt-BR"), email || "", userId || ""]
+      .filter(Boolean)
+      .join("::");
+
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
 
     result.push({
       userId,
       name,
+      email,
+      phone,
     });
   }
 
@@ -171,6 +204,8 @@ function areMembersEquivalent(
       .map((item) => ({
         userId: item.userId ?? null,
         name: compactSpaces(item.name).toLocaleLowerCase("pt-BR"),
+        email: item.email ?? null,
+        phone: item.phone ?? null,
       }))
       .sort((x, y) => x.name.localeCompare(y.name, "pt-BR"));
 
@@ -256,6 +291,44 @@ function buildCheckoutUrlFromPreference(
   return mpData?.init_point ?? mpData?.sandbox_init_point ?? null;
 }
 
+function buildParticipants(params: {
+  captainName: string;
+  captainEmail: string;
+  captainPhone: string | null;
+  captainUserId: string | null;
+  members: NormalizedMember[];
+}): ParticipantDoc[] {
+  const captainStatus: ParticipantStatus = params.captainUserId
+    ? "linked"
+    : "pending";
+
+  const participants: ParticipantDoc[] = [
+    {
+      role: "captain",
+      userId: params.captainUserId,
+      name: params.captainName,
+      email: params.captainEmail,
+      phone: params.captainPhone,
+      status: captainStatus,
+    },
+  ];
+
+  for (const member of params.members) {
+    const memberStatus: ParticipantStatus = member.userId ? "linked" : "pending";
+
+    participants.push({
+      role: "member",
+      userId: member.userId,
+      name: member.name,
+      email: member.email,
+      phone: member.phone,
+      status: memberStatus,
+    });
+  }
+
+  return participants;
+}
+
 export async function POST(request: Request) {
   try {
     const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
@@ -289,8 +362,9 @@ export async function POST(request: Request) {
     const tournamentId = compactSpaces(body.tournamentId);
     const teamName = compactSpaces(body.teamName);
     const captainName = compactSpaces(body.captainName);
-    const captainEmail = compactSpaces(body.captainEmail).toLowerCase();
+    const captainEmail = normalizeEmail(body.captainEmail) || "";
     const captainPhone = normalizePhone(body.captainPhone);
+    const captainUserId = compactSpaces(body.captainUserId) || null;
     const source = compactSpaces(body.source || "public_registration_web");
 
     const members = normalizeMembers(body.members);
@@ -350,6 +424,30 @@ export async function POST(request: Request) {
         },
         { status: 400 }
       );
+    }
+
+    const duplicateMemberEmails = new Set<string>();
+    for (const member of members) {
+      if (!member.email) continue;
+      if (member.email === captainEmail) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: "O e-mail do capitão não pode ser reutilizado em um membro.",
+          },
+          { status: 400 }
+        );
+      }
+      if (duplicateMemberEmails.has(member.email)) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: "Existem membros com e-mail repetido na equipe.",
+          },
+          { status: 400 }
+        );
+      }
+      duplicateMemberEmails.add(member.email);
     }
 
     const db = adminDb();
@@ -453,6 +551,15 @@ export async function POST(request: Request) {
       registrationId: registrationRef.id,
     });
 
+    const captainStatus: ParticipantStatus = captainUserId ? "linked" : "pending";
+    const participants = buildParticipants({
+      captainName,
+      captainEmail,
+      captainPhone,
+      captainUserId,
+      members,
+    });
+
     await registrationRef.set({
       tournamentId,
       tournamentSlug,
@@ -463,7 +570,10 @@ export async function POST(request: Request) {
       captainName,
       captainEmail,
       captainPhone,
+      captainUserId,
+      captainStatus,
       members,
+      participants,
       source,
 
       registrationStatus: "checkout_created",
@@ -520,6 +630,7 @@ export async function POST(request: Request) {
       payer: {
         first_name: firstName,
         last_name: lastName,
+        email: captainEmail,
       },
       external_reference: externalReference,
       notification_url: `${baseUrl}/api/mercadopago/webhook`,
@@ -536,8 +647,9 @@ export async function POST(request: Request) {
         tournamentSlug,
         teamName,
         captainEmail,
+        captainUserId,
         source,
-        flow: "legacy_public_registration",
+        flow: "team_registration_with_captain_binding",
       },
     };
 
