@@ -514,20 +514,15 @@ export default function TournamentPublicClient({ slug }: Props) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          tournamentId: tournament.id,
-          teamName: compactSpaces(teamName),
-          captain: {
-            userId: uid,
-            name: compactSpaces(email || "Capitão da equipe"),
-            email: email || "",
-          },
-          members: selectedMembers.map((member) => ({
-            userId: member.userId,
-            name: member.username || member.email || "",
-            email: member.email || null,
-          })),
-          source: "public_tournament_web",
-        }),
+  tournamentId: tournament.id,
+  teamName: compactSpaces(teamName),
+  members: selectedMembers.map((member) => ({
+    userId: member.userId,
+    name: member.username || member.email || "",
+    email: member.email || null,
+  })),
+  source: "public_tournament_web",
+}),
       });
 
       const createTeamData = (await createTeamResponse.json()) as CreateTeamResponse;
@@ -542,21 +537,22 @@ export default function TournamentPublicClient({ slug }: Props) {
 
       setMessage("Equipe criada. Preparando o pagamento do capitão...");
 
-      const paymentResponse = await fetch(
-        "/api/mercadopago/create-preference",
-        {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            tournamentId: tournament.id,
-            teamId: createTeamData.teamId,
-            source: "public_tournament_web",
-          }),
-        }
-      );
+const paymentResponse = await fetch(
+  "/api/mercadopago/create-member-preference",
+  {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      tournamentId: tournament.id,
+      teamId: createTeamData.teamId,
+      userId: uid,
+      source: "public_tournament_web",
+    }),
+  }
+);
 
       const paymentData =
         (await paymentResponse.json()) as CreatePreferenceResponse;
