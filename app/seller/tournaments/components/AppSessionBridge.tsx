@@ -24,14 +24,21 @@ export default function AppSessionBridge() {
       setProcessing(true);
 
       try {
-        const response = await fetch("/api/sessionLogin", {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ idToken: appToken }),
-        });
+       // 1. limpa sessão antiga
+await fetch("/api/sessionLogout", {
+  method: "POST",
+  credentials: "include",
+});
+
+// 2. cria nova sessão
+const response = await fetch("/api/sessionLogin", {
+  method: "POST",
+  credentials: "include",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ idToken: appToken }),
+});
 
         const data = await response.json().catch(() => ({}));
 
