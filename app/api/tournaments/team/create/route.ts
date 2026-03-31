@@ -6,10 +6,23 @@ import { adminAuth } from "../../../../../src/lib/firebaseAdminAuth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type CaptainInput = {
+  userId?: string;
+  name?: string;
+  email?: string | null;
+};
+
+type MemberInput = {
+  userId?: string;
+  name?: string;
+  email?: string | null;
+};
+
 type RequestBody = {
   tournamentId?: string;
   teamName?: string;
-  memberUserIds?: string[];
+  captain?: CaptainInput;
+  members?: MemberInput[];
   source?: string | null;
 };
 
@@ -25,11 +38,6 @@ const MAX_ADDITIONAL_MEMBERS = 3;
 
 function compactSpaces(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function normalizeIdList(value: unknown) {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => compactSpaces(item)).filter(Boolean);
 }
 
 function normalizeTeamName(value: unknown) {
@@ -195,14 +203,22 @@ export async function POST(request: NextRequest) {
     const body = (await request.json().catch(() => ({}))) as RequestBody;
 
     const tournamentId = compactSpaces(body.tournamentId);
-    const captainUserId = authenticatedUserId;
+    const captainUserId = compactSpaces(body.captain?.userId);
     const teamName = normalizeTeamName(body.teamName);
     const source = compactSpaces(body.source || "public_tournament_web");
-    const rawMemberUserIds = normalizeIdList(body.memberUserIds);
+
+    const rawMembers: MemberInput[] = Array.isArray(body.members) ? body.members : [];
 
     if (!tournamentId) {
       return NextResponse.json(
         { success: false, message: "tournamentId é obrigatório." },
+        { status: 400 }
+      );
+    }
+
+    if (!captainUserId) {
+      return NextResponse.json(
+        { success: false, message: "Capitão é obrigatório." },
         { status: 400 }
       );
     }
@@ -218,7 +234,9 @@ export async function POST(request: NextRequest) {
     }
 
     const memberUserIds = uniqueStrings(
-      rawMemberUserIds.filter((userId) => userId !== captainUserId)
+      rawMembers
+        .map((member) => compactSpaces(member.userId))
+        .filter((id) => id && id !== captainUserId)
     );
 
     if (memberUserIds.length > MAX_ADDITIONAL_MEMBERS) {
@@ -298,8 +316,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          message:
-            "Um ou mais membros convidados não possuem username válido.",
+          message: "Um ou mais membros convidados não possuem username válido.",
         },
         { status: 400 }
       );
@@ -357,8 +374,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          message:
-            "Um dos participantes já pertence a uma equipe deste torneio.",
+          message: "Um dos participantes já pertence a uma equipe deste torneio.",
         },
         { status: 409 }
       );
@@ -405,6 +421,8 @@ export async function POST(request: NextRequest) {
       currency,
 
       source,
+
+      createdByUserId: authenticatedUserId,
 
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
@@ -517,6 +535,8 @@ export async function POST(request: NextRequest) {
         paymentMode: "individual",
 
         source,
+
+        createdByUserId: authenticatedUserId,
 
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),

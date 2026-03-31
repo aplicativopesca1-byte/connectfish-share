@@ -46,14 +46,6 @@ type TournamentPublic = {
   currency: string;
 };
 
-type UserProfile = {
-  userId: string;
-  username: string;
-  email: string | null;
-  photoUrl: string | null;
-  displayName: string | null;
-};
-
 type UserSearchResult = {
   userId: string;
   username: string;
@@ -73,7 +65,7 @@ type CreateTeamResponse = {
   message?: string;
 };
 
-type CreateMemberPreferenceResponse = {
+type CreatePreferenceResponse = {
   success: boolean;
   checkoutUrl?: string;
   preferenceId?: string;
@@ -256,17 +248,11 @@ export default function TournamentPublicClient({ slug }: Props) {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [searchingCaptain, setSearchingCaptain] = useState(false);
   const [searchingMembers, setSearchingMembers] = useState(false);
 
   const [tournament, setTournament] = useState<TournamentPublic | null>(null);
-  const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
 
   const [teamName, setTeamName] = useState("");
-  const [captainQuery, setCaptainQuery] = useState("");
-  const [captainResults, setCaptainResults] = useState<UserSearchResult[]>([]);
-  const [selectedCaptain, setSelectedCaptain] = useState<UserSearchResult | null>(null);
-
   const [memberQuery, setMemberQuery] = useState("");
   const [memberResults, setMemberResults] = useState<UserSearchResult[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<UserSearchResult[]>([]);
@@ -291,32 +277,16 @@ export default function TournamentPublicClient({ slug }: Props) {
   const isFormDisabled =
     saving || !isLoggedIn || !!authLoading || !!registrationBlockedMessage;
 
+  const captainDisplayName = useMemo(() => {
+    if (!isLoggedIn) return "Faça login para continuar";
+    if (email) return email;
+    if (uid) return `Usuário ${uid.slice(0, 8)}`;
+    return "Capitão da equipe";
+  }, [email, isLoggedIn, uid]);
+
   useEffect(() => {
     void loadTournament();
   }, [slug, tournamentIdFromUrl]);
-
-  useEffect(() => {
-    void loadCurrentUserProfile();
-  }, [uid, email]);
-
-  useEffect(() => {
-    if (!isLoggedIn || selectedCaptain) {
-      setCaptainResults([]);
-      return;
-    }
-
-    const queryValue = compactSpaces(captainQuery);
-    if (!queryValue || queryValue.length < 2) {
-      setCaptainResults([]);
-      return;
-    }
-
-    const timeout = setTimeout(() => {
-      void searchUsers(queryValue, "captain");
-    }, 250);
-
-    return () => clearTimeout(timeout);
-  }, [captainQuery, isLoggedIn, selectedCaptain, selectedMembers, uid]);
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -331,22 +301,11 @@ export default function TournamentPublicClient({ slug }: Props) {
     }
 
     const timeout = setTimeout(() => {
-      void searchUsers(queryValue, "member");
+      void searchUsers(queryValue);
     }, 250);
 
     return () => clearTimeout(timeout);
-  }, [memberQuery, isLoggedIn, selectedCaptain, selectedMembers, uid]);
-
-  useEffect(() => {
-    if (!isLoggedIn || !currentUserProfile || selectedCaptain) return;
-
-    setSelectedCaptain({
-      userId: currentUserProfile.userId,
-      username: currentUserProfile.username,
-      email: currentUserProfile.email,
-      photoUrl: currentUserProfile.photoUrl,
-    });
-  }, [isLoggedIn, currentUserProfile, selectedCaptain]);
+  }, [memberQuery, isLoggedIn, selectedMembers, uid]);
 
   function clearFeedback() {
     if (error) setError(null);
@@ -420,10 +379,8 @@ export default function TournamentPublicClient({ slug }: Props) {
 
       const publishedDoc = snapshot.docs.find((item) => {
         const raw = item.data() as Record<string, unknown>;
-
         if (!isPubliclyVisibleTournament(raw)) return false;
         if (idValue && item.id !== idValue) return false;
-
         return true;
       });
 
@@ -442,61 +399,9 @@ export default function TournamentPublicClient({ slug }: Props) {
     }
   }
 
-  async function loadCurrentUserProfile() {
-    if (!uid) {
-      setCurrentUserProfile(null);
-      setSelectedCaptain(null);
-      return;
-    }
-
+  async function searchUsers(queryValue: string) {
     try {
-      const userSnap = await getDoc(doc(db, "users", uid));
-
-      if (!userSnap.exists()) {
-        setCurrentUserProfile({
-          userId: uid,
-          username: "",
-          email: email || null,
-          photoUrl: null,
-          displayName: email || "Usuário logado",
-        });
-        return;
-      }
-
-      const raw = userSnap.data() as Record<string, unknown>;
-      const username = compactSpaces(raw.username).toLowerCase();
-
-      setCurrentUserProfile({
-        userId: userSnap.id,
-        username,
-        email: raw.email ? String(raw.email) : email || null,
-        photoUrl: raw.photoUrl ? String(raw.photoUrl) : null,
-        displayName:
-          compactSpaces(raw.displayName) ||
-          compactSpaces(raw.name) ||
-          username ||
-          email ||
-          "Usuário logado",
-      });
-    } catch (err) {
-      console.error("Erro ao carregar perfil do usuário:", err);
-      setCurrentUserProfile({
-        userId: uid,
-        username: "",
-        email: email || null,
-        photoUrl: null,
-        displayName: email || "Usuário logado",
-      });
-    }
-  }
-
-  async function searchUsers(queryValue: string, target: "captain" | "member") {
-    try {
-      if (target === "captain") {
-        setSearchingCaptain(true);
-      } else {
-        setSearchingMembers(true);
-      }
+      setSearchingMembers(true);
 
       const response = await fetch(
         `/api/users/search?query=${encodeURIComponent(queryValue)}`,
@@ -512,75 +417,22 @@ export default function TournamentPublicClient({ slug }: Props) {
         throw new Error(data.message || "Não foi possível buscar usuários.");
       }
 
-      const currentUid = uid || "";
       const selectedMemberIds = new Set(selectedMembers.map((member) => member.userId));
-      const selectedCaptainId = selectedCaptain?.userId || "";
 
       const filtered = (data.results || []).filter((item) => {
         if (!item.userId) return false;
-
-        if (target === "captain") {
-          if (item.userId !== currentUid && item.userId !== selectedCaptainId) {
-            return false;
-          }
-          if (selectedMemberIds.has(item.userId)) return false;
-          return true;
-        }
-
-        if (item.userId === selectedCaptainId) return false;
+        if (uid && item.userId === uid) return false;
         if (selectedMemberIds.has(item.userId)) return false;
         return true;
       });
 
-      if (target === "captain") {
-        setCaptainResults(filtered);
-      } else {
-        setMemberResults(filtered);
-      }
+      setMemberResults(filtered);
     } catch (err) {
       console.error("Erro ao buscar usuários:", err);
-      if (target === "captain") {
-        setCaptainResults([]);
-      } else {
-        setMemberResults([]);
-      }
+      setMemberResults([]);
     } finally {
-      if (target === "captain") {
-        setSearchingCaptain(false);
-      } else {
-        setSearchingMembers(false);
-      }
+      setSearchingMembers(false);
     }
-  }
-
-  function selectCaptain(user: UserSearchResult) {
-    clearFeedback();
-
-    if (selectedMembers.some((member) => member.userId === user.userId)) {
-      setError("Este usuário já está na lista de membros.");
-      return;
-    }
-
-    setSelectedCaptain(user);
-    setCaptainQuery("");
-    setCaptainResults([]);
-  }
-
-  function clearCaptain() {
-    if (!currentUserProfile) {
-      setSelectedCaptain(null);
-      return;
-    }
-
-    clearFeedback();
-    setSelectedCaptain({
-      userId: currentUserProfile.userId,
-      username: currentUserProfile.username,
-      email: currentUserProfile.email,
-      photoUrl: currentUserProfile.photoUrl,
-    });
-    setCaptainQuery("");
-    setCaptainResults([]);
   }
 
   function addMember(user: UserSearchResult) {
@@ -591,7 +443,7 @@ export default function TournamentPublicClient({ slug }: Props) {
       return;
     }
 
-    if (selectedCaptain?.userId === user.userId) {
+    if (uid && user.userId === uid) {
       setError("O capitão não pode ser adicionado como membro.");
       return;
     }
@@ -627,14 +479,6 @@ export default function TournamentPublicClient({ slug }: Props) {
       );
     }
 
-    if (!selectedCaptain?.userId) {
-      return "Selecione o capitão da equipe.";
-    }
-
-    if (selectedCaptain.userId !== uid) {
-      return "O capitão da equipe precisa ser a conta ConnectFish atualmente logada.";
-    }
-
     if (!compactSpaces(teamName) || compactSpaces(teamName).length < 3) {
       return "Informe um nome de equipe válido com pelo menos 3 caracteres.";
     }
@@ -647,7 +491,7 @@ export default function TournamentPublicClient({ slug }: Props) {
   }
 
   async function handleCreateTeamAndPay() {
-    if (!tournament || !selectedCaptain?.userId) return;
+    if (!tournament || !uid) return;
 
     setSaving(true);
     setError(null);
@@ -673,9 +517,9 @@ export default function TournamentPublicClient({ slug }: Props) {
           tournamentId: tournament.id,
           teamName: compactSpaces(teamName),
           captain: {
-            userId: selectedCaptain.userId,
-            name: selectedCaptain.username || selectedCaptain.email || "",
-            email: selectedCaptain.email || "",
+            userId: uid,
+            name: compactSpaces(email || "Capitão da equipe"),
+            email: email || "",
           },
           members: selectedMembers.map((member) => ({
             userId: member.userId,
@@ -699,7 +543,7 @@ export default function TournamentPublicClient({ slug }: Props) {
       setMessage("Equipe criada. Preparando o pagamento do capitão...");
 
       const paymentResponse = await fetch(
-        "/api/mercadopago/create-member-preference",
+        "/api/mercadopago/create-preference",
         {
           method: "POST",
           credentials: "include",
@@ -715,7 +559,7 @@ export default function TournamentPublicClient({ slug }: Props) {
       );
 
       const paymentData =
-        (await paymentResponse.json()) as CreateMemberPreferenceResponse;
+        (await paymentResponse.json()) as CreatePreferenceResponse;
 
       if (!paymentResponse.ok || !paymentData.success) {
         throw new Error(
@@ -724,7 +568,7 @@ export default function TournamentPublicClient({ slug }: Props) {
       }
 
       if (!paymentData.checkoutUrl) {
-        throw new Error("O checkout individual não retornou uma URL válida.");
+        throw new Error("O checkout do capitão não retornou uma URL válida.");
       }
 
       setMessage("Redirecionando para o pagamento do capitão...");
@@ -879,8 +723,8 @@ export default function TournamentPublicClient({ slug }: Props) {
                   <h2 style={styles.checkoutTitle}>Criar minha equipe</h2>
                   <p style={styles.sectionText}>
                     Para participar deste torneio, é obrigatório ter uma conta
-                    ConnectFish. Com sua conta, você cria a equipe, define o
-                    capitão, recebe convites e registra capturas no app.
+                    ConnectFish. O usuário logado será automaticamente o capitão
+                    da equipe.
                   </p>
                 </div>
 
@@ -904,8 +748,7 @@ export default function TournamentPublicClient({ slug }: Props) {
                   <p style={styles.loginTitle}>Conta ConnectFish obrigatória</p>
                   <p style={styles.loginText}>
                     Para realizar a inscrição, é obrigatório ter uma conta
-                    ConnectFish. Faça login para continuar ou crie sua conta
-                    agora.
+                    ConnectFish. Faça login para continuar ou crie sua conta agora.
                   </p>
 
                   <div style={styles.loginActions}>
@@ -931,80 +774,21 @@ export default function TournamentPublicClient({ slug }: Props) {
               <div style={styles.checkoutSection}>
                 <p style={styles.checkoutSectionTitle}>Capitão da equipe</p>
 
-                {!selectedCaptain ? (
-                  <>
-                    <Field label="Buscar capitão por @username">
-                      <input
-                        type="text"
-                        value={captainQuery}
-                        onChange={(e) => {
-                          clearFeedback();
-                          setCaptainQuery(e.target.value.replace(/^@+/, ""));
-                        }}
-                        style={styles.input}
-                        placeholder="Ex.: pescador_sp"
-                        disabled={isFormDisabled}
-                        maxLength={40}
-                      />
-                    </Field>
-
-                    {searchingCaptain ? (
-                      <p style={styles.helperText}>Buscando capitão...</p>
-                    ) : null}
-
-                    {captainResults.length > 0 ? (
-                      <div style={styles.searchResults}>
-                        {captainResults.map((user) => (
-                          <button
-                            key={user.userId}
-                            type="button"
-                            onClick={() => selectCaptain(user)}
-                            style={styles.searchResultButton}
-                            disabled={isFormDisabled}
-                          >
-                            <span style={styles.searchResultUsername}>
-                              @{user.username}
-                            </span>
-                            <span style={styles.searchResultMeta}>
-                              {user.email || "Usuário ConnectFish"}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <p style={styles.helperText}>
-                        O capitão da equipe deve ser a conta ConnectFish logada.
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <div style={styles.captainCard}>
-                    <div style={styles.captainAvatar}>
-                      {selectedCaptain.username?.charAt(0)?.toUpperCase() || "@"}
-                    </div>
-
-                    <div style={styles.captainInfo}>
-                      <strong style={styles.captainName}>
-                        @{selectedCaptain.username}
-                      </strong>
-                      <span style={styles.captainUsername}>
-                        {selectedCaptain.email || "Capitão selecionado"}
-                      </span>
-                      <span style={styles.captainMeta}>
-                        Capitão responsável pela equipe
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={clearCaptain}
-                      style={styles.removeMemberButton}
-                      disabled={isFormDisabled}
-                    >
-                      Recarregar
-                    </button>
+                <div style={styles.captainCard}>
+                  <div style={styles.captainAvatar}>
+                    {(email || "C").charAt(0).toUpperCase()}
                   </div>
-                )}
+
+                  <div style={styles.captainInfo}>
+                    <strong style={styles.captainName}>{captainDisplayName}</strong>
+                    <span style={styles.captainUsername}>
+                      Usuário logado no ConnectFish
+                    </span>
+                    <span style={styles.captainMeta}>
+                      O criador da equipe será o capitão automaticamente
+                    </span>
+                  </div>
+                </div>
               </div>
 
               <div style={styles.checkoutSection}>
@@ -1119,14 +903,7 @@ export default function TournamentPublicClient({ slug }: Props) {
                     label="Equipe"
                     value={compactSpaces(teamName) || "A informar"}
                   />
-                  <SummaryRow
-                    label="Capitão"
-                    value={
-                      selectedCaptain?.username
-                        ? `@${selectedCaptain.username}`
-                        : "Faça login para definir o capitão"
-                    }
-                  />
+                  <SummaryRow label="Capitão" value={captainDisplayName} />
                   <SummaryRow
                     label="Membros convidados"
                     value={String(selectedMembers.length)}
@@ -1157,7 +934,7 @@ export default function TournamentPublicClient({ slug }: Props) {
                     <div style={styles.paymentInfoRow}>
                       <span style={styles.paymentInfoDot}>2</span>
                       <span style={styles.paymentInfoText}>
-                        A conta logada será usada como capitão da equipe.
+                        O usuário logado será o capitão da equipe.
                       </span>
                     </div>
                     <div style={styles.paymentInfoRow}>
@@ -1205,7 +982,7 @@ export default function TournamentPublicClient({ slug }: Props) {
                 />
                 <span style={styles.checkboxText}>
                   Confirmo que os dados da equipe estão corretos e aceito seguir
-                  para a criação da equipe e para o pagamento individual do capitão.
+                  para a criação da equipe e para o pagamento do capitão.
                 </span>
               </label>
 
@@ -1323,22 +1100,31 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     gap: 18,
   },
+  card: {
+    background: "#FFFFFF",
+    border: "1px solid rgba(15,23,42,0.08)",
+    borderRadius: 24,
+    padding: 24,
+    boxShadow: "0 12px 30px rgba(15,23,42,0.06)",
+  },
   heroCard: {
     background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.08)",
     borderRadius: 26,
     overflow: "hidden",
-    boxShadow: "0 14px 30px rgba(15,23,42,0.05)",
+    boxShadow: "0 14px 30px rgba(15,23,42,0.06)",
   },
   cover: {
-    width: "100%",
-    height: 280,
+    minHeight: 220,
     backgroundSize: "cover",
     backgroundPosition: "center",
-    backgroundColor: "#E2E8F0",
+    backgroundRepeat: "no-repeat",
   },
   heroContent: {
     padding: 24,
+    display: "flex",
+    flexDirection: "column",
+    gap: 18,
   },
   heroTop: {
     display: "flex",
@@ -1349,21 +1135,24 @@ const styles: Record<string, CSSProperties> = {
   },
   title: {
     margin: 0,
-    fontSize: 34,
-    fontWeight: 1000,
-    color: "#0B3C5D",
+    fontSize: 32,
     lineHeight: 1.1,
+    fontWeight: 800,
+    color: "#0F172A",
   },
   subtitle: {
     margin: "8px 0 0 0",
     fontSize: 16,
-    fontWeight: 700,
     color: "#475569",
   },
   location: {
     margin: "10px 0 0 0",
-    fontSize: 14,
-    fontWeight: 700,
+    fontSize: 15,
+    color: "#64748B",
+  },
+  muted: {
+    margin: 0,
+    fontSize: 15,
     color: "#64748B",
   },
   statusBadge: {
@@ -1373,12 +1162,36 @@ const styles: Record<string, CSSProperties> = {
     padding: "8px 12px",
     borderRadius: 999,
     fontSize: 13,
-    fontWeight: 900,
+    fontWeight: 700,
     whiteSpace: "nowrap",
+  },
+  infoGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+    gap: 12,
+  },
+  infoCard: {
+    background: "#F8FAFC",
+    border: "1px solid rgba(15,23,42,0.06)",
+    borderRadius: 18,
+    padding: 14,
+  },
+  infoLabel: {
+    margin: 0,
+    fontSize: 12,
+    color: "#64748B",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  infoValue: {
+    margin: "8px 0 0 0",
+    fontSize: 15,
+    color: "#0F172A",
+    fontWeight: 700,
   },
   twoColumnGrid: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) minmax(340px, 430px)",
+    gridTemplateColumns: "1.1fr 0.9fr",
     gap: 18,
     alignItems: "start",
   },
@@ -1388,185 +1201,131 @@ const styles: Record<string, CSSProperties> = {
     gap: 18,
   },
   rightColumn: {
-    position: "relative",
-  },
-  card: {
-    background: "#FFFFFF",
-    border: "1px solid rgba(15,23,42,0.08)",
-    borderRadius: 22,
-    padding: 22,
-    boxShadow: "0 10px 24px rgba(15,23,42,0.04)",
-  },
-  checkoutCard: {
-    background: "#FFFFFF",
-    border: "1px solid rgba(15,23,42,0.08)",
-    borderRadius: 24,
-    padding: 22,
-    boxShadow: "0 18px 34px rgba(15,23,42,0.06)",
-    position: "sticky",
-    top: 24,
     display: "flex",
     flexDirection: "column",
     gap: 18,
   },
   sectionTitle: {
     margin: 0,
-    fontSize: 22,
-    fontWeight: 900,
+    fontSize: 20,
+    fontWeight: 800,
     color: "#0F172A",
   },
   sectionText: {
-    margin: "10px 0 0 0",
-    fontSize: 14,
-    lineHeight: 1.7,
-    fontWeight: 600,
-    color: "#64748B",
-  },
-  muted: {
-    margin: "8px 0 0 0",
-    fontSize: 14,
-    lineHeight: 1.6,
-    fontWeight: 600,
-    color: "#64748B",
-  },
-  infoGrid: {
-    marginTop: 18,
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-    gap: 12,
-  },
-  infoCard: {
-    background: "#F8FAFC",
-    borderRadius: 16,
-    padding: 14,
-    border: "1px solid rgba(15,23,42,0.06)",
-  },
-  infoLabel: {
-    margin: 0,
-    fontSize: 12,
-    fontWeight: 800,
-    color: "#64748B",
-    textTransform: "uppercase",
-    letterSpacing: 0.2,
-  },
-  infoValue: {
-    margin: "8px 0 0 0",
+    margin: "12px 0 0 0",
     fontSize: 15,
-    fontWeight: 900,
-    color: "#0F172A",
-    lineHeight: 1.5,
+    lineHeight: 1.7,
+    color: "#475569",
   },
   rulesList: {
-    marginTop: 14,
     display: "flex",
     flexDirection: "column",
-    gap: 12,
+    gap: 10,
+    marginTop: 14,
   },
   ruleRow: {
     display: "flex",
-    alignItems: "flex-start",
     gap: 10,
+    alignItems: "flex-start",
   },
   ruleDot: {
-    color: "#1D4ED8",
-    fontWeight: 1000,
-    lineHeight: 1.6,
+    color: "#0F172A",
+    fontWeight: 800,
   },
   ruleText: {
     color: "#334155",
-    fontSize: 14,
-    fontWeight: 700,
-    lineHeight: 1.7,
+    lineHeight: 1.6,
+  },
+  checkoutCard: {
+    background: "#FFFFFF",
+    border: "1px solid rgba(15,23,42,0.08)",
+    borderRadius: 24,
+    padding: 24,
+    boxShadow: "0 12px 30px rgba(15,23,42,0.06)",
+    display: "flex",
+    flexDirection: "column",
+    gap: 18,
   },
   checkoutTop: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 16,
+    flexWrap: "wrap",
   },
   checkoutEyebrow: {
-    display: "inline-flex",
-    alignItems: "center",
-    padding: "6px 10px",
-    borderRadius: 999,
-    background: "#DBEAFE",
-    color: "#1D4ED8",
-    fontSize: 11,
-    fontWeight: 900,
+    display: "inline-block",
+    marginBottom: 8,
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#2563EB",
     textTransform: "uppercase",
-    letterSpacing: 0.3,
+    letterSpacing: 0.6,
   },
   checkoutTitle: {
-    margin: "10px 0 0 0",
+    margin: 0,
     fontSize: 24,
-    fontWeight: 1000,
+    fontWeight: 800,
     color: "#0F172A",
   },
   priceCard: {
-    minWidth: 150,
+    minWidth: 180,
     background: "#F8FAFC",
-    borderRadius: 16,
-    padding: 16,
     border: "1px solid rgba(15,23,42,0.06)",
+    borderRadius: 18,
+    padding: 14,
   },
   priceLabel: {
     display: "block",
-    color: "#64748B",
     fontSize: 12,
-    fontWeight: 800,
+    color: "#64748B",
     marginBottom: 6,
   },
   priceValue: {
-    color: "#0B3C5D",
     fontSize: 22,
-    fontWeight: 1000,
-    lineHeight: 1.1,
+    fontWeight: 800,
+    color: "#0F172A",
   },
   warningBox: {
     background: "#FFF7ED",
     border: "1px solid #FED7AA",
-    borderRadius: 16,
-    padding: 14,
+    borderRadius: 18,
+    padding: 16,
   },
   warningTitle: {
     margin: 0,
+    fontSize: 15,
+    fontWeight: 800,
     color: "#9A3412",
-    fontSize: 14,
-    fontWeight: 900,
   },
   warningText: {
-    margin: "8px 0 0 0",
+    margin: "6px 0 0 0",
+    fontSize: 14,
     color: "#9A3412",
-    fontSize: 13,
-    fontWeight: 700,
-    lineHeight: 1.6,
   },
   loginBox: {
     background: "#EFF6FF",
     border: "1px solid #BFDBFE",
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 16,
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
   },
   loginTitle: {
     margin: 0,
-    color: "#1E3A8A",
     fontSize: 15,
-    fontWeight: 900,
+    fontWeight: 800,
+    color: "#1D4ED8",
   },
   loginText: {
-    margin: 0,
-    color: "#1D4ED8",
-    fontSize: 13,
-    fontWeight: 700,
+    margin: "8px 0 0 0",
+    fontSize: 14,
+    color: "#1E3A8A",
     lineHeight: 1.6,
   },
   loginActions: {
     display: "flex",
-    flexDirection: "column",
     gap: 10,
+    flexWrap: "wrap",
+    marginTop: 14,
   },
   checkoutSection: {
     display: "flex",
@@ -1575,59 +1334,53 @@ const styles: Record<string, CSSProperties> = {
   },
   checkoutSectionTitle: {
     margin: 0,
+    fontSize: 16,
+    fontWeight: 800,
     color: "#0F172A",
-    fontSize: 15,
-    fontWeight: 900,
   },
   captainCard: {
     display: "flex",
     alignItems: "center",
-    gap: 12,
+    gap: 14,
+    padding: 14,
+    borderRadius: 18,
     background: "#F8FAFC",
-    borderRadius: 16,
-    padding: 16,
     border: "1px solid rgba(15,23,42,0.06)",
   },
   captainAvatar: {
-    width: 44,
-    height: 44,
+    width: 46,
+    height: 46,
     borderRadius: 999,
-    background: "#DBEAFE",
-    color: "#1D4ED8",
-    display: "inline-flex",
+    background: "#0F172A",
+    color: "#FFFFFF",
+    display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    fontWeight: 800,
     fontSize: 18,
-    fontWeight: 1000,
     flexShrink: 0,
   },
   captainInfo: {
     display: "flex",
     flexDirection: "column",
-    gap: 2,
-    flex: 1,
-    minWidth: 0,
+    gap: 4,
   },
   captainName: {
+    fontSize: 15,
     color: "#0F172A",
-    fontSize: 14,
-    fontWeight: 900,
   },
   captainUsername: {
-    color: "#1D4ED8",
     fontSize: 13,
-    fontWeight: 900,
+    color: "#475569",
   },
   captainMeta: {
-    color: "#64748B",
     fontSize: 12,
-    fontWeight: 700,
-    lineHeight: 1.5,
+    color: "#64748B",
   },
   formGrid: {
     display: "grid",
     gridTemplateColumns: "1fr",
-    gap: 12,
+    gap: 14,
   },
   field: {
     display: "flex",
@@ -1636,25 +1389,25 @@ const styles: Record<string, CSSProperties> = {
   },
   label: {
     fontSize: 13,
-    color: "#475569",
-    fontWeight: 900,
+    fontWeight: 700,
+    color: "#334155",
   },
   input: {
     width: "100%",
+    minHeight: 46,
+    borderRadius: 14,
     border: "1px solid rgba(15,23,42,0.12)",
-    borderRadius: 12,
-    padding: "12px 14px",
-    fontSize: 14,
-    color: "#0F172A",
     background: "#FFFFFF",
+    padding: "0 14px",
+    fontSize: 15,
+    color: "#0F172A",
     outline: "none",
+    boxSizing: "border-box",
   },
   helperText: {
     margin: 0,
-    color: "#64748B",
     fontSize: 13,
-    fontWeight: 700,
-    lineHeight: 1.5,
+    color: "#64748B",
   },
   searchResults: {
     display: "flex",
@@ -1662,40 +1415,42 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
   },
   searchResultButton: {
+    width: "100%",
+    textAlign: "left",
     border: "1px solid rgba(15,23,42,0.08)",
     background: "#FFFFFF",
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 12,
+    cursor: "pointer",
     display: "flex",
     flexDirection: "column",
     gap: 4,
-    cursor: "pointer",
-    textAlign: "left",
   },
   searchResultUsername: {
-    color: "#0F172A",
     fontSize: 14,
-    fontWeight: 900,
+    fontWeight: 800,
+    color: "#0F172A",
   },
   searchResultMeta: {
+    fontSize: 13,
     color: "#64748B",
-    fontSize: 12,
-    fontWeight: 700,
   },
   selectedMembersBox: {
     background: "#F8FAFC",
-    borderRadius: 16,
-    padding: 16,
     border: "1px solid rgba(15,23,42,0.06)",
+    borderRadius: 18,
+    padding: 14,
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
   },
   selectedMembersTitle: {
     margin: 0,
+    fontSize: 14,
+    fontWeight: 800,
     color: "#0F172A",
-    fontSize: 13,
-    fontWeight: 900,
   },
   selectedMembersList: {
-    marginTop: 12,
     display: "flex",
     flexDirection: "column",
     gap: 10,
@@ -1704,99 +1459,84 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
-    background: "#FFFFFF",
-    borderRadius: 12,
+    gap: 10,
     padding: 12,
+    borderRadius: 14,
+    background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.06)",
   },
   selectedMemberInfo: {
     display: "flex",
     flexDirection: "column",
-    gap: 2,
+    gap: 4,
   },
   selectedMemberUsername: {
-    color: "#0F172A",
     fontSize: 14,
-    fontWeight: 900,
+    color: "#0F172A",
   },
   selectedMemberMeta: {
-    color: "#64748B",
     fontSize: 12,
-    fontWeight: 700,
+    color: "#64748B",
   },
   removeMemberButton: {
-    border: "none",
-    background: "#FEE2E2",
+    border: "1px solid rgba(239,68,68,0.2)",
+    background: "#FEF2F2",
     color: "#B91C1C",
-    borderRadius: 10,
-    padding: "8px 10px",
-    fontSize: 12,
-    fontWeight: 900,
+    borderRadius: 12,
+    padding: "8px 12px",
     cursor: "pointer",
-    flexShrink: 0,
+    fontSize: 13,
+    fontWeight: 700,
   },
   summaryCard: {
     background: "#F8FAFC",
-    borderRadius: 16,
-    padding: 16,
     border: "1px solid rgba(15,23,42,0.06)",
+    borderRadius: 18,
+    padding: 14,
     display: "flex",
     flexDirection: "column",
     gap: 10,
   },
   summaryRow: {
     display: "flex",
-    alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    alignItems: "center",
+    gap: 16,
   },
   summaryRowTotal: {
     paddingTop: 10,
-    marginTop: 4,
     borderTop: "1px solid rgba(15,23,42,0.08)",
   },
   summaryLabel: {
-    color: "#64748B",
-    fontSize: 13,
-    fontWeight: 800,
-  },
-  summaryValue: {
-    color: "#0F172A",
-    fontSize: 13,
-    fontWeight: 900,
-    textAlign: "right",
+    fontSize: 14,
+    color: "#475569",
   },
   summaryLabelHighlight: {
     color: "#1D4ED8",
+    fontWeight: 700,
+  },
+  summaryLabelTotal: {
+    fontWeight: 800,
+    color: "#0F172A",
+  },
+  summaryValue: {
+    fontSize: 14,
+    color: "#0F172A",
+    fontWeight: 700,
+    textAlign: "right",
   },
   summaryValueHighlight: {
     color: "#1D4ED8",
   },
-  summaryLabelTotal: {
-    fontSize: 14,
-    color: "#0F172A",
-  },
   summaryValueTotal: {
-    fontSize: 18,
-    color: "#0B3C5D",
-  },
-  checkboxRow: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 10,
-  },
-  checkboxText: {
-    color: "#475569",
-    fontSize: 14,
-    fontWeight: 700,
-    lineHeight: 1.6,
+    fontSize: 16,
+    fontWeight: 800,
   },
   processingBox: {
     background: "#F8FAFC",
-    borderRadius: 16,
-    padding: 16,
     border: "1px solid rgba(15,23,42,0.06)",
+    borderRadius: 18,
+    padding: 14,
   },
   paymentInfoList: {
     display: "flex",
@@ -1809,43 +1549,50 @@ const styles: Record<string, CSSProperties> = {
     gap: 10,
   },
   paymentInfoDot: {
-    width: 24,
-    height: 24,
+    width: 22,
+    height: 22,
     borderRadius: 999,
+    background: "#0F172A",
+    color: "#FFFFFF",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "#DBEAFE",
-    color: "#1D4ED8",
     fontSize: 12,
-    fontWeight: 1000,
+    fontWeight: 800,
     flexShrink: 0,
   },
   paymentInfoText: {
-    color: "#475569",
-    fontSize: 13,
-    fontWeight: 700,
+    fontSize: 14,
+    color: "#334155",
     lineHeight: 1.6,
   },
   miniRulesList: {
     display: "flex",
     flexDirection: "column",
-    gap: 10,
+    gap: 8,
   },
   miniRuleItem: {
+    display: "flex",
+    gap: 8,
+    alignItems: "flex-start",
+  },
+  miniRuleDot: {
+    color: "#0F172A",
+    fontWeight: 800,
+  },
+  miniRuleText: {
+    fontSize: 14,
+    color: "#334155",
+    lineHeight: 1.6,
+  },
+  checkboxRow: {
     display: "flex",
     alignItems: "flex-start",
     gap: 10,
   },
-  miniRuleDot: {
-    color: "#1D4ED8",
-    fontWeight: 1000,
-    lineHeight: 1.6,
-  },
-  miniRuleText: {
-    color: "#475569",
-    fontSize: 13,
-    fontWeight: 700,
+  checkboxText: {
+    fontSize: 14,
+    color: "#334155",
     lineHeight: 1.6,
   },
   actionsColumn: {
@@ -1854,47 +1601,47 @@ const styles: Record<string, CSSProperties> = {
     gap: 10,
   },
   primaryButton: {
+    minHeight: 48,
     border: "none",
     borderRadius: 14,
-    padding: "14px 18px",
-    background: "#0B3C5D",
+    background: "#0F172A",
     color: "#FFFFFF",
     fontSize: 15,
-    fontWeight: 1000,
+    fontWeight: 800,
+    padding: "0 18px",
     cursor: "pointer",
   },
   secondaryButton: {
-    border: "1px solid rgba(15,23,42,0.08)",
+    minHeight: 48,
+    border: "1px solid rgba(15,23,42,0.12)",
     borderRadius: 14,
-    padding: "12px 16px",
     background: "#FFFFFF",
     color: "#0F172A",
-    fontSize: 14,
-    fontWeight: 900,
+    fontSize: 15,
+    fontWeight: 700,
+    padding: "0 18px",
     cursor: "pointer",
   },
   disabledButton: {
-    opacity: 0.55,
+    opacity: 0.6,
     cursor: "not-allowed",
   },
   securityText: {
     margin: 0,
+    fontSize: 13,
     color: "#64748B",
-    fontSize: 12,
-    fontWeight: 700,
     lineHeight: 1.6,
   },
   successText: {
     margin: 0,
     color: "#166534",
-    fontSize: 13,
-    fontWeight: 900,
+    fontSize: 14,
+    fontWeight: 700,
   },
   errorText: {
     margin: 0,
     color: "#B91C1C",
-    fontSize: 13,
-    fontWeight: 900,
-    lineHeight: 1.6,
+    fontSize: 14,
+    fontWeight: 700,
   },
 };

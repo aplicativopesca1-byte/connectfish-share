@@ -22,6 +22,33 @@ type MercadoPagoPaymentResponse = {
   };
 };
 
+type TeamMemberDoc = {
+  teamId?: string;
+  tournamentId?: string;
+  userId?: string;
+  username?: string;
+  displayName?: string | null;
+  photoUrl?: string | null;
+  role?: "captain" | "member" | string;
+  inviteStatus?: string;
+  registrationStatus?: string;
+  paymentStatus?: string;
+  paymentStatusDetail?: string | null;
+  amount?: number;
+  currency?: string;
+  invitedByUserId?: string;
+  invitedAt?: unknown;
+  respondedAt?: unknown;
+  paymentStartedAt?: unknown;
+  paymentApprovedAt?: unknown;
+  paymentProvider?: string | null;
+  paymentId?: string | null;
+  preferenceId?: string | null;
+  externalReference?: string | null;
+  checkoutUrl?: string | null;
+  payerEmail?: string | null;
+};
+
 type ParsedReference = {
   tournamentId: string | null;
   teamId: string | null;
@@ -147,7 +174,7 @@ async function recalculateTeamStatus(teamId: string) {
     .get();
 
   const members = membersSnap.docs.map(
-    (memberDoc) => memberDoc.data() as Record<string, unknown>
+    (memberDoc) => (memberDoc.data() || {}) as TeamMemberDoc
   );
 
   const totalSlots = members.length;
@@ -283,7 +310,7 @@ async function processPaymentWebhook(params: {
     return;
   }
 
-  const memberData = memberSnap.data() as Record<string, unknown>;
+  const memberData = (memberSnap.data() || {}) as TeamMemberDoc;
 
   const currentPaymentStatus = normalizeStatus(memberData.paymentStatus);
   const currentRegistrationStatus = normalizeStatus(memberData.registrationStatus);
