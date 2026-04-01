@@ -1,0 +1,305 @@
+[33mc7aa3d9[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m fix: session sync + captain bug
+M	app/seller/tournaments/components/AppSessionBridge.tsx
+[33mb3ac64b[m fix: alinhar fluxo do capitao com pagamento individual
+M	app/tournaments/[slug]/TournamentPublicClient.tsx
+[33m589c2e6[m fix: unificacao fluxo torneios + correção capitão + limpeza register
+A	app-estrutura.txt
+M	app/api/mercadopago/member-webhook/route.ts
+D	app/api/tournaments/registration-status/route.ts
+M	app/api/tournaments/team/create/route.ts
+M	app/tournaments/[slug]/TournamentPublicClient.tsx
+A	estrutura-arquivos.txt
+A	estrutura-completa.txt
+A	estrutura-pastas.txt
+A	src-estrutura.txt
+[33m7fa34f5[m fix: inscrição torneio com conta connectfish obrigatória
+M	app/tournaments/[slug]/TournamentPublicClient.tsx
+[33m324f5cd[m fix: ajuste UX capitão + alinhamento fluxo inscrição
+M	app/tournaments/[slug]/TournamentPublicClient.tsx
+[33mc607622[m fix: form torneio + estrutura de inscrição + correção firestore undefined
+M	app/seller/tournaments/components/TournamentForm.tsx
+[33m1918b2c[m fix: estrutura de inscrição equipe + captain + members
+M	app/api/mercadopago/create-preference/route.ts
+M	app/seller/tournaments/components/TournamentForm.tsx
+M	app/tournaments/[slug]/TournamentPublicClient.tsx
+[33m9c47e79[m Ajusta validacao de capturas e fluxo de torneios
+M	app/seller/tournaments/[id]/captures/TournamentValidationCapturesClient.tsx
+M	app/tournaments/[slug]/payment/failure/page.tsx
+M	app/tournaments/[slug]/payment/pending/page.tsx
+[33ma040835[m fix: corrigido fluxo de pagamento capitão mercado pago
+M	app/api/mercadopago/create-preference/route.ts
+[33m6b22b5a[m Corrige rota registration-status para build do Vercel
+M	app/api/tournaments/registration-status/route.ts
+[33mcf0b71b[m Ajusta captura de torneio offline e sync com portal
+A	app/api/tournaments/registration-status/route.ts
+M	app/seller/tournaments/[id]/captures/TournamentValidationCapturesClient.tsx
+M	app/tournaments/[slug]/payment/failure/page.tsx
+M	app/tournaments/[slug]/payment/pending/page.tsx
+M	app/tournaments/[slug]/payment/success/page.tsx
+[33m553626b[m fix tournament invite and individual payment flow
+M	app/api/mercadopago/create-preference/route.ts
+[33m0897246[m fix: autentica pagamento individual com bearer token
+M	app/api/mercadopago/create-member-preference/route.ts
+M	app/team-invite/[inviteId]/page.tsx
+[33mfa8c243[m fix: ajusta fluxo de convites e criacao de equipes
+M	app/api/tournaments/team/create/route.ts
+[33m8fe6d7e[m ajuste no convite
+M	app/seller/tournaments/components/tournaments/MyTournamentInvitesClient.tsx
+[33m765450a[m fix: ajusta resposta de convite com bearer token
+M	app/team-invite/[inviteId]/page.tsx
+[33mc0f3a4d[m ajuste de fluxo
+M	app/api/tournaments/team/create/route.ts
+M	app/api/tournaments/team/invite/respond/route.ts
+M	app/seller/tournaments/[id]/teams/TournamentTeamsClient.tsx
+M	app/seller/tournaments/components/TournamentForm.tsx
+M	app/team-invite/[inviteId]/page.tsx
+[33m9156cba[m Ajusta fluxo de convites e autenticação app/web
+M	app/api/tournaments/team/invite/respond/route.ts
+[33m9c7161e[m Ajusta fluxo de links e abertura de inscrições por slug + id
+M	app/seller/tournaments/components/TournamentForm.tsx
+M	app/tournaments/[slug]/TournamentPublicClient.tsx
+[33mf1e3b24[m fix tournament invite auth with bearer token
+M	app/api/tournaments/team/invite/respond/route.ts
+[33mddde350[m fix: fluxo completo torneio + auth + pagamentos
+M	app/api/mercadopago/create-member-preference/route.ts
+M	app/api/mercadopago/create-preference/route.ts
+M	app/api/tournaments/team/invite/respond/route.ts
+M	app/seller/tournaments/[id]/teams/TournamentTeamsClient.tsx
+M	app/seller/tournaments/components/tournaments/MyTournamentInvitesClient.tsx
+M	app/team-invite/[inviteId]/page.tsx
+M	app/tournaments/[slug]/payment/failure/page.tsx
+M	app/tournaments/[slug]/payment/pending/page.tsx
+M	app/tournaments/[slug]/payment/success/page.tsx
+[33m3bdd844[m fix: app session bridge
+M	app/seller/tournaments/components/AppSessionBridge.tsx
+M	app/tournaments/[slug]/TournamentPublicClient.tsx
+[33m2f77473[m fix: app session bridge
+A	app/seller/tournaments/components/AppSessionBridge.tsx
+M	app/tournaments/[slug]/TournamentPublicClient.tsx
+[33md811234[m Corrige sessão no fluxo de inscrição do torneio
+M	app/api/mercadopago/create-member-preference/route.ts
+M	app/api/tournaments/team/create/route.ts
+M	app/tournaments/[slug]/TournamentPublicClient.tsx
+[33m8060502[m fix: fluxo de convite + nova lógica de pagamento individual por invite
+A	app/team-invite/[inviteId]/page.tsx
+[33mde54504[m fix: ajusta rota de resposta de convite
+M	app/api/tournaments/team/invite/respond/route.ts
+[33m4e16022[m fix: ajustes rotas api (webhooks, invites, search) para build vercel
+M	app/api/users/search/route.ts
+[33m37b8426[m fix: ajusta rotas webhook e member preference
+M	app/api/mercadopago/member-webhook/route.ts
+M	app/api/mercadopago/webhook/route.ts
+[33m32cd16b[m fix: correção fluxo torneio + pagamento + perímetro
+M	app/api/mercadopago/create-member-preference/route.ts
+[33mce57c67[m organiza fluxo de torneios
+A	app/api/mercadopago/create-member-preference/route.ts
+M	app/api/mercadopago/create-preference/route.ts
+A	app/api/mercadopago/member-webhook/route.ts
+M	app/api/mercadopago/webhook/route.ts
+A	app/api/tournaments/team/create/route.ts
+A	app/api/tournaments/team/invite/respond/route.ts
+A	app/api/users/search/route.ts
+M	app/seller/tournaments/[id]/edit/page.tsx
+M	app/seller/tournaments/[id]/map/TournamentMapEditor.tsx
+M	app/seller/tournaments/[id]/teams/TournamentTeamsClient.tsx
+M	app/seller/tournaments/components/TournamentForm.tsx
+A	app/seller/tournaments/components/tournaments/MyTournamentInvitesClient.tsx
+M	app/seller/tournaments/page.tsx
+M	app/tournaments/[slug]/TournamentPublicClient.tsx
+[33m69b0ed2[m fix: webhook mercado pago com firebase admin
+M	app/api/mercadopago/create-preference/route.ts
+M	app/api/mercadopago/webhook/route.ts
+[33ma347791[m feat: adiciona valor de inscrição no torneio
+M	app/seller/tournaments/components/TournamentForm.tsx
+[33mf5f17af[m fix: normaliza nome do geo.ts (case sensitive)
+M	app/seller/tournaments/components/map/geo.ts
+[33mcbef53e[m fix: corrige create-preference route
+M	app/api/mercadopago/create-preference/route.ts
+[33m1488af9[m fix: corrige payment pages do torneio
+M	app/tournaments/[slug]/payment/success/page.tsx
+[33m28950c5[m fix: corrige payment pending page
+M	app/tournaments/[slug]/payment/pending/page.tsx
+[33m3790636[m fix: corrige payment failure page
+M	app/tournaments/[slug]/payment/failure/page.tsx
+[33m0953227[m fix: recria page de edição do torneio
+M	app/seller/tournaments/[id]/edit/page.tsx
+[33mf620bc3[m fix: normalize captures route files
+M	app/seller/tournaments/[id]/captures/page.tsx
+[33mc7832ca[m fix: webhook mercado pago + ajustes torneios + captura validação
+M	app/api/mercadopago/webhook/route.ts
+[33m7c53a82[m feat: estrutura torneios + integração mercado pago + admin
+A	app/admin/pesqueiros/AdminFisheriesClient.tsx
+A	app/admin/pesqueiros/page.tsx
+A	app/api/admin/pesqueiros/[fisheryId]/status/route.ts
+A	app/api/mercadopago/create-preference/route.ts
+A	app/api/mercadopago/webhook/route.ts
+M	app/seller/SellerClient.tsx
+A	app/seller/fishery/FisheryClient.tsx
+A	app/seller/fishery/page.tsx
+A	app/seller/fishery/success/SuccessClient.tsx
+A	app/seller/fishery/success/page.tsx
+M	app/seller/layout.tsx
+A	app/seller/tournaments/[id]/TournamentDashboardClient.tsx
+A	app/seller/tournaments/[id]/captures/TournamentCapturesClient.tsx
+A	app/seller/tournaments/[id]/captures/TournamentValidationCapturesClient.tsx
+A	app/seller/tournaments/[id]/captures/page.tsx
+A	app/seller/tournaments/[id]/edit/page.tsx
+A	app/seller/tournaments/[id]/map/TournamentMapEditor.tsx
+A	app/seller/tournaments/[id]/map/page.tsx
+A	app/seller/tournaments/[id]/page.tsx
+A	app/seller/tournaments/[id]/ranking/TournamentRankingClient.tsx
+A	app/seller/tournaments/[id]/ranking/page.tsx
+A	app/seller/tournaments/[id]/registrations/TournamentRegistrationsPageClient.tsx
+A	app/seller/tournaments/[id]/registrations/page.tsx
+A	app/seller/tournaments/[id]/teams/TournamentTeamsClient.tsx
+A	app/seller/tournaments/[id]/teams/page.tsx
+A	app/seller/tournaments/components/LeafletBoundaryEditor.tsx
+A	app/seller/tournaments/components/TournamentForm.tsx
+A	app/seller/tournaments/components/map/MapCanvas.tsx
+A	app/seller/tournaments/components/map/boundary/BoundaryMapEditor.tsx
+A	app/seller/tournaments/components/map/geo.ts
+A	app/seller/tournaments/components/map/search/geocodeService.ts
+A	app/seller/tournaments/new/page.tsx
+A	app/seller/tournaments/page.tsx
+A	app/tournaments/[slug]/TournamentPublicClient.tsx
+A	app/tournaments/[slug]/page.tsx
+A	app/tournaments/[slug]/payment/failure/page.tsx
+A	app/tournaments/[slug]/payment/pending/page.tsx
+A	app/tournaments/[slug]/payment/success/page.tsx
+M	package-lock.json
+M	package.json
+M	src/lib/firebase.ts
+M	src/lib/firebaseAdminAuth.ts
+A	src/lib/isAdmin.ts
+[33m9047b0e[m fix: use /api/sessionLogin instead of /api/session
+M	app/login/LoginClient.tsx
+[33m4ac2513[m chore: add postTest endpoint
+A	app/api/postTest/route.ts
+[33m88e40dd[m fix: prevent auto logout by removing Link to sessionLogout
+M	app/seller/layout.tsx
+[33m626aeab[m fix: exclude /api from middleware matcher
+M	middleware.ts
+[33m83a3bef[m chore: add debugSession and keep seller dynamic
+M	app/api/debugSession/route.ts
+M	app/api/session/route.ts
+[33m95bbe68[m chore: add debug session endpoint
+A	app/api/debugSession/route.ts
+[33m7d04e3b[m fix: stabilize session check with no_cookie retry
+M	src/context/AuthContext.tsx
+[33mcc32dfd[m fix: prevent auth logout on transient sessionCheck errors
+M	src/context/AuthContext.tsx
+[33me1390aa[m feat: new seller dashboard UI
+M	app/seller/SellerClient.tsx
+[33m988615f[m fix: allow GET/POST for session logout
+M	app/api/sessionLogout/route.ts
+[33m1cde066[m fix: auth context and envCheck route
+M	app/api/envCheck/route.ts
+M	src/context/AuthContext.tsx
+[33meb435f5[m fix: disable caching for session routes
+M	app/api/session/route.ts
+[33me568cae[m fix: login sets session and refreshes auth context
+M	app/login/LoginClient.tsx
+[33m15149bf[m fix: update AuthContext after firebase key rotation
+M	src/context/AuthContext.tsx
+[33m118add3[m Add SellerClient and seller page
+M	app/api/sessionLogout/route.ts
+M	app/seller/page.tsx
+[33mfb98e82[m Add SellerClient component
+A	app/seller/SellerClient.tsx
+[33m476847a[m Fix login session flow (remove secrets)
+M	.gitignore
+A	app/api/envCheck/route.ts
+A	app/api/session/route.ts
+M	app/api/sessionCheck/route.ts
+M	app/api/sessionLogin/route.ts
+A	app/global-error.tsx
+M	app/login/LoginClient.tsx
+M	app/seller/page.tsx
+M	middleware.ts
+M	src/context/AuthContext.tsx
+M	src/lib/firebase.ts
+M	src/lib/firebaseAdminAuth.ts
+A	src/lib/serverSession.ts
+[33m223852b[m fix env injection (static NEXT_PUBLIC access)
+M	src/lib/firebase.ts
+[33mdd0a0d2[m fix firebase env
+A	e HEAD
+M	src/lib/firebase.ts
+[33m5831637[m fix firebase web env config
+M	src/lib/firebase.ts
+[33m6e536ad[m fix auth context B + seller layout
+M	app/providers.tsx
+M	app/seller/layout.tsx
+M	src/context/AuthContext.tsx
+[33mf8cd271[m force sessionLogout to be a module
+M	app/api/sessionLogout/route.ts
+[33m0821322[m fix sessionLogout module
+A	app/api/sessionLogout/route.ts
+[33m3f72887[m remove sessionLogout route temporarily
+D	app/api/sessionLogout/route.ts
+[33m1b5955f[m recreate sessionLogout route utf8
+M	app/api/sessionLogout/route.ts
+[33m8ed2d53[m fix sessionLogout route
+M	app/api/sessionLogout/route.ts
+[33m6ccd429[m use stable adminAuth import
+A	src/lib/admin.ts
+[33m027bdce[m fix api import path
+M	app/api/sessionLogin/route.ts
+M	tsconfig.json
+[33md1a5495[m fix api import paths
+M	app/api/sessionCheck/route.ts
+M	app/api/sessionLogin/route.ts
+[33ma7dc181[m fix middleware export
+M	middleware.ts
+[33mf1a301d[m fix adminAuth export
+M	src/lib/firebaseAdminAuth.ts
+[33m3edd503[m fix session login
+M	app/a/[id]/page.tsx
+A	app/api/sessionCheck/route.ts
+A	app/api/sessionLogin/route.ts
+A	app/api/sessionLogout/route.ts
+M	app/layout.tsx
+M	app/login/LoginClient.tsx
+A	app/providers.tsx
+M	app/seller/layout.tsx
+A	middleware.ts
+M	src/context/AuthContext.tsx
+M	src/lib/firebase.ts
+A	src/lib/firebaseAdminAuth.ts
+[33md3455c5[m update home + login fixes
+M	app/login/page.tsx
+M	app/page.tsx
+[33ma6ef3d9[m nova home premium
+M	app/page.tsx
+[33mda09c25[m fix: build ok (login suspense + turbopack root)
+A	app/login/LoginClient.tsx
+M	app/login/page.tsx
+M	next.config.ts
+[33m2620e41[m fix: make /a/[id] server-safe (no css-in-tsx)
+M	app/a/[id]/page.tsx
+[33m56d62b0[m share site connectfish
+A	.gitignore
+A	README.md
+A	app/a/[id]/page.tsx
+A	app/favicon.ico
+A	app/globals.css
+A	app/layout.tsx
+A	app/login/layout.tsx
+A	app/login/page.tsx
+A	app/page.tsx
+A	app/seller/layout.tsx
+A	app/seller/page.tsx
+A	eslint.config.mjs
+A	next.config.ts
+A	package-lock.json
+A	package.json
+A	postcss.config.mjs
+A	public/file.svg
+A	public/globe.svg
+A	public/next.svg
+A	public/vercel.svg
+A	public/window.svg
+A	src/context/AuthContext.tsx
+A	src/lib/firebase.ts
+A	src/lib/firebaseAdmin.ts
+A	tsconfig.json
