@@ -553,21 +553,21 @@ const paymentResponse = await fetch(
   }
 );
 
-      const paymentData =
-        (await paymentResponse.json()) as CreatePreferenceResponse;
+const paymentData =
+  (await paymentResponse.json()) as CreatePreferenceResponse;
 
-      if (!paymentResponse.ok || !paymentData.success) {
-        throw new Error(
-          paymentData.message || "Não foi possível iniciar o pagamento do capitão."
-        );
-      }
+if (!paymentResponse.ok || !paymentData.success) {
+  throw new Error(
+    paymentData.message || "Não foi possível iniciar o pagamento do capitão."
+  );
+}
 
-      if (!paymentData.checkoutUrl) {
-        throw new Error("O checkout do capitão não retornou uma URL válida.");
-      }
+if (!paymentData.checkoutUrl) {
+  throw new Error("O checkout do capitão não retornou uma URL válida.");
+}
 
-      setMessage("Redirecionando para o pagamento do capitão...");
-      window.location.assign(paymentData.checkoutUrl);
+setMessage("Redirecionando para o pagamento do capitão...");
+window.location.assign(paymentData.checkoutUrl);
     } catch (err) {
       console.error("Erro ao criar equipe e iniciar pagamento:", err);
       setMessage(null);
