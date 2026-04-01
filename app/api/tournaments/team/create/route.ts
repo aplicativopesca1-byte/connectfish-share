@@ -6,12 +6,6 @@ import { adminAuth } from "../../../../../src/lib/firebaseAdminAuth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type CaptainInput = {
-  userId?: string;
-  name?: string;
-  email?: string | null;
-};
-
 type MemberInput = {
   userId?: string;
   name?: string;
@@ -21,7 +15,11 @@ type MemberInput = {
 type RequestBody = {
   tournamentId?: string;
   teamName?: string;
-  captain?: CaptainInput;
+  captain?: {
+    userId?: string;
+    name?: string;
+    email?: string | null;
+  };
   members?: MemberInput[];
   source?: string | null;
 };
@@ -203,22 +201,17 @@ export async function POST(request: NextRequest) {
     const body = (await request.json().catch(() => ({}))) as RequestBody;
 
     const tournamentId = compactSpaces(body.tournamentId);
-    const captainUserId = compactSpaces(body.captain?.userId);
     const teamName = normalizeTeamName(body.teamName);
     const source = compactSpaces(body.source || "public_tournament_web");
+
+    const requestedCaptainUserId = compactSpaces(body.captain?.userId);
+    const captainUserId = authenticatedUserId;
 
     const rawMembers: MemberInput[] = Array.isArray(body.members) ? body.members : [];
 
     if (!tournamentId) {
       return NextResponse.json(
         { success: false, message: "tournamentId é obrigatório." },
-        { status: 400 }
-      );
-    }
-
-    if (!captainUserId) {
-      return NextResponse.json(
-        { success: false, message: "Capitão é obrigatório." },
         { status: 400 }
       );
     }
@@ -230,6 +223,16 @@ export async function POST(request: NextRequest) {
           message: "Informe um nome de equipe válido com pelo menos 3 caracteres.",
         },
         { status: 400 }
+      );
+    }
+
+    if (requestedCaptainUserId && requestedCaptainUserId !== authenticatedUserId) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "O capitão da equipe deve ser o usuário autenticado.",
+        },
+        { status: 403 }
       );
     }
 
@@ -284,7 +287,7 @@ export async function POST(request: NextRequest) {
 
     if (!captain) {
       return NextResponse.json(
-        { success: false, message: "Capitão não encontrado." },
+        { success: false, message: "Usuário autenticado não encontrado." },
         { status: 404 }
       );
     }
