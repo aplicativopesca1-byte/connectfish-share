@@ -77,11 +77,7 @@ function isAllowedInviteStatus(value: unknown) {
 
 function isAllowedRegistrationStatus(value: unknown) {
   const status = normalizeStatus(value);
-  return (
-    status === "awaiting_payment" ||
-    status === "payment_failed" ||
-    status === "invited"
-  );
+  return status === "awaiting_payment" || status === "payment_failed";
 }
 
 async function getAuthenticatedUserId(request: NextRequest) {
@@ -248,6 +244,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const role = normalizeStatus(memberData.role);
+    if (role !== "member") {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "Este checkout é exclusivo para membros convidados. O capitão deve usar o fluxo principal de pagamento.",
+        },
+        { status: 409 }
+      );
+    }
+
     const inviteStatus = normalizeStatus(memberData.inviteStatus);
     if (!isAllowedInviteStatus(inviteStatus)) {
       return NextResponse.json(
@@ -383,6 +391,7 @@ export async function POST(request: NextRequest) {
         username,
         teamName,
         source,
+        role: "member",
       },
     };
 
@@ -418,10 +427,7 @@ export async function POST(request: NextRequest) {
       });
 
       await memberRef.update({
-        registrationStatus:
-          normalizeStatus(memberData.registrationStatus) === "confirmed"
-            ? "confirmed"
-            : "payment_failed",
+        registrationStatus: "payment_failed",
         paymentStatus: "error",
         paymentStatusDetail: "preference_creation_failed",
         paymentStartedAt: FieldValue.serverTimestamp(),
@@ -437,7 +443,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const checkoutUrl = mpData.init_point ?? mpData.sandbox_init_point ?? null;
+    const checkoutUrl = mpData.sandbox_init_point ?? mpData.init_point ?? null;
 
     await memberRef.update({
       registrationStatus: "awaiting_payment",
