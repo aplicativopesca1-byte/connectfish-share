@@ -538,7 +538,7 @@ export default function TournamentPublicClient({ slug }: Props) {
       setMessage("Equipe criada. Preparando o pagamento do capitão...");
 
 const paymentResponse = await fetch(
- "/api/mercadopago/create-preference"
+  "/api/mercadopago/create-preference",
   {
     method: "POST",
     credentials: "include",
@@ -548,7 +548,6 @@ const paymentResponse = await fetch(
     body: JSON.stringify({
       tournamentId: tournament.id,
       teamId: createTeamData.teamId,
-      userId: uid,
       source: "public_tournament_web",
     }),
   }
