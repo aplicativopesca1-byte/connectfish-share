@@ -215,7 +215,9 @@ export async function POST(request: NextRequest) {
     const tournamentTitle = compactSpaces(tournamentData.title || "Torneio");
     const tournamentSlug = compactSpaces(tournamentData.slug) || null;
     const teamName = compactSpaces(teamData.teamName || "Equipe");
-    const username = compactSpaces(userData.username).toLowerCase();
+    const username = userData.username
+  ? compactSpaces(userData.username).toLowerCase()
+  : "";
     const email = compactSpaces(userData.email).toLowerCase() || null;
     const displayName =
       compactSpaces(userData.displayName) ||
@@ -239,12 +241,7 @@ export async function POST(request: NextRequest) {
 
     const isCaptain = role === "captain";
 
-    const externalReference = buildExternalReference({
-      tournamentId,
-      teamId,
-      userId,
-      role,
-    });
+    const externalReference = `tournament-${tournamentId}-team-${teamId}-user-${userId}-role-${role}`;
 
     const tournamentPublicPath = tournamentSlug || tournamentId;
 
@@ -259,7 +256,9 @@ export async function POST(request: NextRequest) {
           title: isCaptain
             ? `Inscrição do capitão - ${tournamentTitle}`
             : `Inscrição individual - ${tournamentTitle}`,
-          description: `Equipe ${teamName}${username ? ` • @${username}` : ""}`,
+          description: username
+  ? `Equipe ${teamName} - @${username}`
+  : `Equipe ${teamName}`,
           quantity: 1,
           currency_id: currency,
           unit_price: amount,
