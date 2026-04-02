@@ -107,11 +107,6 @@ function isBlockedPaymentStatus(value: unknown) {
   return normalizeStatus(value) === "approved";
 }
 
-function isPendingLikePaymentStatus(value: unknown) {
-  const status = normalizeStatus(value);
-  return status === "pending" || status === "in_process";
-}
-
 function isAllowedInviteStatus(value: unknown) {
   return normalizeStatus(value) === "accepted";
 }
@@ -263,7 +258,8 @@ export async function POST(request: NextRequest) {
     const teamData = (teamSnap.data() || {}) as TeamDoc;
     const memberData = (memberSnap.data() || {}) as TeamMemberDoc;
     const userData = (userSnap.data() || {}) as UserDoc;
-    const tournamentData = (tournamentSnap.data() || {}) as Record<string, unknown>;
+    const tournamentData =
+      (tournamentSnap.data() || {}) as Record<string, unknown>;
 
     const teamTournamentId = compactSpaces(teamData.tournamentId);
     if (teamTournamentId !== tournamentId) {
@@ -327,7 +323,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          message: "Este capitão não está em um estado válido para iniciar pagamento.",
+          message:
+            "Este capitão não está em um estado válido para iniciar pagamento.",
         },
         { status: 409 }
       );
@@ -383,28 +380,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const existingPreferenceId = compactSpaces(memberData.preferenceId) || null;
-    const existingCheckoutUrl = compactSpaces(memberData.checkoutUrl) || null;
-
-    if (
-      existingPreferenceId &&
-      existingCheckoutUrl &&
-      isPendingLikePaymentStatus(paymentStatus)
-    ) {
-      return NextResponse.json(
-        {
-          success: true,
-          reused: true,
-          teamId,
-          userId,
-          preferenceId: existingPreferenceId,
-          checkoutUrl: existingCheckoutUrl,
-          message: "Pagamento do capitão já iniciado anteriormente.",
-        },
-        { status: 200 }
-      );
-    }
-
     const externalReference = buildExternalReference({
       tournamentId,
       teamId,
@@ -453,6 +428,19 @@ export async function POST(request: NextRequest) {
       },
     };
 
+    console.log("CAPTAIN PAYMENT START", {
+      authenticatedUserId,
+      tournamentId,
+      teamId,
+      role,
+      inviteStatus,
+      registrationStatus,
+      paymentStatus,
+      email,
+      externalReference,
+      source,
+    });
+
     const mpResponse = await fetch(
       "https://api.mercadopago.com/checkout/preferences",
       {
@@ -490,6 +478,9 @@ export async function POST(request: NextRequest) {
         paymentStatusDetail: "preference_creation_failed",
         paymentStartedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
+        preferenceId: null,
+        externalReference: null,
+        checkoutUrl: null,
       });
 
       return NextResponse.json(
@@ -503,8 +494,18 @@ export async function POST(request: NextRequest) {
 
     const checkoutUrl = mpData.sandbox_init_point ?? mpData.init_point ?? null;
 
+    console.log("CAPTAIN PAYMENT PREFERENCE CREATED", {
+      authenticatedUserId,
+      tournamentId,
+      teamId,
+      preferenceId: mpData.id,
+      checkoutUrl,
+      hasSandboxUrl: !!mpData.sandbox_init_point,
+      hasInitPoint: !!mpData.init_point,
+    });
+
     await memberRef.update({
-      registrationStatus: "awaiting_payment",
+      registrationStatus: "checkout_created",
       paymentStatus: "pending",
       paymentStatusDetail: null,
       paymentProvider: "mercado_pago",
