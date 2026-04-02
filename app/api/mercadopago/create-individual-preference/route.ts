@@ -54,15 +54,6 @@ function getMemberDocId(teamId: string, userId: string) {
   return `${teamId}_${userId}`;
 }
 
-function buildExternalReference(params: {
-  tournamentId: string;
-  teamId: string;
-  userId: string;
-  role: string;
-}) {
-  return `tournament:${params.tournamentId}:team:${params.teamId}:user:${params.userId}:role:${params.role}`;
-}
-
 async function getAuthenticatedUserId(request: NextRequest) {
   try {
     const authHeader = request.headers.get("authorization") || "";
@@ -97,7 +88,10 @@ export async function POST(request: NextRequest) {
     const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
     if (!accessToken) {
       return NextResponse.json(
-        { success: false, message: "MERCADO_PAGO_ACCESS_TOKEN não configurado." },
+        {
+          success: false,
+          message: "MERCADO_PAGO_ACCESS_TOKEN não configurado.",
+        },
         { status: 500 }
       );
     }
@@ -105,7 +99,10 @@ export async function POST(request: NextRequest) {
     const baseUrl = getBaseUrl();
     if (!baseUrl) {
       return NextResponse.json(
-        { success: false, message: "APP_URL não configurado." },
+        {
+          success: false,
+          message: "APP_URL não configurado.",
+        },
         { status: 500 }
       );
     }
@@ -113,7 +110,10 @@ export async function POST(request: NextRequest) {
     const authenticatedUserId = await getAuthenticatedUserId(request);
     if (!authenticatedUserId) {
       return NextResponse.json(
-        { success: false, message: "Usuário não autenticado." },
+        {
+          success: false,
+          message: "Usuário não autenticado.",
+        },
         { status: 401 }
       );
     }
@@ -126,7 +126,10 @@ export async function POST(request: NextRequest) {
 
     if (!tournamentId || !teamId) {
       return NextResponse.json(
-        { success: false, message: "tournamentId e teamId são obrigatórios." },
+        {
+          success: false,
+          message: "tournamentId e teamId são obrigatórios.",
+        },
         { status: 400 }
       );
     }
@@ -135,7 +138,9 @@ export async function POST(request: NextRequest) {
 
     const tournamentRef = db.collection("tournaments").doc(tournamentId);
     const teamRef = db.collection("tournamentTeams").doc(teamId);
-    const memberRef = db.collection("tournamentTeamMembers").doc(getMemberDocId(teamId, userId));
+    const memberRef = db
+      .collection("tournamentTeamMembers")
+      .doc(getMemberDocId(teamId, userId));
     const userRef = db.collection("users").doc(userId);
 
     const [tournamentSnap, teamSnap, memberSnap, userSnap] = await Promise.all([
@@ -147,28 +152,40 @@ export async function POST(request: NextRequest) {
 
     if (!tournamentSnap.exists) {
       return NextResponse.json(
-        { success: false, message: "Torneio não encontrado." },
+        {
+          success: false,
+          message: "Torneio não encontrado.",
+        },
         { status: 404 }
       );
     }
 
     if (!teamSnap.exists) {
       return NextResponse.json(
-        { success: false, message: "Equipe não encontrada." },
+        {
+          success: false,
+          message: "Equipe não encontrada.",
+        },
         { status: 404 }
       );
     }
 
     if (!memberSnap.exists) {
       return NextResponse.json(
-        { success: false, message: "Participante da equipe não encontrado." },
+        {
+          success: false,
+          message: "Participante da equipe não encontrado.",
+        },
         { status: 404 }
       );
     }
 
     if (!userSnap.exists) {
       return NextResponse.json(
-        { success: false, message: "Usuário não encontrado." },
+        {
+          success: false,
+          message: "Usuário não encontrado.",
+        },
         { status: 404 }
       );
     }
@@ -178,10 +195,37 @@ export async function POST(request: NextRequest) {
     const memberData = memberSnap.data() as Record<string, unknown>;
     const userData = userSnap.data() as Record<string, unknown>;
 
+    const teamTournamentId = compactSpaces(teamData.tournamentId);
+    if (teamTournamentId !== tournamentId) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "A equipe informada não pertence ao torneio informado.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const memberTournamentId = compactSpaces(memberData.tournamentId);
+    const memberUserId = compactSpaces(memberData.userId);
+
+    if (memberTournamentId !== tournamentId || memberUserId !== userId) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "O participante informado não pertence a esta equipe.",
+        },
+        { status: 400 }
+      );
+    }
+
     const role = normalizeStatus(memberData.role);
     if (role !== "captain" && role !== "member") {
       return NextResponse.json(
-        { success: false, message: "Papel do participante inválido." },
+        {
+          success: false,
+          message: "Papel do participante inválido.",
+        },
         { status: 409 }
       );
     }
@@ -189,7 +233,10 @@ export async function POST(request: NextRequest) {
     const inviteStatus = normalizeStatus(memberData.inviteStatus);
     if (inviteStatus !== "accepted") {
       return NextResponse.json(
-        { success: false, message: "Este participante ainda não está apto para pagar." },
+        {
+          success: false,
+          message: "Este participante ainda não está apto para pagar.",
+        },
         { status: 409 }
       );
     }
@@ -197,15 +244,25 @@ export async function POST(request: NextRequest) {
     const paymentStatus = normalizeStatus(memberData.paymentStatus);
     if (paymentStatus === "approved") {
       return NextResponse.json(
-        { success: false, message: "Este participante já possui pagamento aprovado." },
+        {
+          success: false,
+          message: "Este participante já possui pagamento aprovado.",
+        },
         { status: 409 }
       );
     }
 
     const registrationStatus = normalizeStatus(memberData.registrationStatus);
-    if (registrationStatus !== "awaiting_payment" && registrationStatus !== "payment_failed") {
+    if (
+      registrationStatus !== "awaiting_payment" &&
+      registrationStatus !== "payment_failed"
+    ) {
       return NextResponse.json(
-        { success: false, message: "Este participante não está em um estado válido para pagamento." },
+        {
+          success: false,
+          message:
+            "Este participante não está em um estado válido para pagamento.",
+        },
         { status: 409 }
       );
     }
@@ -215,10 +272,15 @@ export async function POST(request: NextRequest) {
     const tournamentTitle = compactSpaces(tournamentData.title || "Torneio");
     const tournamentSlug = compactSpaces(tournamentData.slug) || null;
     const teamName = compactSpaces(teamData.teamName || "Equipe");
+
     const username = userData.username
-  ? compactSpaces(userData.username).toLowerCase()
-  : "";
-    const email = compactSpaces(userData.email).toLowerCase() || null;
+      ? compactSpaces(userData.username).toLowerCase()
+      : "";
+
+    const email = userData.email
+      ? compactSpaces(userData.email).toLowerCase()
+      : null;
+
     const displayName =
       compactSpaces(userData.displayName) ||
       compactSpaces(userData.name) ||
@@ -227,14 +289,20 @@ export async function POST(request: NextRequest) {
 
     if (amount <= 0) {
       return NextResponse.json(
-        { success: false, message: "Valor individual inválido." },
+        {
+          success: false,
+          message: "Valor individual inválido.",
+        },
         { status: 400 }
       );
     }
 
-    if (!email) {
+    if (!email || !email.includes("@")) {
       return NextResponse.json(
-        { success: false, message: "Usuário sem e-mail válido para pagamento." },
+        {
+          success: false,
+          message: "Usuário sem e-mail válido para pagamento.",
+        },
         { status: 400 }
       );
     }
@@ -254,18 +322,18 @@ export async function POST(request: NextRequest) {
         {
           id: `tournament-${tournamentId}-team-${teamId}-user-${userId}`,
           title: isCaptain
-            ? `Inscrição do capitão - ${tournamentTitle}`
-            : `Inscrição individual - ${tournamentTitle}`,
+            ? `Inscricao do capitao - ${tournamentTitle}`
+            : `Inscricao individual - ${tournamentTitle}`,
           description: username
-  ? `Equipe ${teamName} - @${username}`
-  : `Equipe ${teamName}`,
+            ? `Equipe ${teamName} - @${username}`
+            : `Equipe ${teamName}`,
           quantity: 1,
           currency_id: currency,
           unit_price: amount,
         },
       ],
       payer: {
-        name: displayName,
+        name: displayName || "Participante",
         email,
       },
       external_reference: externalReference,
@@ -291,6 +359,11 @@ export async function POST(request: NextRequest) {
       },
     };
 
+    console.log(
+      "MP PAYLOAD DEBUG",
+      JSON.stringify(preferencePayload, null, 2)
+    );
+
     const mpResponse = await fetch(
       "https://api.mercadopago.com/checkout/preferences",
       {
@@ -306,6 +379,11 @@ export async function POST(request: NextRequest) {
 
     const mpData =
       (await mpResponse.json().catch(() => null)) as MercadoPagoPreferenceResponse | null;
+
+    console.log("MP RESPONSE DEBUG", {
+      status: mpResponse.status,
+      body: mpData,
+    });
 
     if (
       !mpResponse.ok ||
@@ -324,7 +402,10 @@ export async function POST(request: NextRequest) {
       });
 
       return NextResponse.json(
-        { success: false, message: "Não foi possível criar o checkout." },
+        {
+          success: false,
+          message: "Não foi possível criar o checkout.",
+        },
         { status: 500 }
       );
     }
