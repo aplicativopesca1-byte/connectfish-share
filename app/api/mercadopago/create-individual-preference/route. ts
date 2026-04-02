@@ -1,0 +1,373 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { FieldValue } from "firebase-admin/firestore";
+import { adminDb } from "../../../../src/lib/firebaseAdmin";
+import { adminAuth } from "../../../../src/lib/firebaseAdminAuth";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+type RequestBody = {
+  tournamentId?: string;
+  teamId?: string;
+  source?: string | null;
+};
+
+type MercadoPagoPreferenceResponse = {
+  id?: string;
+  init_point?: string;
+  sandbox_init_point?: string;
+};
+
+function compactSpaces(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeStatus(value: unknown) {
+  return compactSpaces(value).toLowerCase();
+}
+
+function normalizeMoney(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Number(parsed.toFixed(2));
+}
+
+function normalizeCurrency(value: unknown) {
+  return compactSpaces(value).toUpperCase() || "BRL";
+}
+
+function getBaseUrl() {
+  const envBaseUrl =
+    process.env.APP_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.SITE_URL ||
+    process.env.NEXT_PUBLIC_SITE_URL;
+
+  if (envBaseUrl && envBaseUrl.trim()) {
+    return envBaseUrl.replace(/\/+$/, "");
+  }
+
+  return null;
+}
+
+function getMemberDocId(teamId: string, userId: string) {
+  return `${teamId}_${userId}`;
+}
+
+function buildExternalReference(params: {
+  tournamentId: string;
+  teamId: string;
+  userId: string;
+  role: string;
+}) {
+  return `tournament:${params.tournamentId}:team:${params.teamId}:user:${params.userId}:role:${params.role}`;
+}
+
+async function getAuthenticatedUserId(request: NextRequest) {
+  try {
+    const authHeader = request.headers.get("authorization") || "";
+
+    if (authHeader.toLowerCase().startsWith("bearer ")) {
+      const token = authHeader.slice(7).trim();
+
+      if (token) {
+        const decoded = await adminAuth().verifyIdToken(token, true);
+        return decoded.uid || null;
+      }
+    }
+  } catch (error) {
+    console.error("Erro Bearer token:", error);
+  }
+
+  try {
+    const raw = request.cookies.get("__session")?.value;
+    if (!raw) return null;
+
+    const sessionCookie = raw.includes("%") ? decodeURIComponent(raw) : raw;
+    const decoded = await adminAuth().verifySessionCookie(sessionCookie, true);
+    return decoded.uid || null;
+  } catch (error) {
+    console.error("Erro session cookie:", error);
+    return null;
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
+    if (!accessToken) {
+      return NextResponse.json(
+        { success: false, message: "MERCADO_PAGO_ACCESS_TOKEN não configurado." },
+        { status: 500 }
+      );
+    }
+
+    const baseUrl = getBaseUrl();
+    if (!baseUrl) {
+      return NextResponse.json(
+        { success: false, message: "APP_URL não configurado." },
+        { status: 500 }
+      );
+    }
+
+    const authenticatedUserId = await getAuthenticatedUserId(request);
+    if (!authenticatedUserId) {
+      return NextResponse.json(
+        { success: false, message: "Usuário não autenticado." },
+        { status: 401 }
+      );
+    }
+
+    const body = (await request.json().catch(() => ({}))) as RequestBody;
+    const tournamentId = compactSpaces(body.tournamentId);
+    const teamId = compactSpaces(body.teamId);
+    const source = compactSpaces(body.source || "individual_checkout");
+    const userId = authenticatedUserId;
+
+    if (!tournamentId || !teamId) {
+      return NextResponse.json(
+        { success: false, message: "tournamentId e teamId são obrigatórios." },
+        { status: 400 }
+      );
+    }
+
+    const db = adminDb();
+
+    const tournamentRef = db.collection("tournaments").doc(tournamentId);
+    const teamRef = db.collection("tournamentTeams").doc(teamId);
+    const memberRef = db.collection("tournamentTeamMembers").doc(getMemberDocId(teamId, userId));
+    const userRef = db.collection("users").doc(userId);
+
+    const [tournamentSnap, teamSnap, memberSnap, userSnap] = await Promise.all([
+      tournamentRef.get(),
+      teamRef.get(),
+      memberRef.get(),
+      userRef.get(),
+    ]);
+
+    if (!tournamentSnap.exists) {
+      return NextResponse.json(
+        { success: false, message: "Torneio não encontrado." },
+        { status: 404 }
+      );
+    }
+
+    if (!teamSnap.exists) {
+      return NextResponse.json(
+        { success: false, message: "Equipe não encontrada." },
+        { status: 404 }
+      );
+    }
+
+    if (!memberSnap.exists) {
+      return NextResponse.json(
+        { success: false, message: "Participante da equipe não encontrado." },
+        { status: 404 }
+      );
+    }
+
+    if (!userSnap.exists) {
+      return NextResponse.json(
+        { success: false, message: "Usuário não encontrado." },
+        { status: 404 }
+      );
+    }
+
+    const tournamentData = tournamentSnap.data() as Record<string, unknown>;
+    const teamData = teamSnap.data() as Record<string, unknown>;
+    const memberData = memberSnap.data() as Record<string, unknown>;
+    const userData = userSnap.data() as Record<string, unknown>;
+
+    const role = normalizeStatus(memberData.role);
+    if (role !== "captain" && role !== "member") {
+      return NextResponse.json(
+        { success: false, message: "Papel do participante inválido." },
+        { status: 409 }
+      );
+    }
+
+    const inviteStatus = normalizeStatus(memberData.inviteStatus);
+    if (inviteStatus !== "accepted") {
+      return NextResponse.json(
+        { success: false, message: "Este participante ainda não está apto para pagar." },
+        { status: 409 }
+      );
+    }
+
+    const paymentStatus = normalizeStatus(memberData.paymentStatus);
+    if (paymentStatus === "approved") {
+      return NextResponse.json(
+        { success: false, message: "Este participante já possui pagamento aprovado." },
+        { status: 409 }
+      );
+    }
+
+    const registrationStatus = normalizeStatus(memberData.registrationStatus);
+    if (registrationStatus !== "awaiting_payment" && registrationStatus !== "payment_failed") {
+      return NextResponse.json(
+        { success: false, message: "Este participante não está em um estado válido para pagamento." },
+        { status: 409 }
+      );
+    }
+
+    const amount = normalizeMoney(memberData.amount);
+    const currency = normalizeCurrency(memberData.currency);
+    const tournamentTitle = compactSpaces(tournamentData.title || "Torneio");
+    const tournamentSlug = compactSpaces(tournamentData.slug) || null;
+    const teamName = compactSpaces(teamData.teamName || "Equipe");
+    const username = compactSpaces(userData.username).toLowerCase();
+    const email = compactSpaces(userData.email).toLowerCase() || null;
+    const displayName =
+      compactSpaces(userData.displayName) ||
+      compactSpaces(userData.name) ||
+      username ||
+      "Participante";
+
+    if (amount <= 0) {
+      return NextResponse.json(
+        { success: false, message: "Valor individual inválido." },
+        { status: 400 }
+      );
+    }
+
+    if (!email) {
+      return NextResponse.json(
+        { success: false, message: "Usuário sem e-mail válido para pagamento." },
+        { status: 400 }
+      );
+    }
+
+    const isCaptain = role === "captain";
+
+    const externalReference = buildExternalReference({
+      tournamentId,
+      teamId,
+      userId,
+      role,
+    });
+
+    const tournamentPublicPath = tournamentSlug || tournamentId;
+
+    const successUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/success?teamId=${teamId}&userId=${userId}`;
+    const failureUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/failure?teamId=${teamId}&userId=${userId}`;
+    const pendingUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/pending?teamId=${teamId}&userId=${userId}`;
+
+    const preferencePayload = {
+      items: [
+        {
+          id: `tournament-${tournamentId}-team-${teamId}-user-${userId}`,
+          title: isCaptain
+            ? `Inscrição do capitão - ${tournamentTitle}`
+            : `Inscrição individual - ${tournamentTitle}`,
+          description: `Equipe ${teamName}${username ? ` • @${username}` : ""}`,
+          quantity: 1,
+          currency_id: currency,
+          unit_price: amount,
+        },
+      ],
+      payer: {
+        name: displayName,
+        email,
+      },
+      external_reference: externalReference,
+      notification_url: isCaptain
+        ? `${baseUrl}/api/mercadopago/webhook`
+        : `${baseUrl}/api/mercadopago/member-webhook`,
+      back_urls: {
+        success: successUrl,
+        failure: failureUrl,
+        pending: pendingUrl,
+      },
+      auto_return: "approved",
+      statement_descriptor: "CONNECTFISH",
+      metadata: {
+        tournamentId,
+        tournamentSlug,
+        teamId,
+        userId,
+        username,
+        teamName,
+        source,
+        role,
+      },
+    };
+
+    const mpResponse = await fetch(
+      "https://api.mercadopago.com/checkout/preferences",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(preferencePayload),
+        cache: "no-store",
+      }
+    );
+
+    const mpData =
+      (await mpResponse.json().catch(() => null)) as MercadoPagoPreferenceResponse | null;
+
+    if (
+      !mpResponse.ok ||
+      !mpData?.id ||
+      (!mpData.init_point && !mpData.sandbox_init_point)
+    ) {
+      await memberRef.update({
+        registrationStatus: "payment_failed",
+        paymentStatus: "error",
+        paymentStatusDetail: "preference_creation_failed",
+        paymentStartedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+        preferenceId: null,
+        externalReference: null,
+        checkoutUrl: null,
+      });
+
+      return NextResponse.json(
+        { success: false, message: "Não foi possível criar o checkout." },
+        { status: 500 }
+      );
+    }
+
+    const checkoutUrl = mpData.sandbox_init_point ?? mpData.init_point ?? null;
+
+    await memberRef.update({
+      registrationStatus: "awaiting_payment",
+      paymentStatus: "pending",
+      paymentStatusDetail: null,
+      paymentProvider: "mercado_pago",
+      preferenceId: mpData.id,
+      externalReference,
+      payerEmail: email,
+      paymentStartedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      checkoutUrl,
+      source,
+    });
+
+    return NextResponse.json({
+      success: true,
+      teamId,
+      userId,
+      preferenceId: mpData.id,
+      externalReference,
+      checkoutUrl,
+      role,
+      message: isCaptain
+        ? "Checkout do capitão criado com sucesso."
+        : "Checkout individual criado com sucesso.",
+    });
+  } catch (error) {
+    console.error("Erro interno ao criar checkout individual:", error);
+
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Erro interno ao iniciar pagamento individual.",
+        error: error instanceof Error ? error.message : "Erro desconhecido",
+      },
+      { status: 500 }
+    );
+  }
+}
