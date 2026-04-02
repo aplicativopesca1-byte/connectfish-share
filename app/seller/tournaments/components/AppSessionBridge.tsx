@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 
-export default function AppSessionBridge() {
+type Props = {
+  onProcessingChange?: (processing: boolean) => void;
+};
+
+export default function AppSessionBridge({ onProcessingChange }: Props) {
   const [processing, setProcessing] = useState(false);
 
   useEffect(() => {
@@ -19,26 +23,28 @@ export default function AppSessionBridge() {
       console.log("[AppSessionBridge] hash:", window.location.hash);
       console.log("[AppSessionBridge] has appToken:", !!appToken);
 
-      if (!appToken) return;
+      if (!appToken) {
+        onProcessingChange?.(false);
+        return;
+      }
 
       setProcessing(true);
+      onProcessingChange?.(true);
 
       try {
-       // 1. limpa sessão antiga
-await fetch("/api/sessionLogout", {
-  method: "POST",
-  credentials: "include",
-});
+        await fetch("/api/sessionLogout", {
+          method: "POST",
+          credentials: "include",
+        });
 
-// 2. cria nova sessão
-const response = await fetch("/api/sessionLogin", {
-  method: "POST",
-  credentials: "include",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({ idToken: appToken }),
-});
+        const response = await fetch("/api/sessionLogin", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ idToken: appToken }),
+        });
 
         const data = await response.json().catch(() => ({}));
 
@@ -56,8 +62,10 @@ const response = await fetch("/api/sessionLogin", {
         }
       } catch (error) {
         console.error("[AppSessionBridge] erro:", error);
+
         if (!cancelled) {
           setProcessing(false);
+          onProcessingChange?.(false);
         }
       }
     }
@@ -67,7 +75,7 @@ const response = await fetch("/api/sessionLogin", {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [onProcessingChange]);
 
   if (!processing) return null;
 
