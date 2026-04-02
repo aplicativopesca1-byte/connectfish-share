@@ -249,6 +249,7 @@ export default function TournamentPublicClient({ slug }: Props) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [searchingMembers, setSearchingMembers] = useState(false);
+  const [bridgeProcessing, setBridgeProcessing] = useState(false);
 
   const [tournament, setTournament] = useState<TournamentPublic | null>(null);
 
@@ -275,7 +276,11 @@ export default function TournamentPublicClient({ slug }: Props) {
 
   const isLoggedIn = !!uid;
   const isFormDisabled =
-    saving || !isLoggedIn || !!authLoading || !!registrationBlockedMessage;
+    saving ||
+    bridgeProcessing ||
+    !isLoggedIn ||
+    !!authLoading ||
+    !!registrationBlockedMessage;
 
   const captainDisplayName = useMemo(() => {
     if (!isLoggedIn) return "Faça login para continuar";
@@ -289,7 +294,7 @@ export default function TournamentPublicClient({ slug }: Props) {
   }, [slug, tournamentIdFromUrl]);
 
   useEffect(() => {
-    if (!isLoggedIn) {
+    if (!isLoggedIn || bridgeProcessing) {
       setMemberResults([]);
       return;
     }
@@ -305,7 +310,7 @@ export default function TournamentPublicClient({ slug }: Props) {
     }, 250);
 
     return () => clearTimeout(timeout);
-  }, [memberQuery, isLoggedIn, selectedMembers, uid]);
+  }, [memberQuery, isLoggedIn, selectedMembers, uid, bridgeProcessing]);
 
   function clearFeedback() {
     if (error) setError(null);
@@ -468,6 +473,10 @@ export default function TournamentPublicClient({ slug }: Props) {
   function validateForm() {
     if (!tournament) return "Torneio inválido.";
 
+    if (bridgeProcessing) {
+      return "Aguarde a validação do acesso vindo do app antes de continuar.";
+    }
+
     if (!isLoggedIn || !uid) {
       return "Para realizar a inscrição, é obrigatório ter uma conta ConnectFish.";
     }
@@ -493,6 +502,11 @@ export default function TournamentPublicClient({ slug }: Props) {
   async function handleCreateTeamAndPay() {
     if (!tournament || !uid) return;
 
+    if (bridgeProcessing) {
+      setError("Aguarde a validação do acesso vindo do app antes de continuar.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
     setMessage(null);
@@ -514,15 +528,15 @@ export default function TournamentPublicClient({ slug }: Props) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-  tournamentId: tournament.id,
-  teamName: compactSpaces(teamName),
-  members: selectedMembers.map((member) => ({
-    userId: member.userId,
-    name: member.username || member.email || "",
-    email: member.email || null,
-  })),
-  source: "public_tournament_web",
-}),
+          tournamentId: tournament.id,
+          teamName: compactSpaces(teamName),
+          members: selectedMembers.map((member) => ({
+            userId: member.userId,
+            name: member.username || member.email || "",
+            email: member.email || null,
+          })),
+          source: "public_tournament_web",
+        }),
       });
 
       const createTeamData = (await createTeamResponse.json()) as CreateTeamResponse;
@@ -537,37 +551,37 @@ export default function TournamentPublicClient({ slug }: Props) {
 
       setMessage("Equipe criada. Preparando o pagamento do capitão...");
 
-const paymentResponse = await fetch(
-  "/api/mercadopago/create-preference",
-  {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      tournamentId: tournament.id,
-      teamId: createTeamData.teamId,
-      source: "public_tournament_web",
-    }),
-  }
-);
+      const paymentResponse = await fetch(
+        "/api/mercadopago/create-preference",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            tournamentId: tournament.id,
+            teamId: createTeamData.teamId,
+            source: "public_tournament_web",
+          }),
+        }
+      );
 
-const paymentData =
-  (await paymentResponse.json()) as CreatePreferenceResponse;
+      const paymentData =
+        (await paymentResponse.json()) as CreatePreferenceResponse;
 
-if (!paymentResponse.ok || !paymentData.success) {
-  throw new Error(
-    paymentData.message || "Não foi possível iniciar o pagamento do capitão."
-  );
-}
+      if (!paymentResponse.ok || !paymentData.success) {
+        throw new Error(
+          paymentData.message || "Não foi possível iniciar o pagamento do capitão."
+        );
+      }
 
-if (!paymentData.checkoutUrl) {
-  throw new Error("O checkout do capitão não retornou uma URL válida.");
-}
+      if (!paymentData.checkoutUrl) {
+        throw new Error("O checkout do capitão não retornou uma URL válida.");
+      }
 
-setMessage("Redirecionando para o pagamento do capitão...");
-window.location.assign(paymentData.checkoutUrl);
+      setMessage("Redirecionando para o pagamento do capitão...");
+      window.location.assign(paymentData.checkoutUrl);
     } catch (err) {
       console.error("Erro ao criar equipe e iniciar pagamento:", err);
       setMessage(null);
@@ -585,7 +599,7 @@ window.location.assign(paymentData.checkoutUrl);
     return (
       <main style={styles.page}>
         <div style={styles.container}>
-          <AppSessionBridge />
+          <AppSessionBridge onProcessingChange={setBridgeProcessing} />
           <section style={styles.card}>
             <h1 style={styles.title}>Carregando torneio...</h1>
             <p style={styles.muted}>Aguarde enquanto buscamos os dados.</p>
@@ -599,7 +613,7 @@ window.location.assign(paymentData.checkoutUrl);
     return (
       <main style={styles.page}>
         <div style={styles.container}>
-          <AppSessionBridge />
+          <AppSessionBridge onProcessingChange={setBridgeProcessing} />
           <section style={styles.card}>
             <h1 style={styles.title}>Torneio indisponível</h1>
             <p style={styles.errorText}>{error}</p>
@@ -613,7 +627,7 @@ window.location.assign(paymentData.checkoutUrl);
     return (
       <main style={styles.page}>
         <div style={styles.container}>
-          <AppSessionBridge />
+          <AppSessionBridge onProcessingChange={setBridgeProcessing} />
           <section style={styles.card}>
             <h1 style={styles.title}>Torneio indisponível</h1>
             <p style={styles.errorText}>Torneio não encontrado.</p>
@@ -626,7 +640,13 @@ window.location.assign(paymentData.checkoutUrl);
   return (
     <main style={styles.page}>
       <div style={styles.container}>
-        <AppSessionBridge />
+        <AppSessionBridge onProcessingChange={setBridgeProcessing} />
+
+        {bridgeProcessing ? (
+          <div style={styles.bridgeNotice}>
+            Validando seu acesso vindo do app. Aguarde alguns segundos antes de continuar.
+          </div>
+        ) : null}
 
         <section style={styles.heroCard}>
           {tournament.coverImageUrl ? (
@@ -735,6 +755,16 @@ window.location.assign(paymentData.checkoutUrl);
                 <div style={styles.warningBox}>
                   <p style={styles.warningTitle}>Inscrições indisponíveis</p>
                   <p style={styles.warningText}>{registrationBlockedMessage}</p>
+                </div>
+              ) : null}
+
+              {bridgeProcessing ? (
+                <div style={styles.infoBox}>
+                  <p style={styles.infoBoxTitle}>Sincronizando acesso do app</p>
+                  <p style={styles.infoBoxText}>
+                    Estamos validando sua sessão web a partir do app. Assim que a
+                    sincronização terminar, a inscrição será liberada.
+                  </p>
                 </div>
               ) : null}
 
@@ -991,7 +1021,11 @@ window.location.assign(paymentData.checkoutUrl);
                     ...(isFormDisabled ? styles.disabledButton : {}),
                   }}
                 >
-                  {saving ? "Criando equipe..." : "Criar equipe e pagar inscrição do capitão"}
+                  {bridgeProcessing
+                    ? "Validando acesso vindo do app..."
+                    : saving
+                      ? "Criando equipe..."
+                      : "Criar equipe e pagar inscrição do capitão"}
                 </button>
 
                 {!isLoggedIn ? (
@@ -1230,6 +1264,7 @@ const styles: Record<string, CSSProperties> = {
   ruleText: {
     color: "#334155",
     lineHeight: 1.6,
+    fontSize: 15,
   },
   checkoutCard: {
     background: "#FFFFFF",
@@ -1237,25 +1272,24 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 24,
     padding: 24,
     boxShadow: "0 12px 30px rgba(15,23,42,0.06)",
-    display: "flex",
-    flexDirection: "column",
-    gap: 18,
+    position: "sticky",
+    top: 16,
   },
   checkoutTop: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "flex-start",
     gap: 16,
+    alignItems: "flex-start",
     flexWrap: "wrap",
   },
   checkoutEyebrow: {
     display: "inline-block",
-    marginBottom: 8,
     fontSize: 12,
-    fontWeight: 700,
-    color: "#2563EB",
-    textTransform: "uppercase",
+    fontWeight: 800,
     letterSpacing: 0.6,
+    textTransform: "uppercase",
+    color: "#0B3C5D",
+    marginBottom: 8,
   },
   checkoutTitle: {
     margin: 0,
@@ -1274,55 +1308,18 @@ const styles: Record<string, CSSProperties> = {
     display: "block",
     fontSize: 12,
     color: "#64748B",
-    marginBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
   priceValue: {
+    display: "block",
+    marginTop: 8,
     fontSize: 22,
-    fontWeight: 800,
+    lineHeight: 1.2,
     color: "#0F172A",
   },
-  warningBox: {
-    background: "#FFF7ED",
-    border: "1px solid #FED7AA",
-    borderRadius: 18,
-    padding: 16,
-  },
-  warningTitle: {
-    margin: 0,
-    fontSize: 15,
-    fontWeight: 800,
-    color: "#9A3412",
-  },
-  warningText: {
-    margin: "6px 0 0 0",
-    fontSize: 14,
-    color: "#9A3412",
-  },
-  loginBox: {
-    background: "#EFF6FF",
-    border: "1px solid #BFDBFE",
-    borderRadius: 18,
-    padding: 16,
-  },
-  loginTitle: {
-    margin: 0,
-    fontSize: 15,
-    fontWeight: 800,
-    color: "#1D4ED8",
-  },
-  loginText: {
-    margin: "8px 0 0 0",
-    fontSize: 14,
-    color: "#1E3A8A",
-    lineHeight: 1.6,
-  },
-  loginActions: {
-    display: "flex",
-    gap: 10,
-    flexWrap: "wrap",
-    marginTop: 14,
-  },
   checkoutSection: {
+    marginTop: 20,
     display: "flex",
     flexDirection: "column",
     gap: 12,
@@ -1333,20 +1330,46 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     color: "#0F172A",
   },
+  field: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: "#334155",
+  },
+  formGrid: {
+    display: "grid",
+    gridTemplateColumns: "1fr",
+    gap: 12,
+  },
+  input: {
+    width: "100%",
+    borderRadius: 14,
+    border: "1px solid rgba(15,23,42,0.12)",
+    background: "#FFFFFF",
+    padding: "12px 14px",
+    fontSize: 15,
+    outline: "none",
+    color: "#0F172A",
+    boxSizing: "border-box",
+  },
   captainCard: {
     display: "flex",
     alignItems: "center",
-    gap: 14,
-    padding: 14,
-    borderRadius: 18,
+    gap: 12,
     background: "#F8FAFC",
     border: "1px solid rgba(15,23,42,0.06)",
+    borderRadius: 18,
+    padding: 14,
   },
   captainAvatar: {
-    width: 46,
-    height: 46,
+    width: 44,
+    height: 44,
     borderRadius: 999,
-    background: "#0F172A",
+    background: "#0B3C5D",
     color: "#FFFFFF",
     display: "flex",
     alignItems: "center",
@@ -1361,48 +1384,21 @@ const styles: Record<string, CSSProperties> = {
     gap: 4,
   },
   captainName: {
-    fontSize: 15,
     color: "#0F172A",
+    fontSize: 15,
   },
   captainUsername: {
-    fontSize: 13,
     color: "#475569",
+    fontSize: 14,
   },
   captainMeta: {
-    fontSize: 12,
     color: "#64748B",
-  },
-  formGrid: {
-    display: "grid",
-    gridTemplateColumns: "1fr",
-    gap: 14,
-  },
-  field: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  },
-  label: {
     fontSize: 13,
-    fontWeight: 700,
-    color: "#334155",
-  },
-  input: {
-    width: "100%",
-    minHeight: 46,
-    borderRadius: 14,
-    border: "1px solid rgba(15,23,42,0.12)",
-    background: "#FFFFFF",
-    padding: "0 14px",
-    fontSize: 15,
-    color: "#0F172A",
-    outline: "none",
-    boxSizing: "border-box",
   },
   helperText: {
     margin: 0,
-    fontSize: 13,
     color: "#64748B",
+    fontSize: 14,
   },
   searchResults: {
     display: "flex",
@@ -1410,55 +1406,50 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
   },
   searchResultButton: {
-    width: "100%",
-    textAlign: "left",
     border: "1px solid rgba(15,23,42,0.08)",
     background: "#FFFFFF",
     borderRadius: 14,
-    padding: 12,
+    padding: "12px 14px",
+    textAlign: "left",
     cursor: "pointer",
     display: "flex",
     flexDirection: "column",
     gap: 4,
   },
   searchResultUsername: {
-    fontSize: 14,
-    fontWeight: 800,
     color: "#0F172A",
+    fontWeight: 700,
+    fontSize: 14,
   },
   searchResultMeta: {
-    fontSize: 13,
     color: "#64748B",
+    fontSize: 13,
   },
   selectedMembersBox: {
     background: "#F8FAFC",
     border: "1px solid rgba(15,23,42,0.06)",
     borderRadius: 18,
     padding: 14,
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
   },
   selectedMembersTitle: {
     margin: 0,
-    fontSize: 14,
-    fontWeight: 800,
     color: "#0F172A",
+    fontWeight: 800,
+    fontSize: 14,
   },
   selectedMembersList: {
+    marginTop: 10,
     display: "flex",
     flexDirection: "column",
     gap: 10,
   },
   selectedMemberRow: {
     display: "flex",
-    alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
-    padding: 12,
-    borderRadius: 14,
-    background: "#FFFFFF",
-    border: "1px solid rgba(15,23,42,0.06)",
+    gap: 12,
+    alignItems: "center",
+    padding: "10px 0",
+    borderBottom: "1px solid rgba(15,23,42,0.06)",
   },
   selectedMemberInfo: {
     display: "flex",
@@ -1466,22 +1457,20 @@ const styles: Record<string, CSSProperties> = {
     gap: 4,
   },
   selectedMemberUsername: {
-    fontSize: 14,
     color: "#0F172A",
+    fontWeight: 700,
+    fontSize: 14,
   },
   selectedMemberMeta: {
-    fontSize: 12,
     color: "#64748B",
+    fontSize: 13,
   },
   removeMemberButton: {
-    border: "1px solid rgba(239,68,68,0.2)",
-    background: "#FEF2F2",
+    border: "none",
+    background: "transparent",
     color: "#B91C1C",
-    borderRadius: 12,
-    padding: "8px 12px",
-    cursor: "pointer",
-    fontSize: 13,
     fontWeight: 700,
+    cursor: "pointer",
   },
   summaryCard: {
     background: "#F8FAFC",
@@ -1495,33 +1484,33 @@ const styles: Record<string, CSSProperties> = {
   summaryRow: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "center",
-    gap: 16,
+    gap: 12,
+    alignItems: "flex-start",
   },
   summaryRowTotal: {
     paddingTop: 10,
     borderTop: "1px solid rgba(15,23,42,0.08)",
   },
   summaryLabel: {
-    fontSize: 14,
     color: "#475569",
+    fontSize: 14,
   },
   summaryLabelHighlight: {
-    color: "#1D4ED8",
+    color: "#0B3C5D",
     fontWeight: 700,
   },
   summaryLabelTotal: {
-    fontWeight: 800,
     color: "#0F172A",
+    fontWeight: 800,
   },
   summaryValue: {
-    fontSize: 14,
     color: "#0F172A",
+    fontSize: 14,
     fontWeight: 700,
     textAlign: "right",
   },
   summaryValueHighlight: {
-    color: "#1D4ED8",
+    color: "#0B3C5D",
   },
   summaryValueTotal: {
     fontSize: 16,
@@ -1540,14 +1529,14 @@ const styles: Record<string, CSSProperties> = {
   },
   paymentInfoRow: {
     display: "flex",
-    alignItems: "flex-start",
     gap: 10,
+    alignItems: "flex-start",
   },
   paymentInfoDot: {
-    width: 22,
-    height: 22,
+    width: 24,
+    height: 24,
     borderRadius: 999,
-    background: "#0F172A",
+    background: "#0B3C5D",
     color: "#FFFFFF",
     display: "inline-flex",
     alignItems: "center",
@@ -1557,8 +1546,8 @@ const styles: Record<string, CSSProperties> = {
     flexShrink: 0,
   },
   paymentInfoText: {
-    fontSize: 14,
     color: "#334155",
+    fontSize: 14,
     lineHeight: 1.6,
   },
   miniRulesList: {
@@ -1576,67 +1565,140 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
   },
   miniRuleText: {
-    fontSize: 14,
     color: "#334155",
+    fontSize: 14,
     lineHeight: 1.6,
   },
   checkboxRow: {
+    marginTop: 20,
     display: "flex",
-    alignItems: "flex-start",
     gap: 10,
+    alignItems: "flex-start",
   },
   checkboxText: {
-    fontSize: 14,
     color: "#334155",
+    fontSize: 14,
     lineHeight: 1.6,
   },
   actionsColumn: {
+    marginTop: 18,
     display: "flex",
     flexDirection: "column",
-    gap: 10,
+    gap: 12,
   },
   primaryButton: {
-    minHeight: 48,
     border: "none",
-    borderRadius: 14,
-    background: "#0F172A",
+    borderRadius: 16,
+    background: "#0B3C5D",
     color: "#FFFFFF",
+    padding: "14px 18px",
     fontSize: 15,
     fontWeight: 800,
-    padding: "0 18px",
     cursor: "pointer",
   },
   secondaryButton: {
-    minHeight: 48,
     border: "1px solid rgba(15,23,42,0.12)",
-    borderRadius: 14,
+    borderRadius: 16,
     background: "#FFFFFF",
     color: "#0F172A",
+    padding: "14px 18px",
     fontSize: 15,
-    fontWeight: 700,
-    padding: "0 18px",
+    fontWeight: 800,
     cursor: "pointer",
   },
   disabledButton: {
-    opacity: 0.6,
+    opacity: 0.55,
     cursor: "not-allowed",
   },
   securityText: {
     margin: 0,
-    fontSize: 13,
     color: "#64748B",
+    fontSize: 13,
     lineHeight: 1.6,
   },
   successText: {
-    margin: 0,
+    marginTop: 14,
     color: "#166534",
     fontSize: 14,
     fontWeight: 700,
   },
   errorText: {
-    margin: 0,
+    marginTop: 14,
     color: "#B91C1C",
     fontSize: 14,
     fontWeight: 700,
+    lineHeight: 1.6,
+  },
+  warningBox: {
+    marginTop: 18,
+    padding: 14,
+    borderRadius: 18,
+    background: "#FFF7ED",
+    border: "1px solid #FED7AA",
+  },
+  warningTitle: {
+    margin: 0,
+    color: "#9A3412",
+    fontSize: 14,
+    fontWeight: 800,
+  },
+  warningText: {
+    margin: "6px 0 0 0",
+    color: "#C2410C",
+    fontSize: 14,
+    lineHeight: 1.6,
+  },
+  infoBox: {
+    marginTop: 18,
+    padding: 14,
+    borderRadius: 18,
+    background: "#EFF6FF",
+    border: "1px solid #BFDBFE",
+  },
+  infoBoxTitle: {
+    margin: 0,
+    color: "#1D4ED8",
+    fontSize: 14,
+    fontWeight: 800,
+  },
+  infoBoxText: {
+    margin: "6px 0 0 0",
+    color: "#1E40AF",
+    fontSize: 14,
+    lineHeight: 1.6,
+  },
+  bridgeNotice: {
+    padding: 14,
+    borderRadius: 18,
+    background: "#EFF6FF",
+    border: "1px solid #BFDBFE",
+    color: "#1E40AF",
+    fontSize: 14,
+    fontWeight: 700,
+  },
+  loginBox: {
+    marginTop: 18,
+    padding: 16,
+    borderRadius: 18,
+    background: "#FFFFFF",
+    border: "1px dashed rgba(15,23,42,0.18)",
+  },
+  loginTitle: {
+    margin: 0,
+    color: "#0F172A",
+    fontSize: 15,
+    fontWeight: 800,
+  },
+  loginText: {
+    margin: "8px 0 0 0",
+    color: "#475569",
+    fontSize: 14,
+    lineHeight: 1.6,
+  },
+  loginActions: {
+    marginTop: 14,
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
   },
 };
