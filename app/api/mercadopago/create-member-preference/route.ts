@@ -109,6 +109,18 @@ function getUserDocumentNumber(userData: Record<string, unknown>) {
   return null;
 }
 
+function shouldUseSandboxTestCpf() {
+  return (
+    String(process.env.MERCADO_PAGO_USE_TEST_PAYER || "").toLowerCase() ===
+    "true"
+  );
+}
+
+function getSandboxTestCpf() {
+  const digits = digitsOnly(process.env.MERCADO_PAGO_TEST_PAYER_CPF);
+  return digits.length === 11 ? digits : "12345678909";
+}
+
 export async function POST(request: NextRequest) {
   try {
     const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
@@ -303,7 +315,7 @@ export async function POST(request: NextRequest) {
       ? compactSpaces(userData.username).toLowerCase()
       : "";
 
-    const email = userData.email
+    const payerEmail = userData.email
       ? compactSpaces(userData.email).toLowerCase()
       : null;
 
@@ -323,7 +335,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!email || !email.includes("@")) {
+    if (!payerEmail || !payerEmail.includes("@")) {
       return NextResponse.json(
         {
           success: false,
@@ -342,13 +354,19 @@ export async function POST(request: NextRequest) {
     const pendingUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/pending?teamId=${teamId}&userId=${userId}`;
 
     const userDocument = getUserDocumentNumber(userData);
+    const useSandboxTestCpf = shouldUseSandboxTestCpf();
 
     const payer: Record<string, unknown> = {
       name: displayName || "Participante",
-      email,
+      email: payerEmail,
     };
 
-    if (userDocument) {
+    if (useSandboxTestCpf) {
+      payer.identification = {
+        type: "CPF",
+        number: getSandboxTestCpf(),
+      };
+    } else if (userDocument) {
       payer.identification = userDocument;
     }
 
@@ -388,6 +406,8 @@ export async function POST(request: NextRequest) {
         teamName,
         source,
         role,
+        payerEmail,
+        sandboxTestCpf: useSandboxTestCpf,
       },
     };
 
@@ -434,6 +454,7 @@ export async function POST(request: NextRequest) {
         preferenceId: null,
         externalReference: null,
         checkoutUrl: null,
+        payerEmail,
       });
 
       return NextResponse.json(
@@ -454,7 +475,7 @@ export async function POST(request: NextRequest) {
       paymentProvider: "mercado_pago",
       preferenceId: mpData.id,
       externalReference,
-      payerEmail: email,
+      payerEmail,
       paymentStartedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
       checkoutUrl,
@@ -469,6 +490,8 @@ export async function POST(request: NextRequest) {
       externalReference,
       checkoutUrl,
       role,
+      payerEmail,
+      sandboxTestCpf: useSandboxTestCpf,
       message: isCaptain
         ? "Checkout do capitão criado com sucesso."
         : "Checkout individual criado com sucesso.",
