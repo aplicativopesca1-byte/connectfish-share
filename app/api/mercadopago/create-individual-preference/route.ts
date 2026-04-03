@@ -309,7 +309,7 @@ export async function POST(request: NextRequest) {
 
     const isCaptain = role === "captain";
 
-    const externalReference = `tournament-${tournamentId}-team-${teamId}-user-${userId}-role-${role}`;
+    const externalReference = `tournament:${tournamentId}:team:${teamId}:user:${userId}:role:${role}`;
 
     const tournamentPublicPath = tournamentSlug || tournamentId;
 
@@ -337,9 +337,7 @@ export async function POST(request: NextRequest) {
         email,
       },
       external_reference: externalReference,
-      notification_url: isCaptain
-        ? `${baseUrl}/api/mercadopago/webhook`
-        : `${baseUrl}/api/mercadopago/member-webhook`,
+      notification_url: `${baseUrl}/api/mercadopago/member-webhook`,
       back_urls: {
         success: successUrl,
         failure: failureUrl,
