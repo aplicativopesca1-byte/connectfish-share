@@ -47,6 +47,13 @@ type TeamMemberDoc = {
   externalReference?: string | null;
   checkoutUrl?: string | null;
   payerEmail?: string | null;
+  merchantOrderId?: string | null;
+  amountPaid?: number | null;
+  paymentCurrency?: string | null;
+  paymentFailedAt?: unknown;
+  paymentReviewRequired?: boolean;
+  paymentReviewReason?: string | null;
+  lastWebhookAt?: unknown;
 };
 
 type ParsedReference = {
@@ -115,6 +122,7 @@ function getRegistrationStatusFromPaymentStatus(paymentStatus: string) {
   if (paymentStatus === "approved") return "confirmed";
   if (paymentStatus === "refunded") return "refunded";
   if (paymentStatus === "charged_back") return "chargeback";
+
   if (
     paymentStatus === "rejected" ||
     paymentStatus === "cancelled" ||
@@ -122,6 +130,11 @@ function getRegistrationStatusFromPaymentStatus(paymentStatus: string) {
   ) {
     return "payment_failed";
   }
+
+  if (paymentStatus === "pending" || paymentStatus === "in_process") {
+    return "awaiting_payment";
+  }
+
   return "awaiting_payment";
 }
 
@@ -314,6 +327,8 @@ async function processPaymentWebhook(params: {
 
   const currentPaymentStatus = normalizeStatus(memberData.paymentStatus);
   const currentRegistrationStatus = normalizeStatus(memberData.registrationStatus);
+  const currentPaymentId = compactSpaces(memberData.paymentId);
+  const currentExternalReference = compactSpaces(memberData.externalReference);
 
   const paymentStatus = normalizeStatus(paymentData.status);
   const statusDetail = compactSpaces(paymentData.status_detail) || null;
@@ -326,6 +341,27 @@ async function processPaymentWebhook(params: {
   const paymentApprovedAt = paymentData.date_approved
     ? String(paymentData.date_approved)
     : null;
+
+  if (
+    currentPaymentId &&
+    currentPaymentId !== String(paymentData.id) &&
+    isFinalApprovedStatus(currentPaymentStatus) &&
+    paymentStatus !== "approved" &&
+    !isRefundOrChargeback(paymentStatus)
+  ) {
+    await logWebhookEvent({
+      paymentId: params.paymentId,
+      type: params.eventType || "unknown",
+      action: params.eventAction || "unknown",
+      externalReference,
+      teamId,
+      userId,
+      payload: params.rawPayload ?? null,
+      result: `ignored_other_payment_after_approved_${paymentStatus}`,
+    });
+
+    return;
+  }
 
   if (
     isFinalApprovedStatus(currentPaymentStatus) &&
@@ -365,6 +401,31 @@ async function processPaymentWebhook(params: {
     updatedAt: FieldValue.serverTimestamp(),
   };
 
+  if (
+    currentExternalReference &&
+    externalReference &&
+    currentExternalReference !== externalReference
+  ) {
+    await memberRef.update({
+      ...baseUpdate,
+      paymentReviewRequired: true,
+      paymentReviewReason: "external_reference_mismatch",
+    });
+
+    await logWebhookEvent({
+      paymentId: params.paymentId,
+      type: params.eventType || "unknown",
+      action: params.eventAction || "unknown",
+      externalReference,
+      teamId,
+      userId,
+      payload: params.rawPayload ?? null,
+      result: "external_reference_mismatch",
+    });
+
+    return;
+  }
+
   if (!amountMatches || !currencyMatches) {
     await memberRef.update({
       ...baseUpdate,
@@ -389,6 +450,24 @@ async function processPaymentWebhook(params: {
   }
 
   if (paymentStatus === "approved") {
+    if (
+      currentPaymentStatus === "approved" &&
+      currentPaymentId === String(paymentData.id)
+    ) {
+      await logWebhookEvent({
+        paymentId: params.paymentId,
+        type: params.eventType || "unknown",
+        action: params.eventAction || "unknown",
+        externalReference,
+        teamId,
+        userId,
+        payload: params.rawPayload ?? null,
+        result: "approved_already_processed",
+      });
+
+      return;
+    }
+
     await memberRef.update({
       ...baseUpdate,
       registrationStatus: "confirmed",
@@ -422,6 +501,12 @@ async function processPaymentWebhook(params: {
       await memberRef.update({
         ...baseUpdate,
         registrationStatus: "awaiting_payment",
+        paymentReviewRequired: false,
+        paymentReviewReason: null,
+      });
+    } else {
+      await memberRef.update({
+        ...baseUpdate,
       });
     }
 
@@ -457,6 +542,8 @@ async function processPaymentWebhook(params: {
         paymentStatus === "error"
           ? FieldValue.serverTimestamp()
           : null,
+      paymentReviewRequired: false,
+      paymentReviewReason: null,
     });
 
     await recalculateTeamStatus(teamId);

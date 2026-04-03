@@ -54,6 +54,52 @@ function getMemberDocId(teamId: string, userId: string) {
   return `${teamId}_${userId}`;
 }
 
+function normalizeTournamentStatus(value: unknown) {
+  const status = normalizeStatus(value);
+
+  if (["live", "ativo", "active", "in_progress"].includes(status)) {
+    return "live";
+  }
+
+  if (["finished", "encerrado", "ended", "closed"].includes(status)) {
+    return "finished";
+  }
+
+  if (["draft", "rascunho"].includes(status)) {
+    return "draft";
+  }
+
+  return "scheduled";
+}
+
+function canCreatePaymentForTournamentStatus(value: unknown) {
+  const status = normalizeTournamentStatus(value);
+  return status === "scheduled" || status === "live";
+}
+
+function normalizeTeamStatus(value: unknown) {
+  const status = normalizeStatus(value);
+
+  if (
+    ["building", "pending_invites", "pending_payments", "confirmed", "cancelled"].includes(
+      status
+    )
+  ) {
+    return status;
+  }
+
+  return "building";
+}
+
+function isReusablePendingPaymentStatus(value: unknown) {
+  const status = normalizeStatus(value);
+  return status === "pending" || status === "in_process";
+}
+
+function isApprovedPaymentStatus(value: unknown) {
+  return normalizeStatus(value) === "approved";
+}
+
 async function getAuthenticatedUserId(request: NextRequest) {
   try {
     const authHeader = request.headers.get("authorization") || "";
@@ -219,6 +265,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!canCreatePaymentForTournamentStatus(tournamentData.status)) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Este torneio não está aceitando novos pagamentos.",
+        },
+        { status: 409 }
+      );
+    }
+
+    const teamStatus = normalizeTeamStatus(teamData.teamStatus);
+    if (teamStatus === "cancelled") {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Esta equipe foi cancelada e não pode gerar pagamento.",
+        },
+        { status: 409 }
+      );
+    }
+
     const role = normalizeStatus(memberData.role);
     if (role !== "captain" && role !== "member") {
       return NextResponse.json(
@@ -242,7 +309,12 @@ export async function POST(request: NextRequest) {
     }
 
     const paymentStatus = normalizeStatus(memberData.paymentStatus);
-    if (paymentStatus === "approved") {
+    const registrationStatus = normalizeStatus(memberData.registrationStatus);
+    const existingCheckoutUrl = compactSpaces(memberData.checkoutUrl);
+    const existingPreferenceId = compactSpaces(memberData.preferenceId);
+    const existingExternalReference = compactSpaces(memberData.externalReference);
+
+    if (isApprovedPaymentStatus(paymentStatus)) {
       return NextResponse.json(
         {
           success: false,
@@ -252,10 +324,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const registrationStatus = normalizeStatus(memberData.registrationStatus);
+    if (
+      isReusablePendingPaymentStatus(paymentStatus) &&
+      existingCheckoutUrl &&
+      existingPreferenceId
+    ) {
+      return NextResponse.json(
+        {
+          success: true,
+          reused: true,
+          teamId,
+          userId,
+          preferenceId: existingPreferenceId,
+          externalReference: existingExternalReference || null,
+          checkoutUrl: existingCheckoutUrl,
+          role,
+          message: "Checkout existente reutilizado com sucesso.",
+        },
+        { status: 200 }
+      );
+    }
+
     if (
       registrationStatus !== "awaiting_payment" &&
-      registrationStatus !== "payment_failed"
+      registrationStatus !== "payment_failed" &&
+      registrationStatus !== "checkout_created"
     ) {
       return NextResponse.json(
         {
@@ -313,9 +406,17 @@ export async function POST(request: NextRequest) {
 
     const tournamentPublicPath = tournamentSlug || tournamentId;
 
-    const successUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/success?teamId=${teamId}&userId=${userId}`;
-    const failureUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/failure?teamId=${teamId}&userId=${userId}`;
-    const pendingUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/pending?teamId=${teamId}&userId=${userId}`;
+    const successUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/success?teamId=${encodeURIComponent(
+      teamId
+    )}&userId=${encodeURIComponent(userId)}`;
+
+    const failureUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/failure?teamId=${encodeURIComponent(
+      teamId
+    )}&userId=${encodeURIComponent(userId)}`;
+
+    const pendingUrl = `${baseUrl}/tournaments/${tournamentPublicPath}/payment/pending?teamId=${encodeURIComponent(
+      teamId
+    )}&userId=${encodeURIComponent(userId)}`;
 
     const preferencePayload = {
       items: [
@@ -383,11 +484,7 @@ export async function POST(request: NextRequest) {
       body: mpData,
     });
 
-    if (
-      !mpResponse.ok ||
-      !mpData?.id ||
-      (!mpData.init_point && !mpData.sandbox_init_point)
-    ) {
+    if (!mpResponse.ok || !mpData?.id || !mpData.init_point) {
       await memberRef.update({
         registrationStatus: "payment_failed",
         paymentStatus: "error",
@@ -408,10 +505,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const checkoutUrl = mpData.sandbox_init_point ?? mpData.init_point ?? null;
+    const checkoutUrl = mpData.init_point;
 
     await memberRef.update({
-      registrationStatus: "awaiting_payment",
+      registrationStatus: "checkout_created",
       paymentStatus: "pending",
       paymentStatusDetail: null,
       paymentProvider: "mercado_pago",
@@ -426,6 +523,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      reused: false,
       teamId,
       userId,
       preferenceId: mpData.id,
