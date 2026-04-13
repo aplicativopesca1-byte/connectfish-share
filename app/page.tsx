@@ -11,7 +11,6 @@ export default function Home() {
 
   return (
     <main style={styles.page}>
-      {/* Background glow */}
       <div style={styles.bgGlow} aria-hidden="true" />
 
       <div style={styles.container}>
@@ -44,6 +43,53 @@ export default function Home() {
             </a>
           </div>
         </header>
+
+        <section style={styles.legalSectionHighlight}>
+          <div style={styles.legalHeroHeader}>
+            <div style={styles.legalHeroBadge}>Segurança e transparência</div>
+            <h2 style={styles.legalHeroTitle}>Documentos oficiais do ConnectFish</h2>
+            <p style={styles.legalHeroSubtitle}>
+              Consulte nossos Termos de Uso e Política de Privacidade para
+              entender como a plataforma funciona, como tratamos dados, quais
+              são os direitos dos usuários e quais regras se aplicam ao uso do
+              app e do site.
+            </p>
+          </div>
+
+          <div style={styles.legalGrid}>
+            <a href="/terms" style={styles.legalCard}>
+              <div style={styles.legalIcon} aria-hidden="true">
+                📘
+              </div>
+
+              <div style={styles.legalContent}>
+                <h3 style={styles.legalCardTitle}>Termos de Uso</h3>
+                <p style={styles.legalCardText}>
+                  Regras de uso da plataforma, responsabilidades do usuário,
+                  limites de uso, riscos da atividade, suspensão de conta,
+                  propriedade intelectual e condições aplicáveis ao ConnectFish.
+                </p>
+                <span style={styles.legalLink}>Abrir Termos de Uso</span>
+              </div>
+            </a>
+
+            <a href="/privacy" style={styles.legalCard}>
+              <div style={styles.legalIcon} aria-hidden="true">
+                🔐
+              </div>
+
+              <div style={styles.legalContent}>
+                <h3 style={styles.legalCardTitle}>Política de Privacidade</h3>
+                <p style={styles.legalCardText}>
+                  Entenda como coletamos, utilizamos, armazenamos, protegemos e
+                  compartilhamos dados, incluindo localização, replay, mapa,
+                  conta, conteúdos publicados e recursos sociais.
+                </p>
+                <span style={styles.legalLink}>Abrir Política de Privacidade</span>
+              </div>
+            </a>
+          </div>
+        </section>
 
         <section style={styles.grid}>
           <div style={styles.card}>
@@ -102,9 +148,27 @@ export default function Home() {
 
         <footer style={styles.footer}>
           <span style={styles.footerText}>© {year} ConnectFish</span>
+
           <span style={styles.dot} aria-hidden="true">
             •
           </span>
+
+          <a href="/terms" style={styles.footerLink}>
+            Termos
+          </a>
+
+          <span style={styles.dot} aria-hidden="true">
+            •
+          </span>
+
+          <a href="/privacy" style={styles.footerLink}>
+            Privacidade
+          </a>
+
+          <span style={styles.dot} aria-hidden="true">
+            •
+          </span>
+
           <span style={styles.footerTextMuted}>Build em progresso</span>
         </footer>
       </div>
@@ -142,7 +206,7 @@ const styles: Record<string, CSSProperties> = {
 
   header: {
     marginTop: 24,
-    marginBottom: 34,
+    marginBottom: 22,
     padding: 28,
     borderRadius: 20,
     background:
@@ -255,6 +319,109 @@ const styles: Record<string, CSSProperties> = {
     color: "rgba(230,246,247,0.88)",
     background: "rgba(255,255,255,0.06)",
     border: "1px solid rgba(255,255,255,0.12)",
+  },
+
+  legalSectionHighlight: {
+    marginTop: 16,
+    marginBottom: 24,
+    padding: 22,
+    borderRadius: 20,
+    background:
+      "linear-gradient(135deg, rgba(0,191,223,0.14), rgba(94,252,161,0.08))",
+    border: "1px solid rgba(0,191,223,0.35)",
+    boxShadow: "0 20px 60px rgba(0,191,223,0.15)",
+    backdropFilter: "blur(10px)",
+  },
+
+  legalHeroHeader: {
+    marginBottom: 16,
+  },
+
+  legalHeroBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "6px 10px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 900,
+    color: "#bff7ee",
+    background: "rgba(45,212,191,0.16)",
+    border: "1px solid rgba(45,212,191,0.28)",
+  },
+
+  legalHeroTitle: {
+    marginTop: 14,
+    marginBottom: 0,
+    fontSize: 24,
+    fontWeight: 950,
+    letterSpacing: -0.4,
+  },
+
+  legalHeroSubtitle: {
+    marginTop: 10,
+    marginBottom: 0,
+    fontSize: 15,
+    lineHeight: 1.7,
+    color: "rgba(230,246,247,0.78)",
+    maxWidth: 820,
+  },
+
+  legalGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+    gap: 14,
+  },
+
+  legalCard: {
+    display: "flex",
+    gap: 14,
+    alignItems: "flex-start",
+    padding: 18,
+    borderRadius: 18,
+    textDecoration: "none",
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    boxShadow: "0 16px 40px rgba(0,0,0,0.20)",
+    color: "#e6f6f7",
+  },
+
+  legalIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    display: "grid",
+    placeItems: "center",
+    background: "rgba(255,255,255,0.08)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    flexShrink: 0,
+    userSelect: "none",
+  },
+
+  legalContent: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+
+  legalCardTitle: {
+    margin: 0,
+    fontSize: 17,
+    fontWeight: 900,
+    letterSpacing: -0.2,
+  },
+
+  legalCardText: {
+    margin: 0,
+    fontSize: 14,
+    lineHeight: 1.65,
+    color: "rgba(230,246,247,0.78)",
+  },
+
+  legalLink: {
+    fontSize: 13,
+    fontWeight: 900,
+    color: "#bff7ee",
   },
 
   grid: {
@@ -383,6 +550,13 @@ const styles: Record<string, CSSProperties> = {
     color: "rgba(230,246,247,0.50)",
     fontWeight: 800,
     fontSize: 13,
+  },
+
+  footerLink: {
+    color: "rgba(230,246,247,0.82)",
+    fontWeight: 800,
+    fontSize: 13,
+    textDecoration: "none",
   },
 
   dot: {

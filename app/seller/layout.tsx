@@ -61,6 +61,14 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
     []
   );
 
+  const navLegal = useMemo<NavItem[]>(
+    () => [
+      { href: "/terms", label: "Termos de Uso", emoji: "📘" },
+      { href: "/privacy", label: "Privacidade", emoji: "🔐" },
+    ],
+    []
+  );
+
   const navAdmin = useMemo<NavItem[]>(
     () => [{ href: "/admin/pesqueiros", label: "Aprovar pesqueiros", emoji: "✅" }],
     []
@@ -230,6 +238,22 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
               })}
             </div>
 
+            <div style={{ ...styles.navGroupTitle, marginTop: 20 }}>Documentos legais</div>
+            <div style={styles.navList}>
+              {navLegal.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  style={styles.navItem}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span style={styles.navEmoji}>{item.emoji}</span>
+                  <span style={styles.navText}>{item.label}</span>
+                </Link>
+              ))}
+            </div>
+
             {isAdmin ? (
               <>
                 <div style={{ ...styles.navGroupTitle, marginTop: 20 }}>Admin</div>
@@ -331,7 +355,7 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
 
                 {currentTournamentId ? (
                   <Link
-                    href={`/seller/tournaments/${currentTournamentId}`}
+                    href={`/seller/tournaments/${currentTournamentId}/captures`}
                     style={styles.quickActionLink}
                   >
                     <span style={styles.quickActionEmoji}>📸</span>
