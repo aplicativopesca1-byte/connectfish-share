@@ -22,6 +22,10 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { db } from "../../../../src/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
+import {
+  getOrganizerPaymentProfile,
+  isOrganizerFinanciallyReady,
+} from "../../../../app/services/organizerPaymentProfileService";
 
 type Props = {
   mode: "create" | "edit";
@@ -77,6 +81,14 @@ type RegistrationFieldConfig = {
   helpText?: string | null;
 };
 
+type TournamentFinancialConfig = {
+  connectfishFeePercent: number;
+  releaseMode: "instant" | "after_tournament" | "days_after_payment";
+  releaseDelayDays: number;
+  payoutMode: "manual" | "automatic";
+  currency: string;
+};
+
 type TournamentDoc = {
   title?: string;
   subtitle?: string | null;
@@ -117,6 +129,15 @@ type TournamentDoc = {
   teamSizeMax?: number;
   registrationFormConfig?: {
     fields?: RegistrationFieldConfig[];
+  } | null;
+
+  organizerUserId?: string | null;
+  organizerName?: string | null;
+  financialConfig?: TournamentFinancialConfig | null;
+  financialSummary?: {
+    totalCollected?: number;
+    totalReleased?: number;
+    totalPending?: number;
   } | null;
 };
 
@@ -541,8 +562,8 @@ function buildBoundarySummary(data: TournamentDoc): BoundarySummary {
     type === "circle"
       ? !!center && !!radiusM && radiusM > 0
       : type === "polygon"
-      ? polygonPoints.length >= 3
-      : false;
+        ? polygonPoints.length >= 3
+        : false;
 
   return {
     enabled: true,
@@ -654,6 +675,11 @@ export default function TournamentForm({
     polygonPointsCount: 0,
     isConfigured: false,
   });
+
+  const [financialReady, setFinancialReady] = useState(false);
+  const [financialLoading, setFinancialLoading] = useState(false);
+  const [financialStatusLabel, setFinancialStatusLabel] =
+    useState("Não iniciado");
 
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -788,6 +814,8 @@ export default function TournamentForm({
     scheduledEndAt,
   ]);
 
+  const requiresFinancialOnboarding = Number(entryFee || 0) > 0;
+
   const reviewChecklist = useMemo(() => {
     const items = [
       {
@@ -816,6 +844,12 @@ export default function TournamentForm({
         label: "Torneio em rascunho antes de publicar",
         ok: status === "draft" || status === "scheduled",
       },
+      {
+        label: requiresFinancialOnboarding
+          ? "Conta financeira do organizador aprovada"
+          : "Conta financeira não obrigatória para torneio gratuito",
+        ok: requiresFinancialOnboarding ? financialReady : true,
+      },
     ];
 
     const missingFields: string[] = [
@@ -828,6 +862,9 @@ export default function TournamentForm({
         : []),
       ...(!previewUrls.registrationUrl || !previewUrls.publicUrl
         ? ["URLs públicas do torneio"]
+        : []),
+      ...(requiresFinancialOnboarding && !financialReady
+        ? ["Ativar e aprovar conta financeira do organizador"]
         : []),
     ];
 
@@ -846,6 +883,8 @@ export default function TournamentForm({
     registrationValidation.valid,
     registrationValidation.missing,
     status,
+    requiresFinancialOnboarding,
+    financialReady,
   ]);
 
   useEffect(() => {
@@ -857,9 +896,66 @@ export default function TournamentForm({
     void loadTournament();
   }, [isEdit, tournamentId]);
 
+  useEffect(() => {
+    if (authLoading) return;
+    if (!resolvedUserId) return;
+    void loadFinancialReadiness(resolvedUserId);
+  }, [authLoading, resolvedUserId]);
+
   function clearFeedback() {
     if (message) setMessage(null);
     if (error) setError(null);
+  }
+
+  async function loadFinancialReadiness(userId: string) {
+    const safeUserId = String(userId || "").trim();
+    if (!safeUserId) {
+      setFinancialReady(false);
+      setFinancialStatusLabel("Organizador não identificado");
+      return;
+    }
+
+    try {
+      setFinancialLoading(true);
+
+      const profile = await getOrganizerPaymentProfile(safeUserId);
+      const ready = isOrganizerFinanciallyReady(profile);
+
+      setFinancialReady(ready);
+
+      if (!profile) {
+        setFinancialStatusLabel("Não iniciado");
+        return;
+      }
+
+      if (ready) {
+        setFinancialStatusLabel("Conta financeira aprovada");
+        return;
+      }
+
+      if (profile.status === "pending") {
+        setFinancialStatusLabel("Onboarding financeiro em análise");
+        return;
+      }
+
+      if (profile.status === "rejected") {
+        setFinancialStatusLabel("Onboarding financeiro recusado");
+        return;
+      }
+
+      if (profile.status === "draft") {
+        setFinancialStatusLabel("Cadastro financeiro incompleto");
+        return;
+      }
+
+      setFinancialStatusLabel("Não iniciado");
+    } catch (loadError) {
+      console.error("Erro ao carregar status financeiro do organizador:", loadError);
+      setFinancialReady(false);
+      setFinancialStatusLabel("Erro ao verificar conta financeira");
+    } finally {
+      setFinancialLoading(false);
+    }
   }
 
   async function loadTournament() {
@@ -947,6 +1043,11 @@ export default function TournamentForm({
       throw new Error("ID do torneio obrigatório para gerar as URLs.");
     }
 
+    if (!resolvedUserId) {
+      throw new Error("Usuário organizador não identificado.");
+    }
+
+    const normalizedCurrency = safeTrim(currency).toUpperCase() || "BRL";
     const urls = buildTournamentUrls(finalSlugPreview, tournamentDocId);
 
     if (!urls.publicUrl || !urls.registrationUrl || !urls.adminUrl) {
@@ -962,7 +1063,7 @@ export default function TournamentForm({
       coverImageUrl: coverImageUrl.trim() || null,
       species: species.trim(),
       entryFee: Number(entryFee || 0),
-      currency: safeTrim(currency).toUpperCase() || "BRL",
+      currency: normalizedCurrency,
       minSizeCm: Number(minSizeCm || 0),
       validFishCount: Number(validFishCount || 0),
       rules: parsedRules,
@@ -983,6 +1084,22 @@ export default function TournamentForm({
           helpText: field.helpText || null,
         })),
       },
+
+      organizerUserId: resolvedUserId,
+      organizerName: resolvedUserName,
+      financialConfig: {
+        connectfishFeePercent: 10,
+        releaseMode: "after_tournament" as const,
+        releaseDelayDays: 2,
+        payoutMode: "manual" as const,
+        currency: normalizedCurrency,
+      },
+      financialSummary: {
+        totalCollected: 0,
+        totalReleased: 0,
+        totalPending: 0,
+      },
+
       registrationUrl: urls.registrationUrl,
       publicUrl: urls.publicUrl,
       adminUrl: urls.adminUrl,
@@ -1164,6 +1281,13 @@ export default function TournamentForm({
         `Ainda faltam itens obrigatórios para publicar: ${reviewChecklist.missingFields.join(
           ", "
         )}.`
+      );
+      return;
+    }
+
+    if (requiresFinancialOnboarding && !financialReady) {
+      setError(
+        "Para publicar um torneio pago, primeiro ative e aprove a conta financeira do organizador."
       );
       return;
     }
@@ -1616,6 +1740,22 @@ O ranking só atualiza após validação da organização.`}
                 estável.
               </p>
             </div>
+
+            <div style={styles.financeConfigBox}>
+              <p style={styles.financeConfigTitle}>Financeiro do organizador</p>
+              <p style={styles.financeConfigText}>
+                Este torneio será salvo com o organizador financeiro vinculado ao
+                usuário atual, taxa padrão da plataforma de 10% e liberação após o
+                torneio + 2 dias.
+              </p>
+
+              <div style={styles.previewGrid}>
+                <PreviewCard label="Organizador" value={resolvedUserName || "—"} />
+                <PreviewCard label="UID" value={resolvedUserId || "—"} />
+                <PreviewCard label="Taxa ConnectFish" value="10%" />
+                <PreviewCard label="Liberação" value="Após o torneio + 2 dias" />
+              </div>
+            </div>
           </section>
 
           <section style={styles.card}>
@@ -1773,6 +1913,9 @@ O ranking só atualiza após validação da organização.`}
               <p style={styles.urlPreviewText}>
                 <strong>Inscrição:</strong> {previewUrls.registrationUrl || "—"}
               </p>
+              <p style={styles.urlPreviewText}>
+                <strong>Admin:</strong> {previewUrls.adminUrl || "—"}
+              </p>
             </div>
 
             {!basicsValidation.valid ? (
@@ -1857,8 +2000,8 @@ O ranking só atualiza após validação da organização.`}
                     ? boundarySummary.type === "circle"
                       ? "Círculo"
                       : boundarySummary.type === "polygon"
-                      ? "Polígono"
-                      : "Não definido"
+                        ? "Polígono"
+                        : "Não definido"
                     : "Não obrigatório"
                 }
               />
@@ -1987,6 +2130,33 @@ O ranking só atualiza após validação da organização.`}
               ))}
             </div>
 
+            <section style={styles.financialStatusCard}>
+              <div style={styles.sectionHeader}>
+                <h3 style={styles.sectionTitle}>Conta financeira do organizador</h3>
+                <p style={styles.sectionSub}>
+                  Torneios com inscrição paga só podem ser publicados com onboarding financeiro aprovado.
+                </p>
+              </div>
+
+              <div style={styles.infoPillRow}>
+                <span style={financialReady ? styles.successBadge : styles.warningBadge}>
+                  {financialLoading ? "Verificando..." : financialStatusLabel}
+                </span>
+
+                <span style={styles.neutralBadge}>
+                  {requiresFinancialOnboarding
+                    ? "Obrigatória para este torneio"
+                    : "Não obrigatória para torneio gratuito"}
+                </span>
+              </div>
+
+              {requiresFinancialOnboarding && !financialReady ? (
+                <p style={styles.errorText}>
+                  Finalize o onboarding financeiro antes de publicar este torneio.
+                </p>
+              ) : null}
+            </section>
+
             <div style={styles.previewGrid}>
               <PreviewCard label="Título" value={title || "—"} />
               <PreviewCard label="Slug" value={finalSlugPreview || "—"} />
@@ -2016,8 +2186,8 @@ O ranking só atualiza após validação da organização.`}
               <div style={styles.successBox}>
                 <p style={styles.successTitle}>Tudo pronto</p>
                 <p style={styles.successBoxText}>
-                  O torneio está consistente para publicação, com slug único e URLs
-                  públicas persistidas.
+                  O torneio está consistente para publicação, com slug único,
+                  URLs públicas persistidas e vínculo financeiro do organizador.
                 </p>
               </div>
             )}
@@ -2406,6 +2576,27 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1.5,
   },
 
+  financeConfigBox: {
+    marginTop: 16,
+    borderRadius: 16,
+    background: "#F0FDF4",
+    border: "1px solid #BBF7D0",
+    padding: 14,
+  },
+
+  financeConfigTitle: {
+    margin: 0,
+    fontWeight: 900,
+    color: "#166534",
+  },
+
+  financeConfigText: {
+    margin: "6px 0 0 0",
+    color: "#166534",
+    lineHeight: 1.55,
+    fontWeight: 700,
+  },
+
   fieldsList: {
     display: "flex",
     flexDirection: "column",
@@ -2413,10 +2604,10 @@ const styles: Record<string, CSSProperties> = {
   },
 
   fieldConfigCard: {
-    borderRadius: 16,
     border: "1px solid rgba(15,23,42,0.08)",
-    background: "#F8FAFC",
+    borderRadius: 16,
     padding: 14,
+    background: "#F8FAFC",
   },
 
   fieldConfigHeader: {
@@ -2429,15 +2620,14 @@ const styles: Record<string, CSSProperties> = {
 
   fieldConfigTitle: {
     margin: 0,
-    fontSize: 15,
     fontWeight: 900,
     color: "#0F172A",
   },
 
   fieldConfigKey: {
-    margin: "4px 0 0 0",
-    fontSize: 12,
+    margin: "6px 0 0 0",
     color: "#64748B",
+    fontSize: 12,
     fontWeight: 700,
   },
 
@@ -2452,15 +2642,15 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     gap: 8,
     fontSize: 13,
-    fontWeight: 800,
+    fontWeight: 700,
     color: "#0F172A",
   },
 
   roleChipsRow: {
-    marginTop: 14,
     display: "flex",
     gap: 10,
     flexWrap: "wrap",
+    marginTop: 12,
   },
 
   roleChip: {
@@ -2470,10 +2660,10 @@ const styles: Record<string, CSSProperties> = {
     padding: "8px 10px",
     borderRadius: 999,
     background: "#FFFFFF",
-    border: "1px solid rgba(15,23,42,0.10)",
-    fontSize: 13,
+    border: "1px solid rgba(15,23,42,0.08)",
+    fontSize: 12,
     fontWeight: 800,
-    color: "#0F172A",
+    color: "#334155",
   },
 
   previewGrid: {
@@ -2483,10 +2673,10 @@ const styles: Record<string, CSSProperties> = {
   },
 
   previewCard: {
-    border: "1px solid rgba(15,23,42,0.08)",
+    background: "#F8FAFC",
+    border: "1px solid rgba(15,23,42,0.06)",
     borderRadius: 16,
     padding: 14,
-    background: "#F8FAFC",
   },
 
   previewLabel: {
@@ -2497,8 +2687,8 @@ const styles: Record<string, CSSProperties> = {
   },
 
   previewValue: {
-    margin: "6px 0 0 0",
-    fontSize: 14,
+    margin: "8px 0 0 0",
+    fontSize: 15,
     fontWeight: 900,
     color: "#0F172A",
     wordBreak: "break-word",
@@ -2520,17 +2710,157 @@ const styles: Record<string, CSSProperties> = {
 
   urlPreviewText: {
     margin: "8px 0 0 0",
+    fontSize: 13,
+    lineHeight: 1.5,
     color: "#334155",
+    wordBreak: "break-word",
+  },
+
+  toggleRow: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 16,
+    fontWeight: 800,
+    color: "#0F172A",
+  },
+
+  toggleLabel: {
     fontSize: 14,
-    lineHeight: 1.45,
-    wordBreak: "break-all",
+  },
+
+  boundarySummaryGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 12,
+    marginBottom: 16,
+  },
+
+  boundaryStatusBox: {
+    borderRadius: 16,
+    padding: 16,
+    border: "1px solid transparent",
+  },
+
+  boundaryStatusOk: {
+    background: "#ECFDF5",
+    border: "1px solid #A7F3D0",
+  },
+
+  boundaryStatusPending: {
+    background: "#FFFBEB",
+    border: "1px solid #FDE68A",
+  },
+
+  boundaryStatusNeutral: {
+    background: "#EFF6FF",
+    border: "1px solid #BFDBFE",
+  },
+
+  boundaryStatusTitle: {
+    margin: 0,
+    fontWeight: 900,
+    color: "#0F172A",
+  },
+
+  boundaryStatusText: {
+    margin: "8px 0 0 0",
+    color: "#475569",
+    lineHeight: 1.55,
+  },
+
+  reviewGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+    gap: 12,
+    marginBottom: 16,
+  },
+
+  reviewItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 16,
+    padding: "12px 14px",
+    fontSize: 14,
+    fontWeight: 800,
+  },
+
+  reviewItemOk: {
+    background: "#ECFDF5",
+    color: "#166534",
+    border: "1px solid #A7F3D0",
+  },
+
+  reviewItemPending: {
+    background: "#FFFBEB",
+    color: "#92400E",
+    border: "1px solid #FDE68A",
+  },
+
+  reviewIcon: {
+    width: 22,
+    height: 22,
+    borderRadius: 999,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "rgba(255,255,255,0.8)",
+    fontWeight: 900,
+    flexShrink: 0,
+  },
+
+  financialStatusCard: {
+    marginBottom: 16,
+    borderRadius: 18,
+    padding: 16,
+    background: "#F8FAFC",
+    border: "1px solid rgba(15,23,42,0.08)",
+  },
+
+  infoPillRow: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+
+  successBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "8px 12px",
+    borderRadius: 999,
+    background: "#DCFCE7",
+    color: "#166534",
+    fontSize: 12,
+    fontWeight: 900,
+  },
+
+  warningBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "8px 12px",
+    borderRadius: 999,
+    background: "#FEF3C7",
+    color: "#92400E",
+    fontSize: 12,
+    fontWeight: 900,
+  },
+
+  neutralBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "8px 12px",
+    borderRadius: 999,
+    background: "#E2E8F0",
+    color: "#334155",
+    fontSize: 12,
+    fontWeight: 900,
   },
 
   warningBox: {
-    marginTop: 16,
     borderRadius: 16,
-    background: "#FEF3C7",
-    border: "1px solid #FCD34D",
+    background: "#FFFBEB",
+    border: "1px solid #FDE68A",
     padding: 14,
   },
 
@@ -2543,14 +2873,14 @@ const styles: Record<string, CSSProperties> = {
   warningText: {
     margin: "6px 0 0 0",
     color: "#92400E",
-    lineHeight: 1.5,
+    lineHeight: 1.55,
+    fontWeight: 700,
   },
 
   successBox: {
-    marginTop: 16,
     borderRadius: 16,
-    background: "#DCFCE7",
-    border: "1px solid #86EFAC",
+    background: "#ECFDF5",
+    border: "1px solid #A7F3D0",
     padding: 14,
   },
 
@@ -2563,98 +2893,8 @@ const styles: Record<string, CSSProperties> = {
   successBoxText: {
     margin: "6px 0 0 0",
     color: "#166534",
-    lineHeight: 1.5,
-  },
-
-  toggleRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 16,
+    lineHeight: 1.55,
     fontWeight: 700,
-    color: "#0F172A",
-  },
-
-  toggleLabel: {
-    fontSize: 14,
-    fontWeight: 800,
-    color: "#0F172A",
-  },
-
-  boundarySummaryGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-    gap: 12,
-    marginBottom: 16,
-  },
-
-  boundaryStatusBox: {
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 16,
-    border: "1px solid transparent",
-  },
-
-  boundaryStatusOk: {
-    background: "#DCFCE7",
-    border: "1px solid #86EFAC",
-  },
-
-  boundaryStatusPending: {
-    background: "#FEF3C7",
-    border: "1px solid #FCD34D",
-  },
-
-  boundaryStatusNeutral: {
-    background: "#E0F2FE",
-    border: "1px solid #7DD3FC",
-  },
-
-  boundaryStatusTitle: {
-    margin: 0,
-    fontWeight: 900,
-    color: "#0F172A",
-  },
-
-  boundaryStatusText: {
-    margin: "6px 0 0 0",
-    color: "#334155",
-    lineHeight: 1.5,
-  },
-
-  reviewGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-    gap: 10,
-    marginBottom: 16,
-  },
-
-  reviewItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    borderRadius: 14,
-    padding: "12px 14px",
-    fontWeight: 800,
-  },
-
-  reviewItemOk: {
-    background: "#F0FDF4",
-    border: "1px solid #BBF7D0",
-    color: "#166534",
-  },
-
-  reviewItemPending: {
-    background: "#FFF7ED",
-    border: "1px solid #FDBA74",
-    color: "#9A3412",
-  },
-
-  reviewIcon: {
-    width: 20,
-    display: "inline-flex",
-    justifyContent: "center",
-    fontWeight: 900,
   },
 
   actionsRow: {
@@ -2671,30 +2911,33 @@ const styles: Record<string, CSSProperties> = {
   primaryButton: {
     border: "none",
     borderRadius: 14,
-    padding: "12px 16px",
+    padding: "13px 16px",
     background: "#0B3C5D",
     color: "#FFFFFF",
+    fontSize: 14,
     fontWeight: 900,
     cursor: "pointer",
   },
 
   secondaryButton: {
-    border: "1px solid rgba(15,23,42,0.12)",
+    border: "1px solid rgba(15,23,42,0.10)",
     borderRadius: 14,
-    padding: "12px 16px",
+    padding: "13px 16px",
     background: "#FFFFFF",
     color: "#0F172A",
+    fontSize: 14,
     fontWeight: 900,
     cursor: "pointer",
   },
 
   ghostButton: {
-    border: "1px solid rgba(15,23,42,0.08)",
+    border: "none",
     borderRadius: 14,
-    padding: "12px 16px",
-    background: "#FFFFFF",
+    padding: "13px 16px",
+    background: "#E2E8F0",
     color: "#0F172A",
-    fontWeight: 800,
+    fontSize: 14,
+    fontWeight: 900,
     cursor: "pointer",
   },
 
@@ -2705,12 +2948,16 @@ const styles: Record<string, CSSProperties> = {
 
   successText: {
     margin: 0,
+    fontSize: 14,
+    lineHeight: 1.6,
     color: "#166534",
     fontWeight: 800,
   },
 
   errorText: {
     margin: 0,
+    fontSize: 14,
+    lineHeight: 1.6,
     color: "#B91C1C",
     fontWeight: 800,
   },

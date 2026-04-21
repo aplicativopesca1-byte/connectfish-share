@@ -33,9 +33,6 @@ function assertRequired(value: unknown, field: string) {
   return normalized;
 }
 
-/* ============================================================
-   🔐 AUTH HÍBRIDA (APP + WEB)
-============================================================ */
 async function getAuthenticatedUserId(request: NextRequest) {
   try {
     const authHeader = request.headers.get("authorization") || "";
@@ -66,9 +63,6 @@ async function getAuthenticatedUserId(request: NextRequest) {
   }
 }
 
-/* ============================================================
-   🔁 RECALCULAR STATUS DO TIME
-============================================================ */
 async function recalculateTeamStatus(teamId: string) {
   const db = adminDb();
 
@@ -134,9 +128,6 @@ async function recalculateTeamStatus(teamId: string) {
   });
 }
 
-/* ============================================================
-   🔎 BUSCAR MEMBRO DO TIME COM SEGURANÇA
-============================================================ */
 async function findTeamMemberDoc(params: {
   teamId: string;
   userId: string;
@@ -186,9 +177,6 @@ async function findTeamMemberDoc(params: {
   return null;
 }
 
-/* ============================================================
-   🚀 MAIN
-============================================================ */
 export async function POST(request: NextRequest) {
   try {
     const userId = await getAuthenticatedUserId(request);
@@ -328,6 +316,17 @@ export async function POST(request: NextRequest) {
       batch.update(teamMemberRef, {
         inviteStatus: "accepted",
         registrationStatus: "awaiting_payment",
+        paymentStatus: "pending",
+        paymentStatusDetail: null,
+        paymentProvider: "asaas",
+        providerPaymentId: null,
+        providerCustomerId: null,
+        preferenceId: null,
+        externalReference: null,
+        checkoutUrl: null,
+        asaasInvoiceUrl: null,
+        asaasPixQrCode: null,
+        asaasPixCopyPaste: null,
         respondedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
@@ -342,6 +341,16 @@ export async function POST(request: NextRequest) {
         inviteStatus: "declined",
         registrationStatus: "cancelled",
         paymentStatus: "cancelled",
+        paymentStatusDetail: "invite_declined",
+        paymentProvider: "asaas",
+        providerPaymentId: null,
+        providerCustomerId: null,
+        preferenceId: null,
+        externalReference: null,
+        checkoutUrl: null,
+        asaasInvoiceUrl: null,
+        asaasPixQrCode: null,
+        asaasPixCopyPaste: null,
         respondedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });

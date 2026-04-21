@@ -1,4 +1,4 @@
-"use client"
+"use client";
 
 import {
   useEffect,
@@ -61,6 +61,25 @@ type TournamentDoc = {
   publishedAt?: unknown;
   startedAt?: unknown;
   finishedAt?: unknown;
+  currency?: string | null;
+};
+
+type TournamentFinancialDoc = {
+  tournamentId?: string;
+  organizerUserId?: string;
+  currency?: string;
+  grossAmount?: number;
+  approvedAmount?: number;
+  refundedAmount?: number;
+  chargebackAmount?: number;
+  feeAmount?: number;
+  netAmount?: number;
+  pendingAmount?: number;
+  availableAmount?: number;
+  paidOutAmount?: number;
+  participantsPaidCount?: number;
+  updatedAt?: unknown;
+  createdAt?: unknown;
 };
 
 type CaptureStatus = "pending" | "approved" | "rejected";
@@ -120,6 +139,23 @@ function normalizeStatus(status: unknown): TournamentStatus {
   return value || "draft";
 }
 
+function normalizeMoney(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Number(parsed.toFixed(2));
+}
+
+function normalizeCurrency(value: unknown) {
+  return String(value ?? "").trim().toUpperCase() || "BRL";
+}
+
+function formatMoney(value: unknown, currency = "BRL") {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: normalizeCurrency(currency),
+  }).format(normalizeMoney(value));
+}
+
 function getTournamentStatusMeta(status: TournamentStatus) {
   switch (status) {
     case "live":
@@ -166,6 +202,7 @@ export default function TournamentDashboardClient({ tournamentId }: Props) {
   const [message, setMessage] = useState<string | null>(null);
 
   const [tournament, setTournament] = useState<TournamentDoc | null>(null);
+  const [financial, setFinancial] = useState<TournamentFinancialDoc | null>(null);
   const [captures, setCaptures] = useState<TournamentCapture[]>([]);
   const [teamsCount, setTeamsCount] = useState(0);
 
@@ -183,7 +220,12 @@ export default function TournamentDashboardClient({ tournamentId }: Props) {
         return;
       }
 
-      await Promise.all([loadTournament(), loadCaptures(), loadTeamsCount()]);
+      await Promise.all([
+        loadTournament(),
+        loadTournamentFinancial(),
+        loadCaptures(),
+        loadTeamsCount(),
+      ]);
     } catch (err) {
       console.error("Erro ao carregar central do torneio:", err);
       setError("Não foi possível carregar os dados do torneio.");
@@ -202,6 +244,23 @@ export default function TournamentDashboardClient({ tournamentId }: Props) {
     }
 
     setTournament(snap.data() as TournamentDoc);
+  }
+
+  async function loadTournamentFinancial() {
+    try {
+      const ref = doc(db, "tournamentFinancials", tournamentId);
+      const snap = await getDoc(ref);
+
+      if (!snap.exists()) {
+        setFinancial(null);
+        return;
+      }
+
+      setFinancial(snap.data() as TournamentFinancialDoc);
+    } catch (err) {
+      console.error("Erro ao carregar financeiro do torneio:", err);
+      setFinancial(null);
+    }
   }
 
   async function loadCaptures() {
@@ -309,6 +368,8 @@ export default function TournamentDashboardClient({ tournamentId }: Props) {
   const status = normalizeStatus(tournament?.status);
   const statusMeta = getTournamentStatusMeta(status);
 
+  const currency = normalizeCurrency(financial?.currency || tournament?.currency || "BRL");
+
   const scheduledStartAt = toIsoStringSafe(tournament?.scheduledStartAt);
   const scheduledEndAt = toIsoStringSafe(tournament?.scheduledEndAt);
   const createdAt = toIsoStringSafe(tournament?.createdAt);
@@ -316,10 +377,21 @@ export default function TournamentDashboardClient({ tournamentId }: Props) {
   const publishedAt = toIsoStringSafe(tournament?.publishedAt);
   const startedAt = toIsoStringSafe(tournament?.startedAt);
   const finishedAt = toIsoStringSafe(tournament?.finishedAt);
+  const financialUpdatedAt = toIsoStringSafe(financial?.updatedAt);
 
   const pendingCaptures = captures.filter((item) => item.status === "pending");
   const approvedCaptures = captures.filter((item) => item.status === "approved");
   const rejectedCaptures = captures.filter((item) => item.status === "rejected");
+
+  const grossAmount = normalizeMoney(financial?.grossAmount);
+  const feeAmount = normalizeMoney(financial?.feeAmount);
+  const netAmount = normalizeMoney(financial?.netAmount);
+  const pendingAmount = normalizeMoney(financial?.pendingAmount);
+  const availableAmount = normalizeMoney(financial?.availableAmount);
+  const paidOutAmount = normalizeMoney(financial?.paidOutAmount);
+  const refundedAmount = normalizeMoney(financial?.refundedAmount);
+  const chargebackAmount = normalizeMoney(financial?.chargebackAmount);
+  const participantsPaidCount = Number(financial?.participantsPaidCount || 0);
 
   const boundaryConfigured = useMemo(() => {
     const boundary = tournament?.boundary;
@@ -533,12 +605,127 @@ export default function TournamentDashboardClient({ tournamentId }: Props) {
 
         <div style={styles.kpiGrid}>
           <KpiCard label="Equipes" value={String(teamsCount)} emoji="👥" />
+          <KpiCard label="Pagamentos aprovados" value={String(participantsPaidCount)} emoji="💳" />
           <KpiCard label="Capturas pendentes" value={String(pendingCaptures.length)} emoji="📸" />
           <KpiCard label="Capturas aprovadas" value={String(approvedCaptures.length)} emoji="✅" />
           <KpiCard label="Capturas reprovadas" value={String(rejectedCaptures.length)} emoji="❌" />
         </div>
 
+        <div style={styles.financialKpiGrid}>
+          <FinancialKpiCard
+            label="Arrecadado"
+            value={formatMoney(grossAmount, currency)}
+            tone="blue"
+          />
+          <FinancialKpiCard
+            label="Líquido"
+            value={formatMoney(netAmount, currency)}
+            tone="green"
+          />
+          <FinancialKpiCard
+            label="Disponível"
+            value={formatMoney(availableAmount, currency)}
+            tone="emerald"
+          />
+          <FinancialKpiCard
+            label="Pendente"
+            value={formatMoney(pendingAmount, currency)}
+            tone="amber"
+          />
+        </div>
+
         <div style={styles.mainGrid}>
+          <section style={styles.card}>
+            <div style={styles.sectionHeader}>
+              <h3 style={styles.sectionTitle}>Financeiro do torneio</h3>
+              <p style={styles.sectionSub}>
+                Acompanhe arrecadação, taxa, saldo líquido e evolução dos pagamentos.
+              </p>
+            </div>
+
+            <div style={styles.financialSummaryBox}>
+              <div style={styles.financialSummaryTop}>
+                <div>
+                  <p style={styles.financialSummaryEyebrow}>Resumo financeiro</p>
+                  <h4 style={styles.financialSummaryTitle}>
+                    {formatMoney(netAmount, currency)}
+                  </h4>
+                  <p style={styles.financialSummaryHelp}>
+                    Saldo líquido acumulado do torneio.
+                  </p>
+                </div>
+
+                <div style={styles.financialSummaryBadge}>
+                  Atualizado em {formatDateTime(financialUpdatedAt)}
+                </div>
+              </div>
+
+              <div style={styles.financialMetricsGrid}>
+                <FinancialMetric
+                  label="Arrecadado bruto"
+                  value={formatMoney(grossAmount, currency)}
+                />
+                <FinancialMetric
+                  label="Taxa ConnectFish"
+                  value={formatMoney(feeAmount, currency)}
+                />
+                <FinancialMetric
+                  label="Líquido"
+                  value={formatMoney(netAmount, currency)}
+                  accent="green"
+                />
+                <FinancialMetric
+                  label="Disponível"
+                  value={formatMoney(availableAmount, currency)}
+                  accent="emerald"
+                />
+                <FinancialMetric
+                  label="Pendente"
+                  value={formatMoney(pendingAmount, currency)}
+                  accent="amber"
+                />
+                <FinancialMetric
+                  label="Já repassado"
+                  value={formatMoney(paidOutAmount, currency)}
+                />
+                <FinancialMetric
+                  label="Reembolsos"
+                  value={formatMoney(refundedAmount, currency)}
+                />
+                <FinancialMetric
+                  label="Chargeback"
+                  value={formatMoney(chargebackAmount, currency)}
+                />
+              </div>
+
+              <div style={styles.financialInfoRow}>
+                <div style={styles.financialInfoPill}>
+                  💳 Participantes pagos: <strong>{participantsPaidCount}</strong>
+                </div>
+
+                <div style={styles.financialInfoPill}>
+                  👥 Equipes cadastradas: <strong>{teamsCount}</strong>
+                </div>
+              </div>
+
+              <div style={styles.financialActionRow}>
+                <Link
+                  href={`/seller/tournaments/${tournamentId}/registrations`}
+                  style={styles.quickLink}
+                >
+                  Ver inscrições e pagamentos
+                </Link>
+
+                <Link
+                  href={`/seller/tournaments/${tournamentId}/teams`}
+                  style={styles.quickLinkSoft}
+                >
+                  Ver equipes confirmadas
+                </Link>
+              </div>
+            </div>
+          </section>
+
           <section style={styles.card}>
             <div style={styles.sectionHeader}>
               <h3 style={styles.sectionTitle}>Checklist operacional</h3>
@@ -566,7 +753,9 @@ export default function TournamentDashboardClient({ tournamentId }: Props) {
               </p>
             </div>
           </section>
+        </div>
 
+        <div style={styles.mainGrid}>
           <section style={styles.card}>
             <div style={styles.sectionHeader}>
               <h3 style={styles.sectionTitle}>Ações rápidas</h3>
@@ -592,6 +781,13 @@ export default function TournamentDashboardClient({ tournamentId }: Props) {
                 👥 Ver equipes
               </Link>
 
+              <Link
+                href={`/seller/tournaments/${tournamentId}/registrations`}
+                style={styles.quickLink}
+              >
+                💳 Inscrições e pagamentos
+              </Link>
+
               <Link href={`/seller/tournaments/${tournamentId}/edit`} style={styles.quickLinkSoft}>
                 ✏️ Editar dados
               </Link>
@@ -601,9 +797,7 @@ export default function TournamentDashboardClient({ tournamentId }: Props) {
               </Link>
             </div>
           </section>
-        </div>
 
-        <div style={styles.mainGrid}>
           <section style={styles.card}>
             <div style={styles.sectionHeader}>
               <h3 style={styles.sectionTitle}>Resumo técnico</h3>
@@ -636,7 +830,9 @@ export default function TournamentDashboardClient({ tournamentId }: Props) {
               />
             </div>
           </section>
+        </div>
 
+        <div style={styles.mainGrid}>
           <section style={styles.card}>
             <div style={styles.sectionHeader}>
               <h3 style={styles.sectionTitle}>Últimas capturas pendentes</h3>
@@ -665,6 +861,58 @@ export default function TournamentDashboardClient({ tournamentId }: Props) {
                 ))}
               </div>
             )}
+          </section>
+
+          <section style={styles.card}>
+            <div style={styles.sectionHeader}>
+              <h3 style={styles.sectionTitle}>Saúde operacional</h3>
+              <p style={styles.sectionSub}>
+                Leitura rápida do momento atual do torneio.
+              </p>
+            </div>
+
+            <div style={styles.healthList}>
+              <HealthRow
+                label="Publicação"
+                value={status === "draft" ? "Ainda em rascunho" : "Publicado/operando"}
+                tone={status === "draft" ? "amber" : "green"}
+              />
+              <HealthRow
+                label="Financeiro"
+                value={
+                  participantsPaidCount > 0
+                    ? `${participantsPaidCount} pagamento(s) aprovado(s)`
+                    : "Sem pagamentos aprovados ainda"
+                }
+                tone={participantsPaidCount > 0 ? "green" : "slate"}
+              />
+              <HealthRow
+                label="Capturas"
+                value={
+                  pendingCaptures.length > 0
+                    ? `${pendingCaptures.length} pendente(s) de validação`
+                    : "Fila de captura sob controle"
+                }
+                tone={pendingCaptures.length > 0 ? "amber" : "green"}
+              />
+              <HealthRow
+                label="Operação"
+                value={
+                  status === "live"
+                    ? "Torneio em andamento"
+                    : status === "finished"
+                      ? "Torneio encerrado"
+                      : "Aguardando início"
+                }
+                tone={
+                  status === "live"
+                    ? "green"
+                    : status === "finished"
+                      ? "slate"
+                      : "blue"
+                }
+              />
+            </div>
           </section>
         </div>
       </div>
@@ -706,6 +954,84 @@ function InfoCard({ label, value }: { label: string; value: string }) {
     <div style={styles.infoCard}>
       <p style={styles.infoLabel}>{label}</p>
       <p style={styles.infoValue}>{value}</p>
+    </div>
+  );
+}
+
+function FinancialKpiCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "blue" | "green" | "emerald" | "amber";
+}) {
+  const toneStyle =
+    tone === "blue"
+      ? styles.financialKpiBlue
+      : tone === "green"
+        ? styles.financialKpiGreen
+        : tone === "emerald"
+          ? styles.financialKpiEmerald
+          : styles.financialKpiAmber;
+
+  return (
+    <div style={{ ...styles.financialKpiCard, ...toneStyle }}>
+      <p style={styles.financialKpiLabel}>{label}</p>
+      <p style={styles.financialKpiValue}>{value}</p>
+    </div>
+  );
+}
+
+function FinancialMetric({
+  label,
+  value,
+  accent = "default",
+}: {
+  label: string;
+  value: string;
+  accent?: "default" | "green" | "emerald" | "amber";
+}) {
+  const accentStyle =
+    accent === "green"
+      ? styles.financialMetricValueGreen
+      : accent === "emerald"
+        ? styles.financialMetricValueEmerald
+        : accent === "amber"
+          ? styles.financialMetricValueAmber
+          : styles.financialMetricValueDefault;
+
+  return (
+    <div style={styles.financialMetricCard}>
+      <p style={styles.financialMetricLabel}>{label}</p>
+      <p style={{ ...styles.financialMetricValue, ...accentStyle }}>{value}</p>
+    </div>
+  );
+}
+
+function HealthRow({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "green" | "amber" | "blue" | "slate";
+}) {
+  const toneStyle =
+    tone === "green"
+      ? styles.healthToneGreen
+      : tone === "amber"
+        ? styles.healthToneAmber
+        : tone === "blue"
+          ? styles.healthToneBlue
+          : styles.healthToneSlate;
+
+  return (
+    <div style={styles.healthRow}>
+      <span style={styles.healthLabel}>{label}</span>
+      <span style={{ ...styles.healthValue, ...toneStyle }}>{value}</span>
     </div>
   );
 }
@@ -958,6 +1284,45 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 1000,
     color: "#0F172A",
   },
+  financialKpiGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: 12,
+  },
+  financialKpiCard: {
+    borderRadius: 18,
+    padding: 18,
+    border: "1px solid transparent",
+    boxShadow: "0 10px 24px rgba(15,23,42,0.04)",
+  },
+  financialKpiBlue: {
+    background: "#EFF6FF",
+    borderColor: "#BFDBFE",
+  },
+  financialKpiGreen: {
+    background: "#F0FDF4",
+    borderColor: "#BBF7D0",
+  },
+  financialKpiEmerald: {
+    background: "#ECFDF5",
+    borderColor: "#A7F3D0",
+  },
+  financialKpiAmber: {
+    background: "#FFFBEB",
+    borderColor: "#FDE68A",
+  },
+  financialKpiLabel: {
+    margin: 0,
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#64748B",
+  },
+  financialKpiValue: {
+    margin: "10px 0 0 0",
+    fontSize: 24,
+    fontWeight: 1000,
+    color: "#0F172A",
+  },
   mainGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
@@ -986,6 +1351,111 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     fontWeight: 700,
     lineHeight: 1.6,
+  },
+  financialSummaryBox: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+    background: "#F8FAFC",
+    border: "1px solid rgba(15,23,42,0.06)",
+    borderRadius: 18,
+    padding: 16,
+  },
+  financialSummaryTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 14,
+    flexWrap: "wrap",
+  },
+  financialSummaryEyebrow: {
+    margin: 0,
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#64748B",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  financialSummaryTitle: {
+    margin: "8px 0 0 0",
+    fontSize: 30,
+    fontWeight: 1000,
+    color: "#166534",
+  },
+  financialSummaryHelp: {
+    margin: "8px 0 0 0",
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#64748B",
+    lineHeight: 1.6,
+  },
+  financialSummaryBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "8px 12px",
+    borderRadius: 999,
+    background: "#FFFFFF",
+    border: "1px solid rgba(15,23,42,0.08)",
+    color: "#475569",
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  financialMetricsGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 12,
+  },
+  financialMetricCard: {
+    background: "#FFFFFF",
+    border: "1px solid rgba(15,23,42,0.08)",
+    borderRadius: 14,
+    padding: 14,
+  },
+  financialMetricLabel: {
+    margin: 0,
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#64748B",
+  },
+  financialMetricValue: {
+    margin: "8px 0 0 0",
+    fontSize: 18,
+    fontWeight: 1000,
+  },
+  financialMetricValueDefault: {
+    color: "#0F172A",
+  },
+  financialMetricValueGreen: {
+    color: "#166534",
+  },
+  financialMetricValueEmerald: {
+    color: "#047857",
+  },
+  financialMetricValueAmber: {
+    color: "#B45309",
+  },
+  financialInfoRow: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  financialInfoPill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "10px 12px",
+    borderRadius: 999,
+    background: "#FFFFFF",
+    border: "1px solid rgba(15,23,42,0.08)",
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#334155",
+  },
+  financialActionRow: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
   },
   checkList: {
     display: "flex",
@@ -1120,6 +1590,43 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 700,
     color: "#64748B",
     lineHeight: 1.5,
+  },
+  healthList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  healthRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    padding: "12px 14px",
+    borderRadius: 14,
+    background: "#F8FAFC",
+    border: "1px solid rgba(15,23,42,0.06)",
+  },
+  healthLabel: {
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#334155",
+  },
+  healthValue: {
+    fontSize: 13,
+    fontWeight: 900,
+    textAlign: "right",
+  },
+  healthToneGreen: {
+    color: "#166534",
+  },
+  healthToneAmber: {
+    color: "#B45309",
+  },
+  healthToneBlue: {
+    color: "#1D4ED8",
+  },
+  healthToneSlate: {
+    color: "#475569",
   },
   primaryLink: {
     display: "inline-flex",

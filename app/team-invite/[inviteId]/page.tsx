@@ -128,17 +128,41 @@ type TeamMemberDoc = {
   amount: number | null;
   currency: string;
   paymentId: string | null;
+  paymentProvider: string | null;
+  providerPaymentId: string | null;
+  providerCustomerId: string | null;
+  billingType: string | null;
+  dueDate: string | null;
+  externalReference: string | null;
+  checkoutUrl: string | null;
+  asaasInvoiceUrl: string | null;
+  asaasPixQrCode: string | null;
+  asaasPixCopyPaste: string | null;
+  payerEmail: string | null;
   invitedAt: string | null;
   respondedAt: string | null;
   paymentApprovedAt: string | null;
   createdAt: string | null;
 };
 
-type CreateMemberPreferenceResponse = {
+type CreateCheckoutResponse = {
   success: boolean;
-  checkoutUrl?: string;
-  preferenceId?: string;
-  externalReference?: string;
+  reused?: boolean;
+  alreadyApproved?: boolean;
+  paymentId?: string | null;
+  providerPaymentId?: string | null;
+  providerCustomerId?: string | null;
+  billingType?: string | null;
+  dueDate?: string | null;
+  externalReference?: string | null;
+  checkoutUrl?: string | null;
+  charge?: {
+    id?: string | null;
+    invoiceUrl?: string | null;
+    pixQrCode?: string | null;
+    pixCopyPaste?: string | null;
+    raw?: unknown;
+  } | null;
   message?: string;
 };
 
@@ -581,10 +605,14 @@ export default function TeamInvitePage({ params }: PageProps) {
       const mappedTournament: TournamentPublic = {
         id: tournamentSnap.id,
         slug: compactSpaces(tournamentRaw.slug) || null,
-        title: compactSpaces(tournamentRaw.title || mappedInvite.tournamentTitle || "Torneio"),
+        title: compactSpaces(
+          tournamentRaw.title || mappedInvite.tournamentTitle || "Torneio"
+        ),
         subtitle: compactSpaces(tournamentRaw.subtitle) || null,
         location: compactSpaces(tournamentRaw.location || "Local não definido"),
-        description: tournamentRaw.description ? String(tournamentRaw.description) : null,
+        description: tournamentRaw.description
+          ? String(tournamentRaw.description)
+          : null,
         coverImageUrl: tournamentRaw.coverImageUrl
           ? String(tournamentRaw.coverImageUrl)
           : null,
@@ -648,11 +676,24 @@ export default function TeamInvitePage({ params }: PageProps) {
             photoUrl: compactSpaces(raw.photoUrl) || null,
             role: compactSpaces(raw.role) || "member",
             inviteStatus: normalizeInviteStatus(raw.inviteStatus),
-            registrationStatus: normalizeMemberRegistrationStatus(raw.registrationStatus),
+            registrationStatus: normalizeMemberRegistrationStatus(
+              raw.registrationStatus
+            ),
             paymentStatus: normalizeMemberPaymentStatus(raw.paymentStatus),
             amount: typeof raw.amount === "number" ? raw.amount : null,
             currency: compactSpaces(raw.currency).toUpperCase() || "BRL",
             paymentId: compactSpaces(raw.paymentId) || null,
+            paymentProvider: compactSpaces(raw.paymentProvider) || null,
+            providerPaymentId: compactSpaces(raw.providerPaymentId) || null,
+            providerCustomerId: compactSpaces(raw.providerCustomerId) || null,
+            billingType: compactSpaces(raw.billingType) || null,
+            dueDate: compactSpaces(raw.dueDate) || null,
+            externalReference: compactSpaces(raw.externalReference) || null,
+            checkoutUrl: compactSpaces(raw.checkoutUrl) || null,
+            asaasInvoiceUrl: compactSpaces(raw.asaasInvoiceUrl) || null,
+            asaasPixQrCode: compactSpaces(raw.asaasPixQrCode) || null,
+            asaasPixCopyPaste: compactSpaces(raw.asaasPixCopyPaste) || null,
+            payerEmail: compactSpaces(raw.payerEmail) || null,
             invitedAt: toIsoStringSafe(raw.invitedAt),
             respondedAt: toIsoStringSafe(raw.respondedAt),
             paymentApprovedAt: toIsoStringSafe(raw.paymentApprovedAt),
@@ -676,8 +717,9 @@ export default function TeamInvitePage({ params }: PageProps) {
 
       if (mappedInvite.teamMemberDocId) {
         current =
-          mappedMembers.find((member) => member.id === mappedInvite.teamMemberDocId) ||
-          null;
+          mappedMembers.find(
+            (member) => member.id === mappedInvite.teamMemberDocId
+          ) || null;
       }
 
       if (!current) {
@@ -766,6 +808,20 @@ export default function TeamInvitePage({ params }: PageProps) {
     setMessage(null);
 
     try {
+      if (currentMember.paymentStatus === "approved") {
+        setMessage("Seu pagamento já foi aprovado.");
+        return;
+      }
+
+      const existingCheckoutUrl =
+        currentMember.checkoutUrl || currentMember.asaasInvoiceUrl;
+
+      if (existingCheckoutUrl) {
+        setMessage("Redirecionando para o pagamento...");
+        window.location.assign(existingCheckoutUrl);
+        return;
+      }
+
       const auth = getAuth();
       const user = auth.currentUser;
 
@@ -775,7 +831,7 @@ export default function TeamInvitePage({ params }: PageProps) {
 
       const idToken = await user.getIdToken(true);
 
-      const response = await fetch("/api/mercadopago/create-member-preference", {
+      const response = await fetch("/api/payments/asaas/create-checkout", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -783,19 +839,23 @@ export default function TeamInvitePage({ params }: PageProps) {
         },
         body: JSON.stringify({
           tournamentId: tournament.id,
-          teamId: team.teamId,
+          teamId: team.id,
+          teamMemberId: currentMember.id,
           source: "team_invite_checkout_page",
         }),
       });
 
-      const data = (await response.json()) as CreateMemberPreferenceResponse;
+      const data = (await response.json()) as CreateCheckoutResponse;
 
-      if (!response.ok || !data.success || !data.checkoutUrl) {
+      const checkoutUrl =
+        data.checkoutUrl || data.charge?.invoiceUrl || null;
+
+      if (!response.ok || !data.success || !checkoutUrl) {
         throw new Error(data.message || "Não foi possível iniciar o pagamento.");
       }
 
       setMessage("Redirecionando para o pagamento...");
-      window.location.assign(data.checkoutUrl);
+      window.location.assign(checkoutUrl);
     } catch (err) {
       console.error("Erro ao iniciar pagamento individual:", err);
       setMessage(null);
@@ -950,7 +1010,11 @@ export default function TeamInvitePage({ params }: PageProps) {
                 />
                 <SummaryRow
                   label="Pagamento"
-                  value={team?.paymentMode === "individual" ? "Individual" : team?.paymentMode || invite?.paymentMode || "Individual"}
+                  value={
+                    team?.paymentMode === "individual"
+                      ? "Individual"
+                      : team?.paymentMode || invite?.paymentMode || "Individual"
+                  }
                 />
               </div>
             </section>

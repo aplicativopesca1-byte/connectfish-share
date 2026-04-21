@@ -413,6 +413,7 @@ export async function POST(request: NextRequest) {
       captainPhotoUrl: captain.photoUrl,
 
       paymentMode: "individual",
+      paymentProvider: "asaas",
       teamStatus,
 
       maxMembers: MAX_ADDITIONAL_MEMBERS,
@@ -452,6 +453,7 @@ export async function POST(request: NextRequest) {
       inviteStatus: "accepted",
       registrationStatus: "awaiting_payment",
       paymentStatus: "pending",
+      paymentStatusDetail: null,
 
       amount: amountPerParticipant,
       currency,
@@ -462,10 +464,17 @@ export async function POST(request: NextRequest) {
       paymentStartedAt: null,
       paymentApprovedAt: null,
 
-      paymentProvider: "mercado_pago",
+      paymentProvider: "asaas",
       paymentId: null,
+      providerPaymentId: null,
+      providerCustomerId: null,
       preferenceId: null,
       externalReference: null,
+      checkoutUrl: null,
+      asaasInvoiceUrl: null,
+      asaasPixQrCode: null,
+      asaasPixCopyPaste: null,
+      payerEmail: captain.email || null,
 
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
@@ -496,6 +505,7 @@ export async function POST(request: NextRequest) {
         inviteStatus: "pending",
         registrationStatus: "invited",
         paymentStatus: "pending",
+        paymentStatusDetail: null,
 
         amount: amountPerParticipant,
         currency,
@@ -506,10 +516,17 @@ export async function POST(request: NextRequest) {
         paymentStartedAt: null,
         paymentApprovedAt: null,
 
-        paymentProvider: "mercado_pago",
+        paymentProvider: "asaas",
         paymentId: null,
+        providerPaymentId: null,
+        providerCustomerId: null,
         preferenceId: null,
         externalReference: null,
+        checkoutUrl: null,
+        asaasInvoiceUrl: null,
+        asaasPixQrCode: null,
+        asaasPixCopyPaste: null,
+        payerEmail: member.email || null,
 
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
@@ -536,6 +553,7 @@ export async function POST(request: NextRequest) {
         amount: amountPerParticipant,
         currency,
         paymentMode: "individual",
+        paymentProvider: "asaas",
 
         source,
 

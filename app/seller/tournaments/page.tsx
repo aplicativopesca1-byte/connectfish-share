@@ -6,6 +6,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   orderBy,
   query,
@@ -30,6 +31,23 @@ type Tournament = {
   boundaryCompleted: boolean;
   publishReady: boolean;
   missingFields: string[];
+  currency?: string;
+};
+
+type TournamentFinancial = {
+  tournamentId?: string;
+  organizerUserId?: string;
+  currency?: string;
+  grossAmount?: number;
+  approvedAmount?: number;
+  refundedAmount?: number;
+  chargebackAmount?: number;
+  feeAmount?: number;
+  netAmount?: number;
+  pendingAmount?: number;
+  availableAmount?: number;
+  paidOutAmount?: number;
+  participantsPaidCount?: number;
 };
 
 function normalizeStatus(status: unknown): TournamentStatus {
@@ -51,6 +69,23 @@ function normalizeVisibility(value: unknown): TournamentVisibility {
   }
 
   return "draft";
+}
+
+function normalizeCurrency(value: unknown) {
+  return String(value ?? "").trim().toUpperCase() || "BRL";
+}
+
+function normalizeMoney(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Number(parsed.toFixed(2));
+}
+
+function formatMoney(value: unknown, currency = "BRL") {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: normalizeCurrency(currency),
+  }).format(normalizeMoney(value));
 }
 
 function getStatusMeta(status: TournamentStatus) {
@@ -156,6 +191,9 @@ function getProgressLabel(tournament: Tournament) {
 
 export default function SellerTournamentsPage() {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [financialMap, setFinancialMap] = useState<Record<string, TournamentFinancial>>(
+    {}
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -198,19 +236,19 @@ export default function SellerTournamentsPage() {
           raw.visibility !== undefined
             ? normalizeVisibility(raw.visibility)
             : status === "draft"
-            ? "draft"
-            : "published";
+              ? "draft"
+              : "published";
 
         const setupStep =
           typeof raw.setupStep === "number" && raw.setupStep >= 1 && raw.setupStep <= 3
             ? raw.setupStep
             : publishReady
-            ? 3
-            : boundaryCompleted
-            ? 3
-            : basicsCompleted
-            ? 2
-            : 1;
+              ? 3
+              : boundaryCompleted
+                ? 3
+                : basicsCompleted
+                  ? 2
+                  : 1;
 
         const missingFields = normalizeMissingFields(raw.missingFields);
 
@@ -229,10 +267,33 @@ export default function SellerTournamentsPage() {
           boundaryCompleted,
           publishReady,
           missingFields,
+          currency: normalizeCurrency(raw.currency),
         };
       });
 
+      const nextFinancialMap: Record<string, TournamentFinancial> = {};
+
+      await Promise.all(
+        snap.docs.map(async (docSnap) => {
+          try {
+            const financialRef = doc(db, "tournamentFinancials", docSnap.id);
+            const financialSnap = await getDoc(financialRef);
+
+            if (financialSnap.exists()) {
+              nextFinancialMap[docSnap.id] =
+                financialSnap.data() as TournamentFinancial;
+            }
+          } catch (financialError) {
+            console.error(
+              `Erro ao carregar financeiro do torneio ${docSnap.id}:`,
+              financialError
+            );
+          }
+        })
+      );
+
       setTournaments(data);
+      setFinancialMap(nextFinancialMap);
     } catch (err) {
       console.error("Erro carregando torneios", err);
       setError("Não foi possível carregar os torneios.");
@@ -259,6 +320,12 @@ export default function SellerTournamentsPage() {
       setTournaments((current) =>
         current.filter((item) => item.id !== tournament.id)
       );
+
+      setFinancialMap((current) => {
+        const next = { ...current };
+        delete next[tournament.id];
+        return next;
+      });
     } catch (err) {
       console.error("Erro ao excluir rascunho:", err);
       setError("Não foi possível excluir o rascunho.");
@@ -277,6 +344,30 @@ export default function SellerTournamentsPage() {
       public: tournaments.filter((item) => item.visibility === "published").length,
     };
   }, [tournaments]);
+
+  const financialTotals = useMemo(() => {
+    const items = Object.values(financialMap);
+
+    return {
+      grossAmount: items.reduce(
+        (sum, item) => sum + normalizeMoney(item.grossAmount),
+        0
+      ),
+      netAmount: items.reduce((sum, item) => sum + normalizeMoney(item.netAmount), 0),
+      availableAmount: items.reduce(
+        (sum, item) => sum + normalizeMoney(item.availableAmount),
+        0
+      ),
+      pendingAmount: items.reduce(
+        (sum, item) => sum + normalizeMoney(item.pendingAmount),
+        0
+      ),
+      participantsPaidCount: items.reduce(
+        (sum, item) => sum + Number(item.participantsPaidCount || 0),
+        0
+      ),
+    };
+  }, [financialMap]);
 
   if (loading) {
     return (
@@ -319,6 +410,34 @@ export default function SellerTournamentsPage() {
             <StatCard label="Finalizados" value={String(stats.finished)} />
             <StatCard label="Visíveis ao público" value={String(stats.public)} />
           </div>
+
+          <div style={styles.financeSummaryGrid}>
+            <FinanceSummaryCard
+              label="Arrecadado total"
+              value={formatMoney(financialTotals.grossAmount)}
+              tone="blue"
+            />
+            <FinanceSummaryCard
+              label="Líquido total"
+              value={formatMoney(financialTotals.netAmount)}
+              tone="green"
+            />
+            <FinanceSummaryCard
+              label="Disponível"
+              value={formatMoney(financialTotals.availableAmount)}
+              tone="emerald"
+            />
+            <FinanceSummaryCard
+              label="Pendente"
+              value={formatMoney(financialTotals.pendingAmount)}
+              tone="amber"
+            />
+            <FinanceSummaryCard
+              label="Participantes pagos"
+              value={String(financialTotals.participantsPaidCount)}
+              tone="slate"
+            />
+          </div>
         </section>
 
         {error ? (
@@ -360,6 +479,10 @@ export default function SellerTournamentsPage() {
               const completedSteps = getSetupProgress(tournament);
               const isDraft = tournament.status === "draft";
               const isDeleting = deletingId === tournament.id;
+              const financial = financialMap[tournament.id];
+              const tournamentCurrency = normalizeCurrency(
+                financial?.currency || tournament.currency || "BRL"
+              );
 
               return (
                 <article key={tournament.id} style={styles.card}>
@@ -445,10 +568,80 @@ export default function SellerTournamentsPage() {
                       />
                       <StepBadge
                         label="3. Publicação"
-                        done={tournament.publishReady && tournament.visibility === "published"}
+                        done={
+                          tournament.publishReady &&
+                          tournament.visibility === "published"
+                        }
                       />
                     </div>
                   </div>
+
+                  {financial ? (
+                    <div style={styles.financialCard}>
+                      <div style={styles.financialHeader}>
+                        <p style={styles.financialTitle}>💰 Financeiro</p>
+                        <span style={styles.financialBadge}>Ao vivo</span>
+                      </div>
+
+                      <div style={styles.financialGrid}>
+                        <div style={styles.financialMetric}>
+                          <span style={styles.financialMetricLabel}>Arrecadado</span>
+                          <strong style={styles.financialMetricValue}>
+                            {formatMoney(financial.grossAmount, tournamentCurrency)}
+                          </strong>
+                        </div>
+
+                        <div style={styles.financialMetric}>
+                          <span style={styles.financialMetricLabel}>Líquido</span>
+                          <strong style={styles.financialMetricValue}>
+                            {formatMoney(financial.netAmount, tournamentCurrency)}
+                          </strong>
+                        </div>
+
+                        <div style={styles.financialMetric}>
+                          <span style={styles.financialMetricLabel}>Disponível</span>
+                          <strong style={styles.financialMetricValueSuccess}>
+                            {formatMoney(
+                              financial.availableAmount,
+                              tournamentCurrency
+                            )}
+                          </strong>
+                        </div>
+
+                        <div style={styles.financialMetric}>
+                          <span style={styles.financialMetricLabel}>Pendente</span>
+                          <strong style={styles.financialMetricValueWarning}>
+                            {formatMoney(financial.pendingAmount, tournamentCurrency)}
+                          </strong>
+                        </div>
+                      </div>
+
+                      <div style={styles.financialFooter}>
+                        <div style={styles.financialRow}>
+                          <span style={styles.financialRowLabel}>Taxa ConnectFish</span>
+                          <strong style={styles.financialRowValue}>
+                            {formatMoney(financial.feeAmount, tournamentCurrency)}
+                          </strong>
+                        </div>
+
+                        <div style={styles.financialRow}>
+                          <span style={styles.financialRowLabel}>
+                            Participantes pagos
+                          </span>
+                          <strong style={styles.financialRowValue}>
+                            {Number(financial.participantsPaidCount || 0)}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={styles.financialEmptyCard}>
+                      <p style={styles.financialEmptyTitle}>💰 Financeiro</p>
+                      <p style={styles.financialEmptyText}>
+                        Ainda não há lançamentos financeiros para este torneio.
+                      </p>
+                    </div>
+                  )}
 
                   {tournament.missingFields.length > 0 ? (
                     <div style={styles.pendingCard}>
@@ -557,6 +750,34 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+function FinanceSummaryCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "blue" | "green" | "emerald" | "amber" | "slate";
+}) {
+  const toneStyle =
+    tone === "blue"
+      ? styles.financeSummaryBlue
+      : tone === "green"
+        ? styles.financeSummaryGreen
+        : tone === "emerald"
+          ? styles.financeSummaryEmerald
+          : tone === "amber"
+            ? styles.financeSummaryAmber
+            : styles.financeSummarySlate;
+
+  return (
+    <div style={{ ...styles.financeSummaryCard, ...toneStyle }}>
+      <p style={styles.financeSummaryLabel}>{label}</p>
+      <p style={styles.financeSummaryValue}>{value}</p>
+    </div>
+  );
+}
+
 function StepBadge({
   label,
   done,
@@ -658,6 +879,58 @@ const styles: Record<string, CSSProperties> = {
   statValue: {
     margin: "6px 0 0 0",
     fontSize: 22,
+    fontWeight: 1000,
+    color: "#0F172A",
+  },
+
+  financeSummaryGrid: {
+    marginTop: 14,
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+    gap: 12,
+  },
+
+  financeSummaryCard: {
+    borderRadius: 18,
+    padding: 14,
+    border: "1px solid transparent",
+  },
+
+  financeSummaryBlue: {
+    background: "#EFF6FF",
+    borderColor: "#BFDBFE",
+  },
+
+  financeSummaryGreen: {
+    background: "#F0FDF4",
+    borderColor: "#BBF7D0",
+  },
+
+  financeSummaryEmerald: {
+    background: "#ECFDF5",
+    borderColor: "#A7F3D0",
+  },
+
+  financeSummaryAmber: {
+    background: "#FFFBEB",
+    borderColor: "#FDE68A",
+  },
+
+  financeSummarySlate: {
+    background: "#F8FAFC",
+    borderColor: "#E2E8F0",
+  },
+
+  financeSummaryLabel: {
+    margin: 0,
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#64748B",
+  },
+
+  financeSummaryValue: {
+    margin: "8px 0 0 0",
+    fontSize: 20,
     fontWeight: 1000,
     color: "#0F172A",
   },
@@ -907,6 +1180,133 @@ const styles: Record<string, CSSProperties> = {
   stepBadgeText: {
     fontSize: 12,
     fontWeight: 900,
+  },
+
+  financialCard: {
+    background: "#F0FDF4",
+    border: "1px solid #BBF7D0",
+    borderRadius: 16,
+    padding: 14,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+
+  financialHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+
+  financialTitle: {
+    margin: 0,
+    fontSize: 14,
+    fontWeight: 1000,
+    color: "#166534",
+  },
+
+  financialBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "6px 10px",
+    borderRadius: 999,
+    background: "#DCFCE7",
+    color: "#166534",
+    fontSize: 11,
+    fontWeight: 1000,
+  },
+
+  financialGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 10,
+  },
+
+  financialMetric: {
+    background: "#FFFFFF",
+    border: "1px solid rgba(22,101,52,0.08)",
+    borderRadius: 14,
+    padding: 12,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+
+  financialMetricLabel: {
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#64748B",
+  },
+
+  financialMetricValue: {
+    fontSize: 16,
+    fontWeight: 1000,
+    color: "#0F172A",
+  },
+
+  financialMetricValueSuccess: {
+    fontSize: 16,
+    fontWeight: 1000,
+    color: "#166534",
+  },
+
+  financialMetricValueWarning: {
+    fontSize: 16,
+    fontWeight: 1000,
+    color: "#B45309",
+  },
+
+  financialFooter: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+
+  financialRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
+
+  financialRowLabel: {
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#475569",
+  },
+
+  financialRowValue: {
+    fontSize: 13,
+    fontWeight: 1000,
+    color: "#0F172A",
+  },
+
+  financialEmptyCard: {
+    background: "#F8FAFC",
+    border: "1px solid rgba(15,23,42,0.08)",
+    borderRadius: 16,
+    padding: 14,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+
+  financialEmptyTitle: {
+    margin: 0,
+    fontSize: 14,
+    fontWeight: 1000,
+    color: "#0F172A",
+  },
+
+  financialEmptyText: {
+    margin: 0,
+    fontSize: 13,
+    lineHeight: 1.6,
+    fontWeight: 700,
+    color: "#64748B",
   },
 
   pendingCard: {
