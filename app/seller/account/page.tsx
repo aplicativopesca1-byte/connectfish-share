@@ -10,13 +10,13 @@ import {
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import {
-  getOrganizerPaymentProfile,
   isOrganizerFinanciallyReady,
   type OrganizerKycStatus,
   type OrganizerPaymentProfile,
   type OrganizerPersonType,
 } from "../../../app/services/organizerPaymentProfileService";
 
+const ORGANIZER_PROFILE_API_ENDPOINT = "/api/finance/organizer/profile";
 const ONBOARDING_API_ENDPOINT = "/api/finance/organizer/onboarding";
 const ORGANIZER_DOCUMENTS_API_ENDPOINT = "/api/finance/organizer/documents";
 
@@ -117,10 +117,19 @@ function getStatusDescription(
   return "Preencha seus dados para ativar a conta de organizador.";
 }
 
-function getStatusBadgeStyle(status: OrganizerKycStatus): CSSProperties {
+function getStatusBadgeStyle(
+  status: OrganizerKycStatus,
+  isMobile: boolean
+): CSSProperties {
+  const base = {
+    ...styles.badge,
+    width: isMobile ? "100%" : "auto",
+    justifyContent: "center" as const,
+  };
+
   if (status === "approved") {
     return {
-      ...styles.badge,
+      ...base,
       background: "#DCFCE7",
       color: "#166534",
     };
@@ -128,7 +137,7 @@ function getStatusBadgeStyle(status: OrganizerKycStatus): CSSProperties {
 
   if (status === "pending") {
     return {
-      ...styles.badge,
+      ...base,
       background: "#FEF3C7",
       color: "#92400E",
     };
@@ -136,7 +145,7 @@ function getStatusBadgeStyle(status: OrganizerKycStatus): CSSProperties {
 
   if (status === "rejected") {
     return {
-      ...styles.badge,
+      ...base,
       background: "#FEE2E2",
       color: "#991B1B",
     };
@@ -144,14 +153,14 @@ function getStatusBadgeStyle(status: OrganizerKycStatus): CSSProperties {
 
   if (status === "draft") {
     return {
-      ...styles.badge,
+      ...base,
       background: "#DBEAFE",
       color: "#1D4ED8",
     };
   }
 
   return {
-    ...styles.badge,
+    ...base,
     background: "#E5E7EB",
     color: "#374151",
   };
@@ -236,6 +245,8 @@ export default function OrganizerAccountPage() {
     loading?: boolean;
   };
 
+  const [isMobile, setIsMobile] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [documentsLoading, setDocumentsLoading] = useState(false);
@@ -268,6 +279,17 @@ export default function OrganizerAccountPage() {
 
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const checkScreen = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+
+    checkScreen();
+    window.addEventListener("resize", checkScreen);
+
+    return () => window.removeEventListener("resize", checkScreen);
+  }, []);
 
   const status = useMemo(
     () => normalizeStatus(profile, financialReady),
@@ -331,7 +353,26 @@ export default function OrganizerAccountPage() {
       setLoading(true);
       setError(null);
 
-      const nextProfile = await getOrganizerPaymentProfile(userId);
+      const response = await fetch(
+        `${ORGANIZER_PROFILE_API_ENDPOINT}?organizerUserId=${encodeURIComponent(
+          userId
+        )}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        }
+      );
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || !result?.success) {
+        throw new Error(
+          safeTrim(result?.message) ||
+            "Não foi possível carregar sua conta de organizador."
+        );
+      }
+
+      const nextProfile = (result?.profile || null) as OrganizerPaymentProfile | null;
       const nextReady = isOrganizerFinanciallyReady(nextProfile);
 
       setProfile(nextProfile);
@@ -359,7 +400,11 @@ export default function OrganizerAccountPage() {
       setTermsAccepted(Boolean(nextProfile?.termsAcceptedAt));
     } catch (loadError) {
       console.error("Erro ao carregar conta do organizador:", loadError);
-      setError("Não foi possível carregar sua conta de organizador.");
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Não foi possível carregar sua conta de organizador."
+      );
     } finally {
       setLoading(false);
     }
@@ -489,11 +534,114 @@ export default function OrganizerAccountPage() {
     window.open(onboardingUrl, "_blank", "noopener,noreferrer");
   }
 
+  const pageStyle: CSSProperties = {
+    ...styles.page,
+    padding: isMobile ? "16px 12px 32px" : "24px 16px 40px",
+  };
+
+  const heroCardStyle: CSSProperties = {
+    ...styles.heroCard,
+    maxWidth: isMobile ? "100%" : 1180,
+    padding: isMobile ? 16 : 22,
+    borderRadius: isMobile ? 18 : 24,
+  };
+
+  const cardStyle: CSSProperties = {
+    ...styles.card,
+    padding: isMobile ? 16 : 22,
+    borderRadius: isMobile ? 18 : 24,
+  };
+
+  const heroTopStyle: CSSProperties = {
+    ...styles.heroTop,
+    flexDirection: isMobile ? "column" : "row",
+    alignItems: isMobile ? "stretch" : "flex-start",
+    gap: isMobile ? 12 : 16,
+  };
+
+  const heroGridStyle: CSSProperties = {
+    ...styles.heroGrid,
+    gridTemplateColumns: isMobile
+      ? "1fr"
+      : "repeat(auto-fit, minmax(220px, 1fr))",
+  };
+
+  const formGridStyle: CSSProperties = {
+    ...styles.formGrid,
+    gridTemplateColumns: isMobile
+      ? "1fr"
+      : "repeat(auto-fit, minmax(240px, 1fr))",
+    gap: isMobile ? 12 : 14,
+  };
+
+  const checkGridStyle: CSSProperties = {
+    ...styles.checkGrid,
+    gridTemplateColumns: isMobile
+      ? "1fr"
+      : "repeat(auto-fit, minmax(230px, 1fr))",
+  };
+
+  const footerActionsStyle: CSSProperties = {
+    ...styles.footerActions,
+    flexDirection: isMobile ? "column" : "row",
+    alignItems: isMobile ? "stretch" : "center",
+  };
+
+  const secondaryButtonStyle: CSSProperties = {
+    ...styles.secondaryButton,
+    width: isMobile ? "100%" : "auto",
+  };
+
+  const primaryButtonStyle: CSSProperties = {
+    ...styles.primaryButton,
+    width: isMobile ? "100%" : "auto",
+  };
+
+  const pageTitleStyle: CSSProperties = {
+    ...styles.pageTitle,
+    fontSize: isMobile ? 22 : 28,
+    lineHeight: isMobile ? 1.2 : 1.1,
+  };
+
+  const pageSubStyle: CSSProperties = {
+    ...styles.pageSub,
+    fontSize: isMobile ? 13 : 14,
+    lineHeight: isMobile ? 1.5 : 1.6,
+    maxWidth: "100%",
+  };
+
+  const inputStyle: CSSProperties = {
+    ...styles.input,
+    minHeight: isMobile ? 52 : 48,
+    fontSize: isMobile ? 16 : 14,
+  };
+
+  const toggleRowStyle: CSSProperties = {
+    ...styles.toggleRow,
+    flexDirection: isMobile ? "column" : "row",
+  };
+
+  const segmentButtonStyle: CSSProperties = {
+    ...styles.segmentButton,
+    width: isMobile ? "100%" : "auto",
+  };
+
+  const segmentActiveStyle: CSSProperties = {
+    ...styles.segmentActive,
+    width: isMobile ? "100%" : "auto",
+  };
+
+  const pendingActionRowStyle: CSSProperties = {
+    ...styles.pendingActionRow,
+    flexDirection: isMobile ? "column" : "row",
+    alignItems: isMobile ? "stretch" : "center",
+  };
+
   if (loading) {
     return (
-      <main style={styles.page}>
-        <section style={styles.heroCard}>
-          <h1 style={styles.pageTitle}>Conta de organizador</h1>
+      <main style={pageStyle}>
+        <section style={heroCardStyle}>
+          <h1 style={pageTitleStyle}>Conta de organizador</h1>
           <p style={styles.muted}>Carregando seu cadastro financeiro...</p>
         </section>
       </main>
@@ -501,23 +649,25 @@ export default function OrganizerAccountPage() {
   }
 
   return (
-    <main style={styles.page}>
-      <section style={styles.heroCard}>
-        <div style={styles.heroTop}>
+    <main style={pageStyle}>
+      <section style={heroCardStyle}>
+        <div style={heroTopStyle}>
           <div>
-            <h1 style={styles.pageTitle}>Conta de organizador</h1>
-            <p style={styles.pageSub}>
+            <h1 style={pageTitleStyle}>Conta de organizador</h1>
+            <p style={pageSubStyle}>
               Complete seu cadastro para criar torneios e receber inscrições com
               segurança.
             </p>
           </div>
 
           <div style={styles.heroActions}>
-            <span style={getStatusBadgeStyle(status)}>{getStatusLabel(status)}</span>
+            <span style={getStatusBadgeStyle(status, isMobile)}>
+              {getStatusLabel(status)}
+            </span>
           </div>
         </div>
 
-        <div style={styles.heroGrid}>
+        <div style={heroGridStyle}>
           <PreviewCard
             label="Status financeiro"
             value={getStatusLabel(status)}
@@ -549,7 +699,7 @@ export default function OrganizerAccountPage() {
       {error ? <div style={styles.errorBox}>{error}</div> : null}
 
       {status === "pending" && hasPendingDocs ? (
-        <section style={styles.card}>
+        <section style={cardStyle}>
           <div style={styles.sectionHeader}>
             <h2 style={styles.sectionTitle}>Ação necessária</h2>
             <p style={styles.sectionSub}>
@@ -561,10 +711,10 @@ export default function OrganizerAccountPage() {
             Sua conta precisa de validação adicional, como documentos ou selfie.
           </div>
 
-          <div style={styles.pendingActionRow}>
+          <div style={pendingActionRowStyle}>
             <button
               type="button"
-              style={styles.primaryButton}
+              style={primaryButtonStyle}
               disabled={!onboardingUrl || documentsLoading}
               onClick={handleOpenOnboarding}
             >
@@ -576,7 +726,7 @@ export default function OrganizerAccountPage() {
         </section>
       ) : null}
 
-      <section style={styles.card}>
+      <section style={cardStyle}>
         <div style={styles.sectionHeader}>
           <h2 style={styles.sectionTitle}>Checklist para liberar torneios pagos</h2>
           <p style={styles.sectionSub}>
@@ -584,7 +734,7 @@ export default function OrganizerAccountPage() {
           </p>
         </div>
 
-        <div style={styles.checkGrid}>
+        <div style={checkGridStyle}>
           <CheckItem
             done={missingChecklist.length === 0}
             label="Campos obrigatórios preenchidos"
@@ -608,7 +758,7 @@ export default function OrganizerAccountPage() {
       </section>
 
       <form onSubmit={handleSubmit} style={styles.formStack}>
-        <section style={styles.card}>
+        <section style={cardStyle}>
           <div style={styles.sectionHeader}>
             <h2 style={styles.sectionTitle}>Tipo de cadastro</h2>
             <p style={styles.sectionSub}>
@@ -616,7 +766,7 @@ export default function OrganizerAccountPage() {
             </p>
           </div>
 
-          <div style={styles.toggleRow}>
+          <div style={toggleRowStyle}>
             <button
               type="button"
               onClick={() => {
@@ -625,8 +775,8 @@ export default function OrganizerAccountPage() {
               }}
               style={
                 personType === "FISICA"
-                  ? styles.segmentActive
-                  : styles.segmentButton
+                  ? segmentActiveStyle
+                  : segmentButtonStyle
               }
             >
               Pessoa física
@@ -640,8 +790,8 @@ export default function OrganizerAccountPage() {
               }}
               style={
                 personType === "JURIDICA"
-                  ? styles.segmentActive
-                  : styles.segmentButton
+                  ? segmentActiveStyle
+                  : segmentButtonStyle
               }
             >
               Pessoa jurídica
@@ -649,7 +799,7 @@ export default function OrganizerAccountPage() {
           </div>
         </section>
 
-        <section style={styles.card}>
+        <section style={cardStyle}>
           <div style={styles.sectionHeader}>
             <h2 style={styles.sectionTitle}>Dados do recebedor</h2>
             <p style={styles.sectionSub}>
@@ -657,7 +807,7 @@ export default function OrganizerAccountPage() {
             </p>
           </div>
 
-          <div style={styles.formGrid}>
+          <div style={formGridStyle}>
             {personType === "FISICA" ? (
               <Field label="Nome completo *">
                 <input
@@ -667,7 +817,7 @@ export default function OrganizerAccountPage() {
                     clearFeedback();
                     setFullName(e.target.value);
                   }}
-                  style={styles.input}
+                  style={inputStyle}
                   placeholder="Nome completo do organizador"
                 />
               </Field>
@@ -680,7 +830,7 @@ export default function OrganizerAccountPage() {
                     clearFeedback();
                     setCompanyName(e.target.value);
                   }}
-                  style={styles.input}
+                  style={inputStyle}
                   placeholder="Nome da empresa"
                 />
               </Field>
@@ -694,7 +844,7 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setCpfCnpj(maskCpfCnpj(e.target.value));
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder={
                   personType === "FISICA"
                     ? "000.000.000-00"
@@ -711,7 +861,7 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setContactEmail(e.target.value);
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder="seu@email.com"
               />
             </Field>
@@ -727,7 +877,7 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setBirthDate(e.target.value);
                 }}
-                style={styles.input}
+                style={inputStyle}
               />
             </Field>
 
@@ -739,7 +889,7 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setPhone(maskPhone(e.target.value));
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder="(00) 0000-0000"
               />
             </Field>
@@ -752,14 +902,14 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setMobilePhone(maskPhone(e.target.value));
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder="(00) 00000-0000"
               />
             </Field>
           </div>
         </section>
 
-        <section style={styles.card}>
+        <section style={cardStyle}>
           <div style={styles.sectionHeader}>
             <h2 style={styles.sectionTitle}>Endereço do cadastro</h2>
             <p style={styles.sectionSub}>
@@ -767,7 +917,7 @@ export default function OrganizerAccountPage() {
             </p>
           </div>
 
-          <div style={styles.formGrid}>
+          <div style={formGridStyle}>
             <Field label="CEP *">
               <input
                 type="text"
@@ -776,7 +926,7 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setPostalCode(maskPostalCode(e.target.value));
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder="00000-000"
               />
             </Field>
@@ -789,7 +939,7 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setAddress(e.target.value);
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder="Rua, avenida, etc."
               />
             </Field>
@@ -802,7 +952,7 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setAddressNumber(e.target.value);
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder="123"
               />
             </Field>
@@ -815,7 +965,7 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setComplement(e.target.value);
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder="Sala, bloco, ap."
               />
             </Field>
@@ -828,7 +978,7 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setProvince(e.target.value);
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder="Bairro"
               />
             </Field>
@@ -841,7 +991,7 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setCity(e.target.value);
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder="Cidade"
               />
             </Field>
@@ -854,7 +1004,7 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setStateValue(e.target.value.toUpperCase().slice(0, 2));
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder="SP"
                 maxLength={2}
               />
@@ -862,7 +1012,7 @@ export default function OrganizerAccountPage() {
           </div>
         </section>
 
-        <section style={styles.card}>
+        <section style={cardStyle}>
           <div style={styles.sectionHeader}>
             <h2 style={styles.sectionTitle}>Resumo financeiro interno</h2>
             <p style={styles.sectionSub}>
@@ -870,7 +1020,7 @@ export default function OrganizerAccountPage() {
             </p>
           </div>
 
-          <div style={styles.formGrid}>
+          <div style={formGridStyle}>
             <Field label="Resumo da conta bancária">
               <input
                 type="text"
@@ -879,7 +1029,7 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setBankAccountSummary(e.target.value);
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder="Banco, agência e final da conta"
               />
             </Field>
@@ -892,14 +1042,14 @@ export default function OrganizerAccountPage() {
                   clearFeedback();
                   setPixKeySummary(e.target.value);
                 }}
-                style={styles.input}
+                style={inputStyle}
                 placeholder="CPF, e-mail, telefone ou aleatória"
               />
             </Field>
           </div>
         </section>
 
-        <section style={styles.card}>
+        <section style={cardStyle}>
           <div style={styles.sectionHeader}>
             <h2 style={styles.sectionTitle}>Confirmação final</h2>
             <p style={styles.sectionSub}>
@@ -922,16 +1072,20 @@ export default function OrganizerAccountPage() {
             </span>
           </label>
 
-          <div style={styles.footerActions}>
+          <div style={footerActionsStyle}>
             <button
               type="button"
-              style={styles.secondaryButton}
+              style={secondaryButtonStyle}
               onClick={() => router.push("/seller")}
             >
               Voltar ao painel
             </button>
 
-            <button type="submit" style={styles.primaryButton} disabled={saving}>
+            <button
+              type="submit"
+              style={primaryButtonStyle}
+              disabled={saving}
+            >
               {getPrimaryButtonLabel(status, saving)}
             </button>
           </div>
@@ -1244,6 +1398,7 @@ const styles: Record<string, CSSProperties> = {
     padding: "0 14px",
     outline: "none",
     fontSize: 14,
+    boxSizing: "border-box",
   },
 
   checkboxRow: {

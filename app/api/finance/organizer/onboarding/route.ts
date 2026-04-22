@@ -9,6 +9,9 @@ import {
   type OrganizerPersonType,
 } from "../../../../../app/services/organizerPaymentProfileService";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 type RequestBody = {
   organizerUserId?: string;
   personType?: OrganizerPersonType | string | null;
@@ -256,6 +259,7 @@ async function createAsaasSubaccount(params: {
 export async function POST(request: Request) {
   try {
     const body = (await request.json().catch(() => null)) as RequestBody | null;
+
     if (!body) {
       return jsonError("Body inválido.");
     }
@@ -338,7 +342,7 @@ export async function POST(request: Request) {
     let nextStatus: OrganizerKycStatus = "draft";
     let providerAccountId = savedProfile.providerAccountId;
     let providerWalletId = savedProfile.providerWalletId;
-    let providerApiKey: string | null = null;
+    let providerApiKey = savedProfile.providerApiKey;
     let reused = false;
 
     if (savedProfile.providerAccountId && savedProfile.providerWalletId) {
@@ -348,9 +352,9 @@ export async function POST(request: Request) {
         organizerUserId,
         providerAccountId: savedProfile.providerAccountId,
         providerWalletId: savedProfile.providerWalletId,
-        providerApiKey: null,
+        providerApiKey: savedProfile.providerApiKey,
         status: savedProfile.status === "approved" ? "approved" : "pending",
-      } as never);
+      });
 
       nextStatus = savedProfile.status === "approved" ? "approved" : "pending";
     } else {
@@ -383,7 +387,7 @@ export async function POST(request: Request) {
         chargesEnabled: false,
         payoutsEnabled: false,
         escrowEnabled: false,
-      } as never);
+      });
 
       nextStatus = "pending";
     }
