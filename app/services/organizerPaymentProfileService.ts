@@ -31,6 +31,7 @@ export type OrganizerPaymentProfile = {
 
   providerAccountId: string | null;
   providerWalletId: string | null;
+  providerApiKey: string | null;
 
   status: OrganizerKycStatus;
   chargesEnabled: boolean;
@@ -141,6 +142,7 @@ function mapProfile(
 
     providerAccountId: nullableString(raw.providerAccountId),
     providerWalletId: nullableString(raw.providerWalletId),
+    providerApiKey: nullableString(raw.providerApiKey),
 
     status: normalizeStatus(raw.status),
     chargesEnabled: Boolean(raw.chargesEnabled),
@@ -213,6 +215,7 @@ export async function createOrganizerPaymentProfile(
 
     providerAccountId: null,
     providerWalletId: null,
+    providerApiKey: null,
 
     status: "not_started" as OrganizerKycStatus,
     chargesEnabled: false,
@@ -378,6 +381,7 @@ export async function syncOrganizerProviderAccount(params: {
   organizerUserId: string;
   providerAccountId?: string | null;
   providerWalletId?: string | null;
+  providerApiKey?: string | null;
   chargesEnabled?: boolean;
   payoutsEnabled?: boolean;
   escrowEnabled?: boolean;
@@ -397,6 +401,10 @@ export async function syncOrganizerProviderAccount(params: {
 
   if (params.providerWalletId !== undefined) {
     payload.providerWalletId = nullableString(params.providerWalletId);
+  }
+
+  if (params.providerApiKey !== undefined) {
+    payload.providerApiKey = nullableString(params.providerApiKey);
   }
 
   if (params.chargesEnabled !== undefined) {
