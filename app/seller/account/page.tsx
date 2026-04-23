@@ -14,7 +14,7 @@ import {
   type OrganizerKycStatus,
   type OrganizerPaymentProfile,
   type OrganizerPersonType,
-} from "../../../app/services/organizerPaymentProfileService";
+} from "../../../app/services/organizerPaymentProfile.shared";
 
 const ORGANIZER_PROFILE_API_ENDPOINT = "/api/finance/organizer/profile";
 const ONBOARDING_API_ENDPOINT = "/api/finance/organizer/onboarding";

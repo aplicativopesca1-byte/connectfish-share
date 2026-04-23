@@ -1,3 +1,5 @@
+import "server-only";
+
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebaseAdmin";
 
@@ -419,19 +421,6 @@ export async function syncOrganizerProviderAccount(params: {
   }
 
   await profileRef(userId).set(payload, { merge: true });
-}
-
-export function isOrganizerFinanciallyReady(
-  profile: OrganizerPaymentProfile | null
-) {
-  if (!profile) return false;
-
-  return (
-    profile.status === "approved" &&
-    !!profile.providerAccountId &&
-    !!profile.providerWalletId &&
-    profile.chargesEnabled === true
-  );
 }
 
 export async function ensureOrganizerPaymentProfile(
