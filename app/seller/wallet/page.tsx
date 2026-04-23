@@ -2,20 +2,150 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
+import { getAuth } from "firebase/auth";
+
 import { useAuth } from "@/context/AuthContext";
-import {
-  getOrganizerWalletDashboard,
-  type OrganizerWalletDoc,
-  type OrganizerWalletTransaction,
-  type WalletTournamentRow,
-} from "../../services/organizerWalletService";
-import {
-  createOrganizerPayoutRequest,
-  getLatestOrganizerPayoutRequest,
-  getPayoutStatusMeta,
-  hasOpenOrganizerPayoutRequest,
-  type OrganizerPayoutRequest,
-} from "../../services/organizerPayoutService";
+import { app } from "@/lib/firebase";
+
+type OrganizerWalletTransactionType =
+  | "payment_created"
+  | "payment_received"
+  | "release_to_available"
+  | "refund"
+  | "chargeback"
+  | "payout_sent"
+  | "manual_adjustment";
+
+type OrganizerWalletTransactionStatus =
+  | "pending"
+  | "available"
+  | "paid_out"
+  | "reversed";
+
+type OrganizerWalletDoc = {
+  organizerUserId: string;
+  availableAmount: number;
+  pendingAmount: number;
+  paidOutAmount: number;
+  grossAmount: number;
+  feeAmount: number;
+  netAmount: number;
+  refundedAmount: number;
+  chargebackAmount: number;
+  updatedAt: number | null;
+  currency: "BRL";
+};
+
+type OrganizerWalletTransaction = {
+  id: string;
+  organizerUserId: string;
+  tournamentId: string | null;
+  paymentId: string | null;
+  type: OrganizerWalletTransactionType;
+  status: OrganizerWalletTransactionStatus;
+  grossAmount: number;
+  feeAmount: number;
+  netAmount: number;
+  currency: "BRL";
+  externalReference: string | null;
+  providerPaymentId: string | null;
+  createdAt: number | null;
+  releasedAt: number | null;
+  paidOutAt: number | null;
+  reversedAt: number | null;
+  updatedAt: number | null;
+};
+
+type WalletTournamentRow = {
+  tournamentId: string;
+  title: string;
+  subtitle: string | null;
+  location: string | null;
+  status: string | null;
+  currency: "BRL";
+  grossAmount: number;
+  feeAmount: number;
+  netAmount: number;
+  availableAmount: number;
+  pendingAmount: number;
+  paidOutAmount: number;
+  refundedAmount: number;
+  chargebackAmount: number;
+  participantsPaidCount: number;
+  adminUrl: string | null;
+};
+
+type OrganizerPayoutRequest = {
+  id: string;
+  organizerUserId: string;
+  walletId: string | null;
+  currency: "BRL";
+  requestedAmount: number;
+  availableAmountSnapshot: number;
+  pendingAmountSnapshot: number;
+  paidOutAmountSnapshot: number;
+  status: "pending" | "processing" | "paid" | "rejected" | "cancelled";
+  payoutMethod: string | null;
+  payoutKey: string | null;
+  notes: string | null;
+  adminNotes: string | null;
+  externalReference: string | null;
+  processedAmount: number;
+  createdAt: number | null;
+  updatedAt: number | null;
+  processedAt: number | null;
+};
+
+type WalletSummary = {
+  availableAmount: number;
+  pendingAmount: number;
+  paidOutAmount: number;
+  grossAmount: number;
+  feeAmount: number;
+  netAmount: number;
+  refundedAmount: number;
+  chargebackAmount: number;
+};
+
+type WalletStats = {
+  tournamentsCount: number;
+  paymentsCount: number;
+  releasesCount: number;
+  payoutsCount: number;
+};
+
+type TransactionTypeFilter =
+  | "all"
+  | "payment_received"
+  | "refund"
+  | "chargeback"
+  | "release_to_available"
+  | "payout_sent"
+  | "manual_adjustment";
+
+type TransactionStatusFilter =
+  | "all"
+  | "pending"
+  | "available"
+  | "paid_out"
+  | "reversed";
+
+type DashboardResponse = {
+  wallet: OrganizerWalletDoc | null;
+  transactions: OrganizerWalletTransaction[];
+  tournamentRows: WalletTournamentRow[];
+  currency: "BRL";
+  walletSummary: WalletSummary;
+  stats: WalletStats;
+};
+
+type PayoutStatusResponse = {
+  walletSummary: WalletSummary;
+  latestPayoutRequest: OrganizerPayoutRequest | null;
+  payoutOpen: boolean;
+};
+
+const INITIAL_VISIBLE_TRANSACTIONS = 12;
 
 function safeTrim(value: unknown) {
   return String(value ?? "").trim();
@@ -91,12 +221,13 @@ function getTournamentStatusMeta(status: unknown) {
 }
 
 function getTransactionTypeLabel(type: string) {
-  if (type === "payment_approved") return "Pagamento aprovado";
-  if (type === "payment_refunded") return "Reembolso";
-  if (type === "payment_chargeback") return "Chargeback";
+  if (type === "payment_received") return "Pagamento recebido";
+  if (type === "refund") return "Reembolso";
+  if (type === "chargeback") return "Chargeback";
   if (type === "release_to_available") return "Liberação de saldo";
   if (type === "payout_sent") return "Repasse enviado";
   if (type === "manual_adjustment") return "Ajuste manual";
+  if (type === "payment_created") return "Pagamento criado";
   return "Movimentação";
 }
 
@@ -116,41 +247,79 @@ function getTransactionStatusMeta(status: string) {
   return { label: "Pendente", bg: "#FEF3C7", color: "#92400E" };
 }
 
-type WalletSummary = {
-  availableAmount: number;
-  pendingAmount: number;
-  paidOutAmount: number;
-  grossAmount: number;
-  feeAmount: number;
-  netAmount: number;
-  refundedAmount: number;
-  chargebackAmount: number;
-};
+function getPayoutStatusMeta(
+  status: OrganizerPayoutRequest["status"] | "pending"
+) {
+  if (status === "paid") {
+    return { label: "Pago", bg: "#DCFCE7", color: "#166534" };
+  }
 
-type WalletStats = {
-  tournamentsCount: number;
-  paymentsCount: number;
-  releasesCount: number;
-  payoutsCount: number;
-};
+  if (status === "processing") {
+    return { label: "Em processamento", bg: "#DBEAFE", color: "#1D4ED8" };
+  }
 
-type TransactionTypeFilter =
-  | "all"
-  | "payment_approved"
-  | "payment_refunded"
-  | "payment_chargeback"
-  | "release_to_available"
-  | "payout_sent"
-  | "manual_adjustment";
+  if (status === "rejected") {
+    return { label: "Recusado", bg: "#FEE2E2", color: "#B91C1C" };
+  }
 
-type TransactionStatusFilter =
-  | "all"
-  | "pending_release"
-  | "available"
-  | "paid_out"
-  | "reversed";
+  if (status === "cancelled") {
+    return { label: "Cancelado", bg: "#E5E7EB", color: "#374151" };
+  }
 
-const INITIAL_VISIBLE_TRANSACTIONS = 12;
+  return { label: "Pendente", bg: "#FEF3C7", color: "#92400E" };
+}
+
+async function getAuthToken() {
+  const auth = getAuth(app);
+  const currentUser = auth.currentUser;
+
+  if (!currentUser) {
+    throw new Error("Usuário não autenticado.");
+  }
+
+  return currentUser.getIdToken(true);
+}
+
+async function apiGet<T>(url: string): Promise<T> {
+  const token = await getAuthToken();
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    cache: "no-store",
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok || !payload?.success) {
+    throw new Error(payload?.message || "Falha na requisição.");
+  }
+
+  return payload.data as T;
+}
+
+async function apiPost<T>(url: string, body?: Record<string, unknown>): Promise<T> {
+  const token = await getAuthToken();
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body ?? {}),
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok || !payload?.success) {
+    throw new Error(payload?.message || "Falha na requisição.");
+  }
+
+  return payload.data as T;
+}
 
 export default function SellerWalletPage() {
   const { uid, loading: authLoading } = useAuth() as {
@@ -205,18 +374,19 @@ export default function SellerWalletPage() {
       return;
     }
 
-    void loadWallet(uid);
+    void loadWallet();
   }, [uid, authLoading]);
 
-  async function loadWallet(userId: string) {
+  async function loadWallet() {
     try {
       setLoading(true);
       setError(null);
 
-      const [dashboard, latestPayout, hasOpen] = await Promise.all([
-        getOrganizerWalletDashboard(userId),
-        getLatestOrganizerPayoutRequest(userId),
-        hasOpenOrganizerPayoutRequest(userId),
+      const [dashboard, payoutStatus] = await Promise.all([
+        apiGet<DashboardResponse>("/api/finance/organizer/wallet/dashboard"),
+        apiGet<PayoutStatusResponse>(
+          "/api/finance/organizer/wallet/payout-status"
+        ),
       ]);
 
       setWallet(dashboard.wallet);
@@ -226,8 +396,8 @@ export default function SellerWalletPage() {
       setWalletSummary(dashboard.walletSummary);
       setStats(dashboard.stats);
 
-      setPayoutRequest(latestPayout);
-      setPayoutOpen(hasOpen);
+      setPayoutRequest(payoutStatus.latestPayoutRequest);
+      setPayoutOpen(Boolean(payoutStatus.payoutOpen));
     } catch (err) {
       console.error("Erro ao carregar wallet do organizador:", err);
       setError("Não foi possível carregar a carteira do organizador.");
@@ -237,65 +407,20 @@ export default function SellerWalletPage() {
   }
 
   async function handleRequestPayout() {
-    if (!uid) {
-      setPayoutError("Usuário não identificado.");
-      return;
-    }
-
-    setPayoutMessage(null);
-    setPayoutError(null);
-
-    const availableAmount = normalizeMoney(walletSummary.availableAmount);
-
-    if (availableAmount <= 0) {
-      setPayoutError("Você não possui saldo disponível para solicitar repasse.");
-      return;
-    }
-
-    if (payoutOpen) {
-      setPayoutError("Já existe um pedido de repasse em andamento.");
-      return;
-    }
-
     try {
       setPayoutLoading(true);
+      setPayoutMessage(null);
+      setPayoutError(null);
 
-      const created = await createOrganizerPayoutRequest({
-        organizerUserId: uid,
-        walletId: null,
-        currency,
-        requestedAmount: availableAmount,
-        availableAmountSnapshot: walletSummary.availableAmount,
-        pendingAmountSnapshot: walletSummary.pendingAmount,
-        paidOutAmountSnapshot: walletSummary.paidOutAmount,
-        payoutMethod: "manual_review",
-        notes: "Solicitação criada pela carteira do organizador.",
-      });
+      const created = await apiPost<OrganizerPayoutRequest>(
+        "/api/finance/organizer/wallet/request-payout"
+      );
 
-      const nextPayoutRequest: OrganizerPayoutRequest = {
-        id: String(created.id),
-        organizerUserId: safeTrim(created.organizerUserId || uid),
-        walletId: safeTrim(created.walletId) || null,
-        currency: normalizeCurrency(created.currency || currency),
-        requestedAmount: normalizeMoney(created.requestedAmount),
-        availableAmountSnapshot: normalizeMoney(created.availableAmountSnapshot),
-        pendingAmountSnapshot: normalizeMoney(created.pendingAmountSnapshot),
-        paidOutAmountSnapshot: normalizeMoney(created.paidOutAmountSnapshot),
-        status: (safeTrim(created.status) || "pending") as OrganizerPayoutRequest["status"],
-        payoutMethod: safeTrim(created.payoutMethod) || null,
-        payoutKey: safeTrim(created.payoutKey) || null,
-        notes: safeTrim(created.notes) || null,
-        adminNotes: safeTrim(created.adminNotes) || null,
-        externalReference: safeTrim(created.externalReference) || null,
-        processedAmount: normalizeMoney(created.processedAmount),
-        createdAt: null,
-        updatedAt: null,
-        processedAt: null,
-      };
-
-      setPayoutRequest(nextPayoutRequest);
+      setPayoutRequest(created);
       setPayoutOpen(true);
       setPayoutMessage("Pedido de repasse criado com sucesso.");
+
+      await loadWallet();
     } catch (err) {
       console.error("Erro ao solicitar repasse:", err);
       setPayoutError(
@@ -368,11 +493,11 @@ export default function SellerWalletPage() {
     const first = transactions[0];
     if (!first) return "—";
 
-   const value =
-  toIsoStringSafe(first.createdAt) ||
-  toIsoStringSafe(first.releasedAt) ||
-  toIsoStringSafe(first.paidOutAt) ||
-  toIsoStringSafe(first.reversedAt);
+    const value =
+      toIsoStringSafe(first.createdAt) ||
+      toIsoStringSafe(first.releasedAt) ||
+      toIsoStringSafe(first.paidOutAt) ||
+      toIsoStringSafe(first.reversedAt);
 
     return formatDateTime(value);
   }, [transactions]);
@@ -535,7 +660,10 @@ export default function SellerWalletPage() {
 
                       <p style={styles.payoutRequestText}>
                         Valor:{" "}
-                        {formatMoney(payoutRequest.requestedAmount, payoutRequest.currency)}
+                        {formatMoney(
+                          payoutRequest.requestedAmount,
+                          payoutRequest.currency
+                        )}
                       </p>
                       <p style={styles.payoutRequestText}>
                         Criado em: {payoutCreatedAt}
@@ -682,9 +810,9 @@ export default function SellerWalletPage() {
                         style={styles.select}
                       >
                         <option value="all">Todos</option>
-                        <option value="payment_approved">Pagamento aprovado</option>
-                        <option value="payment_refunded">Reembolso</option>
-                        <option value="payment_chargeback">Chargeback</option>
+                        <option value="payment_received">Pagamento recebido</option>
+                        <option value="refund">Reembolso</option>
+                        <option value="chargeback">Chargeback</option>
                         <option value="release_to_available">Liberação</option>
                         <option value="payout_sent">Repasse enviado</option>
                         <option value="manual_adjustment">Ajuste manual</option>
@@ -701,7 +829,7 @@ export default function SellerWalletPage() {
                         style={styles.select}
                       >
                         <option value="all">Todos</option>
-                        <option value="pending_release">Pendente</option>
+                        <option value="pending">Pendente</option>
                         <option value="available">Disponível</option>
                         <option value="paid_out">Pago</option>
                         <option value="reversed">Revertido</option>
@@ -753,10 +881,10 @@ export default function SellerWalletPage() {
                         );
 
                         const txDate =
-  toIsoStringSafe(transaction.createdAt) ||
-  toIsoStringSafe(transaction.releasedAt) ||
-  toIsoStringSafe(transaction.paidOutAt) ||
-  toIsoStringSafe(transaction.reversedAt);
+                          toIsoStringSafe(transaction.createdAt) ||
+                          toIsoStringSafe(transaction.releasedAt) ||
+                          toIsoStringSafe(transaction.paidOutAt) ||
+                          toIsoStringSafe(transaction.reversedAt);
 
                         return (
                           <div key={transaction.id} style={styles.transactionRow}>
