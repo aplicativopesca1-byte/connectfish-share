@@ -40,6 +40,18 @@ export type OrganizerPaymentProfile = {
   city: string | null;
   state: string | null;
 
+  incomeValue: number | null;
+
+  pixKeyType: string | null;
+  pixKey: string | null;
+
+  bankCode: string | null;
+  bankName: string | null;
+  agency: string | null;
+  account: string | null;
+  accountDigit: string | null;
+  accountType: string | null;
+
   bankAccountSummary: string | null;
   pixKeySummary: string | null;
 

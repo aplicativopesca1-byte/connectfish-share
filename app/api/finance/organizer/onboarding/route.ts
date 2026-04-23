@@ -31,8 +31,17 @@ type RequestBody = {
   city?: string | null;
   state?: string | null;
 
-  bankAccountSummary?: string | null;
-  pixKeySummary?: string | null;
+  incomeValue?: number | string | null;
+
+  pixKeyType?: string | null;
+  pixKey?: string | null;
+
+  bankCode?: string | null;
+  bankName?: string | null;
+  agency?: string | null;
+  account?: string | null;
+  accountDigit?: string | null;
+  accountType?: string | null;
 
   termsAccepted?: boolean;
 };
@@ -44,6 +53,7 @@ type AsaasCreateAccountPayload = {
   cpfCnpj: string;
   birthDate?: string;
   companyType: "MEI" | "LIMITED" | "INDIVIDUAL";
+  incomeValue: number;
   phone?: string;
   mobilePhone?: string;
   address: string;
@@ -70,6 +80,47 @@ function nullableString(value: unknown) {
 
 function onlyDigits(value: unknown) {
   return String(value ?? "").replace(/\D+/g, "");
+}
+
+function toPositiveNumber(value: unknown) {
+  const normalized = Number(String(value ?? "").replace(",", "."));
+  if (!Number.isFinite(normalized) || normalized <= 0) return null;
+  return normalized;
+}
+
+function buildBankAccountSummary(params: {
+  bankName: string;
+  bankCode: string;
+  agency: string;
+  account: string;
+  accountDigit: string;
+  accountType: string;
+}) {
+  const parts = [
+    params.bankName ? `Banco: ${params.bankName}` : "",
+    params.bankCode ? `Código: ${params.bankCode}` : "",
+    params.agency ? `Agência: ${params.agency}` : "",
+    params.account
+      ? `Conta: ${params.account}${params.accountDigit ? `-${params.accountDigit}` : ""}`
+      : "",
+    params.accountType
+      ? `Tipo: ${
+          params.accountType === "CHECKING_ACCOUNT"
+            ? "Corrente"
+            : params.accountType === "SAVINGS_ACCOUNT"
+              ? "Poupança"
+              : params.accountType
+        }`
+      : "",
+  ].filter(Boolean);
+
+  return parts.join(" | ") || null;
+}
+
+function buildPixKeySummary(params: { pixKeyType: string; pixKey: string }) {
+  if (!params.pixKey) return null;
+  if (!params.pixKeyType) return params.pixKey;
+  return `${params.pixKeyType}: ${params.pixKey}`;
 }
 
 function normalizePersonType(value: unknown): OrganizerPersonType | null {
@@ -128,6 +179,7 @@ function validateRequiredFields(input: {
   province: string;
   city: string;
   state: string;
+  incomeValue: number | null;
   termsAccepted: boolean;
 }) {
   const missing: string[] = [];
@@ -142,6 +194,7 @@ function validateRequiredFields(input: {
   if (!input.province) missing.push("province");
   if (!input.city) missing.push("city");
   if (!input.state) missing.push("state");
+  if (!input.incomeValue) missing.push("incomeValue");
   if (!input.termsAccepted) missing.push("termsAccepted");
 
   if (input.personType === "FISICA" && !input.fullName) {
@@ -154,6 +207,10 @@ function validateRequiredFields(input: {
 
   if (!input.phone && !input.mobilePhone) {
     missing.push("phone/mobilePhone");
+  }
+
+  if (!input.mobilePhone) {
+    missing.push("mobilePhone");
   }
 
   return missing;
@@ -178,6 +235,7 @@ async function createAsaasSubaccount(params: {
   email: string;
   cpfCnpj: string;
   birthDate: string;
+  incomeValue: number;
   phone: string;
   mobilePhone: string;
   address: string;
@@ -201,6 +259,7 @@ async function createAsaasSubaccount(params: {
     loginEmail: params.email,
     cpfCnpj: params.cpfCnpj,
     companyType: resolveCompanyType(params.personType),
+    incomeValue: params.incomeValue,
     address: params.address,
     addressNumber: params.addressNumber,
     complement: params.complement || undefined,
@@ -283,8 +342,32 @@ export async function POST(request: Request) {
     const city = safeTrim(body.city);
     const state = safeTrim(body.state).toUpperCase();
 
-    const bankAccountSummary = safeTrim(body.bankAccountSummary);
-    const pixKeySummary = safeTrim(body.pixKeySummary);
+    const incomeValue = toPositiveNumber(body.incomeValue);
+
+    const pixKeyType = safeTrim(body.pixKeyType).toUpperCase();
+    const pixKey = safeTrim(body.pixKey);
+
+    const bankCode = onlyDigits(body.bankCode);
+    const bankName = safeTrim(body.bankName);
+    const agency = safeTrim(body.agency);
+    const account = safeTrim(body.account);
+    const accountDigit = safeTrim(body.accountDigit);
+    const accountType = safeTrim(body.accountType).toUpperCase();
+
+    const bankAccountSummary = buildBankAccountSummary({
+      bankName,
+      bankCode,
+      agency,
+      account,
+      accountDigit,
+      accountType,
+    });
+
+    const pixKeySummary = buildPixKeySummary({
+      pixKeyType,
+      pixKey,
+    });
+
     const termsAccepted = body.termsAccepted === true;
 
     if (!organizerUserId) {
@@ -306,6 +389,7 @@ export async function POST(request: Request) {
       province,
       city,
       state,
+      incomeValue,
       termsAccepted,
     });
 
@@ -334,8 +418,21 @@ export async function POST(request: Request) {
       province: province || null,
       city: city || null,
       state: state || null,
-      bankAccountSummary: bankAccountSummary || null,
-      pixKeySummary: pixKeySummary || null,
+
+      incomeValue,
+
+      pixKeyType: pixKeyType || null,
+      pixKey: pixKey || null,
+
+      bankCode: bankCode || null,
+      bankName: bankName || null,
+      agency: agency || null,
+      account: account || null,
+      accountDigit: accountDigit || null,
+      accountType: accountType || null,
+
+      bankAccountSummary,
+      pixKeySummary,
       termsAcceptedAt: Date.now(),
     });
 
@@ -365,6 +462,7 @@ export async function POST(request: Request) {
         email,
         cpfCnpj,
         birthDate,
+        incomeValue: incomeValue as number,
         phone,
         mobilePhone,
         address,

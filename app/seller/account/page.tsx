@@ -20,6 +20,9 @@ const ORGANIZER_PROFILE_API_ENDPOINT = "/api/finance/organizer/profile";
 const ONBOARDING_API_ENDPOINT = "/api/finance/organizer/onboarding";
 const ORGANIZER_DOCUMENTS_API_ENDPOINT = "/api/finance/organizer/documents";
 
+type PixKeyType = "CPF" | "CNPJ" | "EMAIL" | "PHONE" | "EVP" | "";
+type BankAccountType = "CHECKING_ACCOUNT" | "SAVINGS_ACCOUNT" | "";
+
 function safeTrim(value: unknown) {
   return String(value ?? "").trim();
 }
@@ -190,6 +193,7 @@ function buildMissingChecklist(params: {
   province: string;
   city: string;
   state: string;
+  incomeValue: string;
   termsAccepted: boolean;
 }) {
   const missing: string[] = [];
@@ -207,6 +211,7 @@ function buildMissingChecklist(params: {
   if (!safeTrim(params.phone) && !safeTrim(params.mobilePhone)) {
     missing.push("Telefone ou celular");
   }
+  if (!safeTrim(params.mobilePhone)) missing.push("Celular / WhatsApp");
   if (!safeTrim(params.birthDate)) missing.push("Data de nascimento");
   if (!safeTrim(params.postalCode)) missing.push("CEP");
   if (!safeTrim(params.address)) missing.push("Endereço");
@@ -214,6 +219,12 @@ function buildMissingChecklist(params: {
   if (!safeTrim(params.province)) missing.push("Bairro");
   if (!safeTrim(params.city)) missing.push("Cidade");
   if (!safeTrim(params.state)) missing.push("UF");
+
+  const incomeNumeric = Number(params.incomeValue);
+  if (!params.incomeValue || !Number.isFinite(incomeNumeric) || incomeNumeric <= 0) {
+    missing.push("Renda / faturamento mensal");
+  }
+
   if (!params.termsAccepted) missing.push("Aceite dos termos");
 
   return missing;
@@ -273,8 +284,16 @@ export default function OrganizerAccountPage() {
   const [city, setCity] = useState("");
   const [stateValue, setStateValue] = useState("");
 
-  const [bankAccountSummary, setBankAccountSummary] = useState("");
-  const [pixKeySummary, setPixKeySummary] = useState("");
+  const [incomeValue, setIncomeValue] = useState("");
+  const [pixKeyType, setPixKeyType] = useState<PixKeyType>("");
+  const [pixKey, setPixKey] = useState("");
+  const [bankCode, setBankCode] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [agency, setAgency] = useState("");
+  const [account, setAccount] = useState("");
+  const [accountDigit, setAccountDigit] = useState("");
+  const [accountType, setAccountType] = useState<BankAccountType>("");
+
   const [termsAccepted, setTermsAccepted] = useState(false);
 
   const [message, setMessage] = useState<string | null>(null);
@@ -313,6 +332,7 @@ export default function OrganizerAccountPage() {
         province,
         city,
         state: stateValue,
+        incomeValue,
         termsAccepted,
       }),
     [
@@ -330,6 +350,7 @@ export default function OrganizerAccountPage() {
       province,
       city,
       stateValue,
+      incomeValue,
       termsAccepted,
     ]
   );
@@ -395,8 +416,6 @@ export default function OrganizerAccountPage() {
       setProvince(safeTrim(nextProfile?.province));
       setCity(safeTrim(nextProfile?.city));
       setStateValue(safeTrim(nextProfile?.state).toUpperCase().slice(0, 2));
-      setBankAccountSummary(safeTrim(nextProfile?.bankAccountSummary));
-      setPixKeySummary(safeTrim(nextProfile?.pixKeySummary));
       setTermsAccepted(Boolean(nextProfile?.termsAcceptedAt));
     } catch (loadError) {
       console.error("Erro ao carregar conta do organizador:", loadError);
@@ -493,8 +512,17 @@ export default function OrganizerAccountPage() {
           city: safeTrim(city) || null,
           state: safeTrim(stateValue).toUpperCase() || null,
 
-          bankAccountSummary: safeTrim(bankAccountSummary) || null,
-          pixKeySummary: safeTrim(pixKeySummary) || null,
+          incomeValue: Number(incomeValue) || null,
+
+          pixKeyType: safeTrim(pixKeyType) || null,
+          pixKey: safeTrim(pixKey) || null,
+
+          bankCode: onlyDigits(bankCode) || null,
+          bankName: safeTrim(bankName) || null,
+          agency: safeTrim(agency) || null,
+          account: safeTrim(account) || null,
+          accountDigit: safeTrim(accountDigit) || null,
+          accountType: safeTrim(accountType) || null,
 
           termsAccepted: true,
         }),
@@ -894,7 +922,7 @@ export default function OrganizerAccountPage() {
               />
             </Field>
 
-            <Field label="Celular / WhatsApp">
+            <Field label="Celular / WhatsApp *">
               <input
                 type="text"
                 value={mobilePhone}
@@ -1014,37 +1042,140 @@ export default function OrganizerAccountPage() {
 
         <section style={cardStyle}>
           <div style={styles.sectionHeader}>
-            <h2 style={styles.sectionTitle}>Resumo financeiro interno</h2>
+            <h2 style={styles.sectionTitle}>Dados financeiros</h2>
             <p style={styles.sectionSub}>
-              Campos opcionais para sua operação interna e suporte.
+              Informações para análise financeira e recebimento automático.
             </p>
           </div>
 
           <div style={formGridStyle}>
-            <Field label="Resumo da conta bancária">
+            <Field
+              label="Renda / faturamento mensal *"
+              hint="Use um valor médio mensal em reais."
+            >
               <input
-                type="text"
-                value={bankAccountSummary}
+                type="number"
+                min={0}
+                step="0.01"
+                value={incomeValue}
                 onChange={(e) => {
                   clearFeedback();
-                  setBankAccountSummary(e.target.value);
+                  setIncomeValue(e.target.value);
                 }}
                 style={inputStyle}
-                placeholder="Banco, agência e final da conta"
+                placeholder="Ex.: 5000"
               />
             </Field>
 
-            <Field label="Resumo da chave PIX">
-              <input
-                type="text"
-                value={pixKeySummary}
+            <Field label="Tipo de chave PIX">
+              <select
+                value={pixKeyType}
                 onChange={(e) => {
                   clearFeedback();
-                  setPixKeySummary(e.target.value);
+                  setPixKeyType(e.target.value as PixKeyType);
                 }}
                 style={inputStyle}
-                placeholder="CPF, e-mail, telefone ou aleatória"
+              >
+                <option value="">Selecione</option>
+                <option value="CPF">CPF</option>
+                <option value="CNPJ">CNPJ</option>
+                <option value="EMAIL">E-mail</option>
+                <option value="PHONE">Telefone</option>
+                <option value="EVP">Aleatória</option>
+              </select>
+            </Field>
+
+            <Field label="Chave PIX">
+              <input
+                type="text"
+                value={pixKey}
+                onChange={(e) => {
+                  clearFeedback();
+                  setPixKey(e.target.value);
+                }}
+                style={inputStyle}
+                placeholder="Informe sua chave PIX"
               />
+            </Field>
+
+            <Field label="Banco">
+              <input
+                type="text"
+                value={bankName}
+                onChange={(e) => {
+                  clearFeedback();
+                  setBankName(e.target.value);
+                }}
+                style={inputStyle}
+                placeholder="Ex.: Itaú, Bradesco, Nubank"
+              />
+            </Field>
+
+            <Field label="Código do banco">
+              <input
+                type="text"
+                value={bankCode}
+                onChange={(e) => {
+                  clearFeedback();
+                  setBankCode(onlyDigits(e.target.value).slice(0, 10));
+                }}
+                style={inputStyle}
+                placeholder="Ex.: 341"
+              />
+            </Field>
+
+            <Field label="Agência">
+              <input
+                type="text"
+                value={agency}
+                onChange={(e) => {
+                  clearFeedback();
+                  setAgency(e.target.value);
+                }}
+                style={inputStyle}
+                placeholder="Ex.: 1234"
+              />
+            </Field>
+
+            <Field label="Conta">
+              <input
+                type="text"
+                value={account}
+                onChange={(e) => {
+                  clearFeedback();
+                  setAccount(e.target.value);
+                }}
+                style={inputStyle}
+                placeholder="Número da conta"
+              />
+            </Field>
+
+            <Field label="Dígito da conta">
+              <input
+                type="text"
+                value={accountDigit}
+                onChange={(e) => {
+                  clearFeedback();
+                  setAccountDigit(e.target.value);
+                }}
+                style={inputStyle}
+                placeholder="Ex.: 0"
+              />
+            </Field>
+
+            <Field label="Tipo de conta">
+              <select
+                value={accountType}
+                onChange={(e) => {
+                  clearFeedback();
+                  setAccountType(e.target.value as BankAccountType);
+                }}
+                style={inputStyle}
+              >
+                <option value="">Selecione</option>
+                <option value="CHECKING_ACCOUNT">Corrente</option>
+                <option value="SAVINGS_ACCOUNT">Poupança</option>
+              </select>
             </Field>
           </div>
         </section>

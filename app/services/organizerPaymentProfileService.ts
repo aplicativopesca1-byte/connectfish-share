@@ -45,6 +45,18 @@ export type OrganizerPaymentProfile = {
   city: string | null;
   state: string | null;
 
+  incomeValue: number | null;
+
+  pixKeyType: string | null;
+  pixKey: string | null;
+
+  bankCode: string | null;
+  bankName: string | null;
+  agency: string | null;
+  account: string | null;
+  accountDigit: string | null;
+  accountType: string | null;
+
   bankAccountSummary: string | null;
   pixKeySummary: string | null;
 
@@ -79,6 +91,18 @@ export type UpsertOrganizerPaymentProfileInput = {
   city?: string | null;
   state?: string | null;
 
+  incomeValue?: number | null;
+
+  pixKeyType?: string | null;
+  pixKey?: string | null;
+
+  bankCode?: string | null;
+  bankName?: string | null;
+  agency?: string | null;
+  account?: string | null;
+  accountDigit?: string | null;
+  accountType?: string | null;
+
   bankAccountSummary?: string | null;
   pixKeySummary?: string | null;
 
@@ -92,6 +116,11 @@ function safeTrim(value: unknown) {
 function nullableString(value: unknown) {
   const text = safeTrim(value);
   return text || null;
+}
+
+function nullableNumber(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function now() {
@@ -159,6 +188,18 @@ function mapProfile(
     province: nullableString(raw.province),
     city: nullableString(raw.city),
     state: nullableString(raw.state),
+
+    incomeValue: nullableNumber(raw.incomeValue),
+
+    pixKeyType: nullableString(raw.pixKeyType),
+    pixKey: nullableString(raw.pixKey),
+
+    bankCode: nullableString(raw.bankCode),
+    bankName: nullableString(raw.bankName),
+    agency: nullableString(raw.agency),
+    account: nullableString(raw.account),
+    accountDigit: nullableString(raw.accountDigit),
+    accountType: nullableString(raw.accountType),
 
     bankAccountSummary: nullableString(raw.bankAccountSummary),
     pixKeySummary: nullableString(raw.pixKeySummary),
@@ -236,6 +277,18 @@ export async function createOrganizerPaymentProfile(
     city: null,
     state: null,
 
+    incomeValue: null,
+
+    pixKeyType: null,
+    pixKey: null,
+
+    bankCode: null,
+    bankName: null,
+    agency: null,
+    account: null,
+    accountDigit: null,
+    accountType: null,
+
     bankAccountSummary: null,
     pixKeySummary: null,
 
@@ -293,6 +346,18 @@ export async function upsertOrganizerPaymentProfile(
     province: nullableString(input.province),
     city: nullableString(input.city),
     state: nullableString(input.state),
+
+    incomeValue: nullableNumber(input.incomeValue),
+
+    pixKeyType: nullableString(input.pixKeyType),
+    pixKey: nullableString(input.pixKey),
+
+    bankCode: nullableString(input.bankCode),
+    bankName: nullableString(input.bankName),
+    agency: nullableString(input.agency),
+    account: nullableString(input.account),
+    accountDigit: nullableString(input.accountDigit),
+    accountType: nullableString(input.accountType),
 
     bankAccountSummary: nullableString(input.bankAccountSummary),
     pixKeySummary: nullableString(input.pixKeySummary),
