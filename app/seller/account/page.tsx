@@ -540,7 +540,7 @@ export default function OrganizerAccountPage() {
       setMessage(
         result?.reused
           ? "Conta encontrada e sincronizada com sucesso."
-          : "Cadastro financeiro salvo com sucesso."
+          : "Cadastro financeiro salvo com sucesso. Verifique seu e-mail para ativar a conta de recebimento."
       );
 
       await loadProfile(uid, contactEmail || email || null);
@@ -723,6 +723,48 @@ export default function OrganizerAccountPage() {
         </div>
       </section>
 
+      <section style={cardStyle}>
+        <div style={styles.sectionHeader}>
+          <h2 style={styles.sectionTitle}>Como funciona a conta de recebimento</h2>
+          <p style={styles.sectionSub}>
+            Queremos total transparência no processo financeiro do ConnectFish.
+          </p>
+        </div>
+
+        <div style={styles.infoBox}>
+          <p style={styles.infoTitle}>Importante</p>
+          <p style={styles.infoText}>
+            Para receber inscrições de torneios pagos, criamos uma conta de
+            recebimento em nome do organizador através do nosso parceiro
+            financeiro Asaas.
+          </p>
+          <p style={styles.infoText}>
+            Essa conta não é uma conta bancária criada pelo ConnectFish. Ela é
+            uma conta operacional de recebimento usada para processar pagamentos,
+            validar identidade e liberar repasses com segurança.
+          </p>
+        </div>
+
+        <div style={styles.bulletList}>
+          <div style={styles.bulletItem}>
+            <span style={styles.bulletDot} />
+            <span>Você pode receber um e-mail do Asaas para ativação da conta.</span>
+          </div>
+          <div style={styles.bulletItem}>
+            <span style={styles.bulletDot} />
+            <span>O envio de documentos e selfie é feito diretamente no ambiente seguro do parceiro financeiro.</span>
+          </div>
+          <div style={styles.bulletItem}>
+            <span style={styles.bulletDot} />
+            <span>O ConnectFish não armazena fotos de documentos sensíveis no seu sistema.</span>
+          </div>
+          <div style={styles.bulletItem}>
+            <span style={styles.bulletDot} />
+            <span>Essa estrutura será usada apenas para receber inscrições, acompanhar saldo e realizar repasses do organizador.</span>
+          </div>
+        </div>
+      </section>
+
       {message ? <div style={styles.successBox}>{message}</div> : null}
       {error ? <div style={styles.errorBox}>{error}</div> : null}
 
@@ -739,6 +781,19 @@ export default function OrganizerAccountPage() {
             Sua conta precisa de validação adicional, como documentos ou selfie.
           </div>
 
+          <div style={styles.infoBoxSoft}>
+            <p style={styles.infoTitle}>O que acontece agora</p>
+            <p style={styles.infoText}>
+              Após o cadastro, você pode receber um e-mail do Asaas para ativar
+              sua conta de recebimento e concluir a validação de identidade.
+            </p>
+            <p style={styles.infoText}>
+              Isso faz parte do processo de segurança do parceiro financeiro e é
+              necessário para liberar o recebimento automático dos valores dos
+              torneios.
+            </p>
+          </div>
+
           <div style={pendingActionRowStyle}>
             <button
               type="button"
@@ -750,6 +805,30 @@ export default function OrganizerAccountPage() {
                 ? "Verificando..."
                 : "Enviar documentos para aprovação"}
             </button>
+          </div>
+        </section>
+      ) : null}
+
+      {status === "pending" && !hasPendingDocs ? (
+        <section style={cardStyle}>
+          <div style={styles.sectionHeader}>
+            <h2 style={styles.sectionTitle}>Conta em análise</h2>
+            <p style={styles.sectionSub}>
+              Seu cadastro financeiro foi enviado com sucesso.
+            </p>
+          </div>
+
+          <div style={styles.infoBoxSoft}>
+            <p style={styles.infoTitle}>Próximo passo</p>
+            <p style={styles.infoText}>
+              Verifique seu e-mail. Você pode receber uma mensagem do Asaas para
+              definir senha, acessar sua conta de recebimento e concluir a etapa
+              de validação, caso necessário.
+            </p>
+            <p style={styles.infoText}>
+              Enquanto isso, o status ficará como “Em análise” até a ativação ou
+              aprovação da conta.
+            </p>
           </div>
         </section>
       ) : null}
@@ -1383,6 +1462,60 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 14,
     lineHeight: 1.5,
     fontWeight: 700,
+  },
+
+  infoBox: {
+    marginTop: 8,
+    background: "rgba(0, 191, 223, 0.10)",
+    border: "1px solid rgba(0, 191, 223, 0.25)",
+    borderRadius: 16,
+    padding: 16,
+  },
+
+  infoBoxSoft: {
+    marginTop: 14,
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: 16,
+    padding: 16,
+  },
+
+  infoTitle: {
+    margin: 0,
+    fontSize: 14,
+    fontWeight: 900,
+    color: "#FFFFFF",
+  },
+
+  infoText: {
+    margin: "10px 0 0",
+    fontSize: 14,
+    lineHeight: 1.65,
+    color: "rgba(234,240,255,0.82)",
+  },
+
+  bulletList: {
+    display: "grid",
+    gap: 10,
+    marginTop: 16,
+  },
+
+  bulletItem: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    color: "#EAF0FF",
+    fontSize: 14,
+    lineHeight: 1.6,
+  },
+
+  bulletDot: {
+    width: 8,
+    height: 8,
+    marginTop: 8,
+    borderRadius: 999,
+    background: "#5EFCA1",
+    flexShrink: 0,
   },
 
   pendingActionRow: {
