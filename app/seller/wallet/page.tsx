@@ -2,10 +2,8 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
-import { getAuth } from "firebase/auth";
-
+import { auth } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
-import { app } from "@/lib/firebase";
 
 type OrganizerWalletTransactionType =
   | "payment_created"
@@ -270,7 +268,6 @@ function getPayoutStatusMeta(
 }
 
 async function getAuthToken() {
-  const auth = getAuth(app);
   const currentUser = auth.currentUser;
 
   if (!currentUser) {
