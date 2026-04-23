@@ -23,9 +23,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { db } from "../../../../src/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import {
-  getOrganizerPaymentProfile,
   isOrganizerFinanciallyReady,
-} from "../../../../app/services/organizerPaymentProfileService";
+  type OrganizerPaymentProfile,
+} from "../../../../app/services/organizerPaymentProfile.shared";
 
 type Props = {
   mode: "create" | "edit";
@@ -918,7 +918,26 @@ export default function TournamentForm({
     try {
       setFinancialLoading(true);
 
-      const profile = await getOrganizerPaymentProfile(safeUserId);
+      const response = await fetch(
+        `/api/finance/organizer/profile?organizerUserId=${encodeURIComponent(
+          safeUserId
+        )}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        }
+      );
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || !result?.success) {
+        throw new Error(
+          safeTrim(result?.message) ||
+            "Não foi possível carregar o perfil financeiro."
+        );
+      }
+
+      const profile = (result?.profile || null) as OrganizerPaymentProfile | null;
       const ready = isOrganizerFinanciallyReady(profile);
 
       setFinancialReady(ready);
@@ -950,7 +969,10 @@ export default function TournamentForm({
 
       setFinancialStatusLabel("Não iniciado");
     } catch (loadError) {
-      console.error("Erro ao carregar status financeiro do organizador:", loadError);
+      console.error(
+        "Erro ao carregar status financeiro do organizador:",
+        loadError
+      );
       setFinancialReady(false);
       setFinancialStatusLabel("Erro ao verificar conta financeira");
     } finally {
