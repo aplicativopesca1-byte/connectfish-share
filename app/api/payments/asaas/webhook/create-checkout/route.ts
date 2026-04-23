@@ -17,10 +17,8 @@ import {
   createTournamentPayment,
   updateTournamentPaymentProviderData,
 } from "../../../../../../app/services/tournamentPaymentService";
-import {
-  getOrganizerPaymentProfile,
-  isOrganizerFinanciallyReady,
-} from "../../../../../../app/services/organizerPaymentProfileService";
+import { getOrganizerPaymentProfile } from "../../../../../../app/services/organizerPaymentProfileService";
+import { isOrganizerFinanciallyReady } from "../../../../../../app/services/organizerPaymentProfile.shared";
 import { createFinancialAuditLog } from "../../../../../../app/services/financialAuditService";
 
 export const runtime = "nodejs";
