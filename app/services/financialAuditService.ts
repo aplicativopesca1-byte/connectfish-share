@@ -1,13 +1,5 @@
-import {
-  collection,
-  doc,
-  getDoc,
-  serverTimestamp,
-  setDoc,
-  addDoc,
-} from "firebase/firestore";
-
-import { db } from "@/lib/firebase";
+import { FieldValue } from "firebase-admin/firestore";
+import { adminDb } from "@/lib/firebaseAdmin";
 
 export type FinancialAuditLevel = "info" | "warning" | "error";
 export type FinancialAuditSource =
@@ -72,12 +64,16 @@ function now() {
   return Date.now();
 }
 
+function logsCollection() {
+  return adminDb().collection("financialAuditLogs");
+}
+
+function locksCollection() {
+  return adminDb().collection("webhookEventLocks");
+}
+
 function lockRef(source: FinancialAuditSource, eventId: string) {
-  return doc(
-    db,
-    "webhookEventLocks",
-    `${safeTrim(source)}__${safeTrim(eventId)}`
-  );
+  return locksCollection().doc(`${safeTrim(source)}__${safeTrim(eventId)}`);
 }
 
 function normalizeLevel(value: unknown): FinancialAuditLevel {
@@ -108,10 +104,10 @@ export async function createFinancialAuditLog(
       input.payload && typeof input.payload === "object" ? input.payload : null,
 
     createdAt: now(),
-    serverCreatedAt: serverTimestamp(),
+    serverCreatedAt: FieldValue.serverTimestamp(),
   };
 
-  const ref = await addDoc(collection(db, "financialAuditLogs"), payload);
+  const ref = await logsCollection().add(payload);
   return ref.id;
 }
 
@@ -131,17 +127,17 @@ export async function createWebhookEventLock(params: {
   }
 
   const ref = lockRef(source, eventId);
-  const snap = await getDoc(ref);
+  const snap = await ref.get();
 
-  if (snap.exists()) {
+  if (snap.exists) {
     return false;
   }
 
-  await setDoc(ref, {
+  await ref.set({
     source,
     eventId,
     createdAt: now(),
-    serverCreatedAt: serverTimestamp(),
+    serverCreatedAt: FieldValue.serverTimestamp(),
   });
 
   return true;
@@ -156,8 +152,8 @@ export async function hasWebhookEventLock(params: {
 
   if (!source || !eventId) return false;
 
-  const snap = await getDoc(lockRef(source, eventId));
-  return snap.exists();
+  const snap = await lockRef(source, eventId).get();
+  return snap.exists;
 }
 
 export async function createWebhookAuditTrail(params: {

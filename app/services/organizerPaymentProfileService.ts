@@ -1,17 +1,5 @@
-import {
-  collection,
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  serverTimestamp,
-  query,
-  where,
-  getDocs,
-  limit,
-} from "firebase/firestore";
-
-import { db } from "@/lib/firebase";
+import { FieldValue } from "firebase-admin/firestore";
+import { adminDb } from "@/lib/firebaseAdmin";
 
 export type OrganizerPaymentProvider = "asaas";
 
@@ -108,8 +96,12 @@ function now() {
   return Date.now();
 }
 
+function profilesCollection() {
+  return adminDb().collection("organizerPaymentProfiles");
+}
+
 function profileRef(organizerUserId: string) {
-  return doc(db, "organizerPaymentProfiles", safeTrim(organizerUserId));
+  return profilesCollection().doc(safeTrim(organizerUserId));
 }
 
 function normalizeStatus(value: unknown): OrganizerKycStatus {
@@ -190,10 +182,13 @@ export async function getOrganizerPaymentProfile(
   const userId = safeTrim(organizerUserId);
   if (!userId) return null;
 
-  const snap = await getDoc(profileRef(userId));
-  if (!snap.exists()) return null;
+  const snap = await profileRef(userId).get();
+  if (!snap.exists) return null;
 
-  return mapProfile(snap.id, snap.data() as Record<string, unknown>);
+  return mapProfile(
+    snap.id,
+    snap.data() as Record<string, unknown> | undefined
+  );
 }
 
 export async function createOrganizerPaymentProfile(
@@ -250,11 +245,11 @@ export async function createOrganizerPaymentProfile(
 
     createdAt,
     updatedAt: createdAt,
-    serverCreatedAt: serverTimestamp(),
-    serverUpdatedAt: serverTimestamp(),
+    serverCreatedAt: FieldValue.serverTimestamp(),
+    serverUpdatedAt: FieldValue.serverTimestamp(),
   };
 
-  await setDoc(profileRef(userId), payload);
+  await profileRef(userId).set(payload);
 
   return {
     id: userId,
@@ -305,10 +300,10 @@ export async function upsertOrganizerPaymentProfile(
 
     status: "draft" as OrganizerKycStatus,
     updatedAt: now(),
-    serverUpdatedAt: serverTimestamp(),
+    serverUpdatedAt: FieldValue.serverTimestamp(),
   };
 
-  await setDoc(profileRef(userId), payload, { merge: true });
+  await profileRef(userId).set(payload, { merge: true });
 
   const next = await getOrganizerPaymentProfile(userId);
   if (!next) {
@@ -326,12 +321,12 @@ export async function markOrganizerOnboardingSubmitted(
     throw new Error("organizerUserId é obrigatório.");
   }
 
-  await updateDoc(profileRef(userId), {
+  await profileRef(userId).update({
     status: "pending",
     onboardingSubmittedAt: now(),
     updatedAt: now(),
     rejectionReason: null,
-    serverUpdatedAt: serverTimestamp(),
+    serverUpdatedAt: FieldValue.serverTimestamp(),
   });
 }
 
@@ -346,7 +341,7 @@ export async function markOrganizerOnboardingApproved(params: {
   const userId = safeTrim(params.organizerUserId);
   if (!userId) throw new Error("organizerUserId é obrigatório.");
 
-  await updateDoc(profileRef(userId), {
+  await profileRef(userId).update({
     status: "approved",
     providerAccountId: nullableString(params.providerAccountId),
     providerWalletId: nullableString(params.providerWalletId),
@@ -357,7 +352,7 @@ export async function markOrganizerOnboardingApproved(params: {
     rejectedAt: null,
     rejectionReason: null,
     updatedAt: now(),
-    serverUpdatedAt: serverTimestamp(),
+    serverUpdatedAt: FieldValue.serverTimestamp(),
   });
 }
 
@@ -368,12 +363,12 @@ export async function markOrganizerOnboardingRejected(params: {
   const userId = safeTrim(params.organizerUserId);
   if (!userId) throw new Error("organizerUserId é obrigatório.");
 
-  await updateDoc(profileRef(userId), {
+  await profileRef(userId).update({
     status: "rejected",
     rejectedAt: now(),
     rejectionReason: nullableString(params.reason),
     updatedAt: now(),
-    serverUpdatedAt: serverTimestamp(),
+    serverUpdatedAt: FieldValue.serverTimestamp(),
   });
 }
 
@@ -392,7 +387,7 @@ export async function syncOrganizerProviderAccount(params: {
 
   const payload: Record<string, unknown> = {
     updatedAt: now(),
-    serverUpdatedAt: serverTimestamp(),
+    serverUpdatedAt: FieldValue.serverTimestamp(),
   };
 
   if (params.providerAccountId !== undefined) {
@@ -423,7 +418,7 @@ export async function syncOrganizerProviderAccount(params: {
     payload.status = params.status;
   }
 
-  await updateDoc(profileRef(userId), payload);
+  await profileRef(userId).set(payload, { merge: true });
 }
 
 export function isOrganizerFinanciallyReady(
@@ -453,15 +448,16 @@ export async function findOrganizerPaymentProfileByProviderAccountId(
   const accountId = safeTrim(providerAccountId);
   if (!accountId) return null;
 
-  const q = query(
-    collection(db, "organizerPaymentProfiles"),
-    where("providerAccountId", "==", accountId),
-    limit(1)
-  );
+  const snap = await profilesCollection()
+    .where("providerAccountId", "==", accountId)
+    .limit(1)
+    .get();
 
-  const snap = await getDocs(q);
   if (snap.empty) return null;
 
   const first = snap.docs[0];
-  return mapProfile(first.id, first.data() as Record<string, unknown>);
+  return mapProfile(
+    first.id,
+    first.data() as Record<string, unknown> | undefined
+  );
 }
