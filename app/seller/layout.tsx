@@ -1,3 +1,4 @@
+// 📂 app/seller/layout.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState, type CSSProperties } from "react";
@@ -23,6 +24,11 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
   const pathname = usePathname();
 
   const [loggingOut, setLoggingOut] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     if (!loading && !uid) {
@@ -34,12 +40,11 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
     if (!uid) return false;
 
     const raw = process.env.NEXT_PUBLIC_ADMIN_UIDS || "";
-    const adminUids = raw
+    return raw
       .split(",")
       .map((item) => item.trim())
-      .filter(Boolean);
-
-    return adminUids.includes(uid);
+      .filter(Boolean)
+      .includes(uid);
   }, [uid]);
 
   const navMain = useMemo<NavItem[]>(
@@ -74,16 +79,12 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
     []
   );
 
-  const isTournamentArea = useMemo(() => {
-    return pathname?.startsWith("/seller/tournaments");
-  }, [pathname]);
+  const isTournamentArea = pathname?.startsWith("/seller/tournaments");
 
   const currentTournamentId = useMemo(() => {
     if (!pathname) return null;
-
     const match = pathname.match(/^\/seller\/tournaments\/([^/]+)/);
     const possibleId = match?.[1];
-
     if (!possibleId || possibleId === "new") return null;
     return possibleId;
   }, [pathname]);
@@ -127,6 +128,115 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
     }
   }
 
+  function renderNavItem(item: NavItem) {
+    const active = isActive(pathname || "", item.href);
+
+    if (item.soon) {
+      return (
+        <div
+          key={item.href}
+          style={{
+            ...styles.navItem,
+            ...(active ? styles.navItemActive : {}),
+            ...styles.navItemSoon,
+          }}
+          aria-disabled="true"
+        >
+          <span style={styles.navEmoji}>{item.emoji}</span>
+          <span style={styles.navText}>{item.label}</span>
+          <span style={styles.soonBadge}>Em breve</span>
+        </div>
+      );
+    }
+
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        style={{
+          ...styles.navItem,
+          ...(active ? styles.navItemActive : {}),
+        }}
+      >
+        <span style={styles.navEmoji}>{item.emoji}</span>
+        <span style={styles.navText}>{item.label}</span>
+      </Link>
+    );
+  }
+
+  function SidebarContent() {
+    return (
+      <>
+        <div>
+          <div style={styles.brand}>
+            <div style={styles.logo}>CF</div>
+            <div>
+              <div style={styles.brandTitle}>ConnectFish</div>
+              <div style={styles.brandSub}>Área Comercial</div>
+            </div>
+          </div>
+
+          <div style={styles.profileBox}>
+            <div style={styles.profileLabel}>Conta conectada</div>
+            <div style={styles.profileValue}>{email || "Usuário logado"}</div>
+            <div style={styles.profileUid}>UID: {uid}</div>
+          </div>
+
+          <nav style={styles.nav}>
+            <div style={styles.navGroupTitle}>Principal</div>
+            <div style={styles.navList}>{navMain.map(renderNavItem)}</div>
+
+            <div style={{ ...styles.navGroupTitle, marginTop: 20 }}>Conta</div>
+            <div style={styles.navList}>{navAccount.map(renderNavItem)}</div>
+
+            <div style={{ ...styles.navGroupTitle, marginTop: 20 }}>
+              Documentos legais
+            </div>
+            <div style={styles.navList}>
+              {navLegal.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  style={styles.navItem}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span style={styles.navEmoji}>{item.emoji}</span>
+                  <span style={styles.navText}>{item.label}</span>
+                </Link>
+              ))}
+            </div>
+
+            {isAdmin ? (
+              <>
+                <div style={{ ...styles.navGroupTitle, marginTop: 20 }}>Admin</div>
+                <div style={styles.navList}>{navAdmin.map(renderNavItem)}</div>
+              </>
+            ) : null}
+          </nav>
+        </div>
+
+        <div style={styles.sidebarFooter}>
+          <Link href="/" style={styles.ghostBtn}>
+            Ir para home
+          </Link>
+
+          <button
+            type="button"
+            onClick={doLogout}
+            disabled={loggingOut}
+            style={{
+              ...styles.primaryBtn,
+              ...(loggingOut ? styles.btnDisabled : {}),
+            }}
+          >
+            {loggingOut ? "Saindo…" : "Sair"}
+          </button>
+        </div>
+      </>
+    );
+  }
+
   if (loading) {
     return (
       <div style={styles.loadingWrap}>
@@ -150,161 +260,60 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
   }
 
   return (
-    <div style={styles.page}>
-      <aside style={styles.sidebar}>
-        <div>
-          <div style={styles.brand}>
-            <div style={styles.logo}>CF</div>
-            <div>
-              <div style={styles.brandTitle}>ConnectFish</div>
-              <div style={styles.brandSub}>Área Comercial</div>
-            </div>
-          </div>
+    <div style={styles.shell}>
+      <style>{responsiveCss}</style>
 
-          <div style={styles.profileBox}>
-            <div style={styles.profileLabel}>Conta conectada</div>
-            <div style={styles.profileValue}>{email || "Usuário logado"}</div>
-            <div style={styles.profileUid}>UID: {uid}</div>
-          </div>
+      {menuOpen ? (
+        <button
+          type="button"
+          aria-label="Fechar menu"
+          style={styles.mobileOverlay}
+          onClick={() => setMenuOpen(false)}
+        />
+      ) : null}
 
-          <nav style={styles.nav}>
-            <div style={styles.navGroupTitle}>Principal</div>
-            <div style={styles.navList}>
-              {navMain.map((item) => {
-                const active = isActive(pathname, item.href);
-
-                return item.soon ? (
-                  <div
-                    key={item.href}
-                    style={{
-                      ...styles.navItem,
-                      ...(active ? styles.navItemActive : {}),
-                      ...styles.navItemSoon,
-                    }}
-                    aria-disabled="true"
-                  >
-                    <span style={styles.navEmoji}>{item.emoji}</span>
-                    <span style={styles.navText}>{item.label}</span>
-                    <span style={styles.soonBadge}>Em breve</span>
-                  </div>
-                ) : (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    style={{
-                      ...styles.navItem,
-                      ...(active ? styles.navItemActive : {}),
-                    }}
-                  >
-                    <span style={styles.navEmoji}>{item.emoji}</span>
-                    <span style={styles.navText}>{item.label}</span>
-                  </Link>
-                );
-              })}
-            </div>
-
-            <div style={{ ...styles.navGroupTitle, marginTop: 20 }}>Conta</div>
-            <div style={styles.navList}>
-              {navAccount.map((item) => {
-                const active = isActive(pathname, item.href);
-
-                return item.soon ? (
-                  <div
-                    key={item.href}
-                    style={{
-                      ...styles.navItem,
-                      ...(active ? styles.navItemActive : {}),
-                      ...styles.navItemSoon,
-                    }}
-                    aria-disabled="true"
-                  >
-                    <span style={styles.navEmoji}>{item.emoji}</span>
-                    <span style={styles.navText}>{item.label}</span>
-                    <span style={styles.soonBadge}>Em breve</span>
-                  </div>
-                ) : (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    style={{
-                      ...styles.navItem,
-                      ...(active ? styles.navItemActive : {}),
-                    }}
-                  >
-                    <span style={styles.navEmoji}>{item.emoji}</span>
-                    <span style={styles.navText}>{item.label}</span>
-                  </Link>
-                );
-              })}
-            </div>
-
-            <div style={{ ...styles.navGroupTitle, marginTop: 20 }}>Documentos legais</div>
-            <div style={styles.navList}>
-              {navLegal.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  style={styles.navItem}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <span style={styles.navEmoji}>{item.emoji}</span>
-                  <span style={styles.navText}>{item.label}</span>
-                </Link>
-              ))}
-            </div>
-
-            {isAdmin ? (
-              <>
-                <div style={{ ...styles.navGroupTitle, marginTop: 20 }}>Admin</div>
-                <div style={styles.navList}>
-                  {navAdmin.map((item) => {
-                    const active = isActive(pathname, item.href);
-
-                    return (
-                      <Link
-                        key={item.href}
-                        href={item.href}
-                        style={{
-                          ...styles.navItem,
-                          ...(active ? styles.navItemActive : {}),
-                        }}
-                      >
-                        <span style={styles.navEmoji}>{item.emoji}</span>
-                        <span style={styles.navText}>{item.label}</span>
-                      </Link>
-                    );
-                  })}
-                </div>
-              </>
-            ) : null}
-          </nav>
-        </div>
-
-        <div style={styles.sidebarFooter}>
-          <Link href="/" style={styles.ghostBtn}>
-            Ir para home
-          </Link>
-
+      <aside
+        className={`seller-sidebar seller-sidebar-mobile ${
+          menuOpen ? "seller-sidebar-open" : ""
+        }`}
+        style={styles.sidebar}
+      >
+        <div style={styles.mobileSidebarHeader}>
+          <div style={styles.mobileSidebarTitle}>Menu</div>
           <button
             type="button"
-            onClick={doLogout}
-            disabled={loggingOut}
-            style={{
-              ...styles.primaryBtn,
-              ...(loggingOut ? styles.btnDisabled : {}),
-            }}
+            aria-label="Fechar menu"
+            style={styles.closeMenuBtn}
+            onClick={() => setMenuOpen(false)}
           >
-            {loggingOut ? "Saindo…" : "Sair"}
+            ✕
           </button>
         </div>
+
+        <SidebarContent />
+      </aside>
+
+      <aside className="seller-sidebar-desktop" style={styles.sidebar}>
+        <SidebarContent />
       </aside>
 
       <section style={styles.main}>
         <header style={styles.topbar}>
-          <div>
-            <div style={styles.topbarTitle}>{topbarTitle}</div>
-            <div style={styles.topbarSub}>{topbarSub}</div>
+          <div style={styles.topbarLeft}>
+            <button
+              type="button"
+              aria-label="Abrir menu"
+              className="seller-menu-button"
+              style={styles.menuBtn}
+              onClick={() => setMenuOpen(true)}
+            >
+              ☰
+            </button>
+
+            <div style={styles.topbarText}>
+              <div style={styles.topbarTitle}>{topbarTitle}</div>
+              <div style={styles.topbarSub}>{topbarSub}</div>
+            </div>
           </div>
 
           <div style={styles.topbarRight}>
@@ -338,64 +347,33 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
                   <span style={styles.quickActionText}>Criar torneio</span>
                 </Link>
 
-                {currentTournamentId ? (
-                  <Link
-                    href={`/seller/tournaments/${currentTournamentId}/map`}
-                    style={styles.quickActionLink}
-                  >
-                    <span style={styles.quickActionEmoji}>🗺️</span>
-                    <span style={styles.quickActionText}>Mapa e perímetro</span>
-                  </Link>
-                ) : (
-                  <div style={{ ...styles.quickActionLink, ...styles.quickActionDisabled }}>
-                    <span style={styles.quickActionEmoji}>🗺️</span>
-                    <span style={styles.quickActionText}>Mapa e perímetro</span>
-                  </div>
-                )}
-
-                {currentTournamentId ? (
-                  <Link
-                    href={`/seller/tournaments/${currentTournamentId}/captures`}
-                    style={styles.quickActionLink}
-                  >
-                    <span style={styles.quickActionEmoji}>📸</span>
-                    <span style={styles.quickActionText}>Validação de capturas</span>
-                  </Link>
-                ) : (
-                  <div style={{ ...styles.quickActionLink, ...styles.quickActionDisabled }}>
-                    <span style={styles.quickActionEmoji}>📸</span>
-                    <span style={styles.quickActionText}>Validação de capturas</span>
-                  </div>
-                )}
-
-                {currentTournamentId ? (
-                  <Link
-                    href={`/seller/tournaments/${currentTournamentId}/ranking`}
-                    style={styles.quickActionLink}
-                  >
-                    <span style={styles.quickActionEmoji}>🥇</span>
-                    <span style={styles.quickActionText}>Ranking oficial</span>
-                  </Link>
-                ) : (
-                  <div style={{ ...styles.quickActionLink, ...styles.quickActionDisabled }}>
-                    <span style={styles.quickActionEmoji}>🥇</span>
-                    <span style={styles.quickActionText}>Ranking oficial</span>
-                  </div>
-                )}
-
-                {currentTournamentId ? (
-                  <Link
-                    href={`/seller/tournaments/${currentTournamentId}/teams`}
-                    style={styles.quickActionLink}
-                  >
-                    <span style={styles.quickActionEmoji}>👥</span>
-                    <span style={styles.quickActionText}>Equipes e inscrições</span>
-                  </Link>
-                ) : (
-                  <div style={{ ...styles.quickActionLink, ...styles.quickActionDisabled }}>
-                    <span style={styles.quickActionEmoji}>👥</span>
-                    <span style={styles.quickActionText}>Equipes e inscrições</span>
-                  </div>
+                {[
+                  ["map", "🗺️", "Mapa e perímetro"],
+                  ["captures", "📸", "Validação de capturas"],
+                  ["ranking", "🥇", "Ranking oficial"],
+                  ["teams", "👥", "Equipes e inscrições"],
+                ].map(([slug, emoji, text]) =>
+                  currentTournamentId ? (
+                    <Link
+                      key={slug}
+                      href={`/seller/tournaments/${currentTournamentId}/${slug}`}
+                      style={styles.quickActionLink}
+                    >
+                      <span style={styles.quickActionEmoji}>{emoji}</span>
+                      <span style={styles.quickActionText}>{text}</span>
+                    </Link>
+                  ) : (
+                    <div
+                      key={slug}
+                      style={{
+                        ...styles.quickActionLink,
+                        ...styles.quickActionDisabled,
+                      }}
+                    >
+                      <span style={styles.quickActionEmoji}>{emoji}</span>
+                      <span style={styles.quickActionText}>{text}</span>
+                    </div>
+                  )
                 )}
               </div>
             </div>
@@ -408,14 +386,76 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
   );
 }
 
+const responsiveCss = `
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .seller-sidebar-desktop {
+    display: flex;
+  }
+
+  .seller-sidebar-mobile {
+    display: none;
+  }
+
+  .seller-menu-button {
+    display: none;
+  }
+
+  @media (max-width: 900px) {
+    .seller-sidebar-desktop {
+      display: none !important;
+    }
+
+    .seller-sidebar-mobile {
+      display: flex !important;
+      position: fixed !important;
+      left: 0 !important;
+      top: 0 !important;
+      width: min(86vw, 320px) !important;
+      max-width: 320px !important;
+      height: 100dvh !important;
+      min-height: 100dvh !important;
+      z-index: 80 !important;
+      transform: translateX(-105%) !important;
+      transition: transform 0.22s ease !important;
+      overflow-y: auto !important;
+      overscroll-behavior: contain !important;
+      box-shadow: 24px 0 70px rgba(15, 23, 42, 0.35) !important;
+    }
+
+    .seller-sidebar-open {
+      transform: translateX(0) !important;
+    }
+
+    .seller-menu-button {
+      display: inline-flex !important;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .seller-status-pill {
+      display: none !important;
+    }
+  }
+`;
+
 const styles: Record<string, CSSProperties> = {
-  page: {
+  shell: {
     minHeight: "100vh",
     display: "grid",
     gridTemplateColumns: "280px minmax(0, 1fr)",
     background: "#F8FAFC",
     color: "#0F172A",
     fontFamily: "system-ui, sans-serif",
+    overflowX: "hidden",
   },
 
   loadingWrap: {
@@ -447,7 +487,6 @@ const styles: Record<string, CSSProperties> = {
   },
 
   sidebar: {
-    display: "flex",
     flexDirection: "column",
     justifyContent: "space-between",
     gap: 18,
@@ -457,6 +496,43 @@ const styles: Record<string, CSSProperties> = {
     position: "sticky",
     top: 0,
     minHeight: "100vh",
+  },
+
+  mobileOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 70,
+    border: 0,
+    padding: 0,
+    background: "rgba(15,23,42,0.46)",
+    backdropFilter: "blur(2px)",
+    cursor: "pointer",
+  },
+
+  mobileSidebarHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 14,
+  },
+  mobileSidebarTitle: {
+    fontSize: 13,
+    fontWeight: 1000,
+    color: "#FFFFFF",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  closeMenuBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.10)",
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: 1000,
+    cursor: "pointer",
   },
 
   brand: {
@@ -609,30 +685,58 @@ const styles: Record<string, CSSProperties> = {
 
   main: {
     minWidth: 0,
+    width: "100%",
     display: "flex",
     flexDirection: "column",
+    overflowX: "hidden",
   },
+
   topbar: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 16,
-    padding: "18px 20px",
+    gap: 12,
+    padding: "14px clamp(14px, 3vw, 20px)",
     borderBottom: "1px solid rgba(15,23,42,0.08)",
-    background: "rgba(255,255,255,0.88)",
+    background: "rgba(255,255,255,0.92)",
     backdropFilter: "blur(10px)",
     position: "sticky",
     top: 0,
-    zIndex: 10,
+    zIndex: 50,
+  },
+  topbarLeft: {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+  },
+  menuBtn: {
+    width: 42,
+    height: 42,
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 14,
+    border: "1px solid rgba(15,23,42,0.10)",
+    background: "#FFFFFF",
+    color: "#0F172A",
+    fontSize: 20,
+    fontWeight: 1000,
+    cursor: "pointer",
+    boxShadow: "0 8px 20px rgba(15,23,42,0.06)",
+  },
+  topbarText: {
+    minWidth: 0,
   },
   topbarTitle: {
-    fontSize: 18,
+    fontSize: "clamp(15px, 4vw, 18px)",
     fontWeight: 1000,
     color: "#0F172A",
   },
   topbarSub: {
     marginTop: 4,
     fontSize: 12,
+    lineHeight: 1.35,
     fontWeight: 700,
     color: "#475569",
   },
@@ -640,6 +744,7 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 10,
+    flexShrink: 0,
   },
   statusPill: {
     display: "inline-flex",
@@ -663,13 +768,13 @@ const styles: Record<string, CSSProperties> = {
   },
 
   quickActionsWrap: {
-    padding: "16px 20px 0 20px",
+    padding: "clamp(12px, 3vw, 16px) clamp(12px, 3vw, 20px) 0",
   },
   quickActionsCard: {
     background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.08)",
     borderRadius: 20,
-    padding: 18,
+    padding: "clamp(14px, 3vw, 18px)",
     boxShadow: "0 10px 24px rgba(15,23,42,0.04)",
   },
   quickActionsHeader: {
@@ -683,12 +788,13 @@ const styles: Record<string, CSSProperties> = {
   quickActionsSub: {
     marginTop: 4,
     fontSize: 13,
+    lineHeight: 1.45,
     fontWeight: 700,
     color: "#64748B",
   },
   quickActionsGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(180px, 100%), 1fr))",
     gap: 10,
   },
   quickActionLink: {
@@ -703,6 +809,7 @@ const styles: Record<string, CSSProperties> = {
     color: "#0F172A",
     fontSize: 13,
     fontWeight: 900,
+    minWidth: 0,
   },
   quickActionDisabled: {
     opacity: 0.55,
@@ -716,9 +823,13 @@ const styles: Record<string, CSSProperties> = {
   },
   quickActionText: {
     flex: 1,
+    minWidth: 0,
   },
 
   content: {
-    padding: 20,
+    width: "100%",
+    minWidth: 0,
+    padding: "clamp(12px, 3vw, 20px)",
+    overflowX: "hidden",
   },
 };
