@@ -48,15 +48,16 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
   }, [uid]);
 
   const navMain = useMemo<NavItem[]>(
-    () => [
-      { href: "/seller", label: "Visão geral", emoji: "📊" },
-      { href: "/seller/fishery", label: "Meu pesqueiro", emoji: "🎣" },
-      { href: "/seller/tournaments", label: "Torneios", emoji: "🏆" },
-      { href: "/seller/products", label: "Produtos", emoji: "🛒", soon: true },
-      { href: "/seller/orders", label: "Pedidos", emoji: "📦", soon: true },
-    ],
-    []
-  );
+  () => [
+    { href: "/seller", label: "Visão geral", emoji: "📊" },
+    { href: "/seller/wallet", label: "Carteira", emoji: "💳" },
+    { href: "/seller/fishery", label: "Meu pesqueiro", emoji: "🎣" },
+    { href: "/seller/tournaments", label: "Torneios", emoji: "🏆" },
+    { href: "/seller/products", label: "Produtos", emoji: "🛒", soon: true },
+    { href: "/seller/orders", label: "Pedidos", emoji: "📦", soon: true },
+  ],
+  []
+);
 
   const navAccount = useMemo<NavItem[]>(
     () => [
