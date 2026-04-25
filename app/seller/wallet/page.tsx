@@ -1168,11 +1168,12 @@ function PayoutMetric({
 }
 
 const styles: Record<string, CSSProperties> = {
-  page: {
-    minHeight: "100vh",
-    background: "#F8FAFC",
-    padding: 24,
-  },
+ page: {
+  minHeight: "100vh",
+  background: "#F8FAFC",
+  padding: 24,
+  overflowX: "hidden", // 👈 garante que nunca estoure
+},
 
   container: {
     maxWidth: 1400,
@@ -1180,6 +1181,8 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 16,
+    width: "100%",
+  overflowX: "hidden",
   },
 
   heroCard: {
@@ -1258,7 +1261,7 @@ const styles: Record<string, CSSProperties> = {
   payoutGrid: {
     marginTop: 18,
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))",
     gap: 12,
   },
 
@@ -1452,10 +1455,10 @@ const styles: Record<string, CSSProperties> = {
   },
 
   mainGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
-    gap: 16,
-  },
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))",
+  gap: 16,
+},
 
   card: {
     background: "#FFFFFF",
@@ -1629,15 +1632,16 @@ const styles: Record<string, CSSProperties> = {
   },
 
   transactionRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 14,
-    padding: 14,
-    borderRadius: 16,
-    background: "#F8FAFC",
-    border: "1px solid rgba(15,23,42,0.06)",
-  },
+  display: "flex",
+  flexWrap: "wrap", // 👈 ESSENCIAL
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: 14,
+  padding: 14,
+  borderRadius: 16,
+  background: "#F8FAFC",
+  border: "1px solid rgba(15,23,42,0.06)",
+},
 
   transactionMain: {
     display: "flex",
@@ -1682,7 +1686,7 @@ const styles: Record<string, CSSProperties> = {
   },
 
   transactionAmounts: {
-    minWidth: 120,
+    minWidth: 0,
     display: "flex",
     flexDirection: "column",
     alignItems: "flex-end",
@@ -1726,12 +1730,12 @@ const styles: Record<string, CSSProperties> = {
   },
 
   tournamentMain: {
-    flex: 1,
-    minWidth: 280,
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-  },
+  flex: 1,
+  minWidth: 0, // 👈 MUITO IMPORTANTE
+  display: "flex",
+  flexDirection: "column",
+  gap: 12,
+},
 
   tournamentTop: {
     display: "flex",
