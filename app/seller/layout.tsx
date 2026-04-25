@@ -261,7 +261,7 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
   }
 
   return (
-    <div style={styles.shell}>
+    <div className="seller-shell" style={styles.shell}>
       <style>{responsiveCss}</style>
 
       {menuOpen ? (
@@ -410,10 +410,18 @@ const responsiveCss = `
     display: none;
   }
 
-  @media (max-width: 900px) {
-    .seller-sidebar-desktop {
-      display: none !important;
-    }
+ @media (max-width: 900px) {
+  .seller-shell {
+    display: block !important;
+    grid-template-columns: 1fr !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    overflow-x: hidden !important;
+  }
+
+  .seller-sidebar-desktop {
+    display: none !important;
+  }
 
     .seller-sidebar-mobile {
       display: flex !important;
