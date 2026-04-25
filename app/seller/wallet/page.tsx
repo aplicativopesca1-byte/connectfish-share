@@ -1168,38 +1168,172 @@ function PayoutMetric({
 }
 
 const styles: Record<string, CSSProperties> = {
- page: {
-  minHeight: "100vh",
-  background: "#F8FAFC",
-  padding: 24,
-  overflowX: "hidden", // 👈 garante que nunca estoure
-},
+  page: {
+    minHeight: "100vh",
+    width: "100%",
+    maxWidth: "100%",
+    background:
+      "radial-gradient(circle at top left, rgba(0,191,223,0.12), transparent 34%), linear-gradient(180deg, #F8FAFC 0%, #EEF7FA 100%)",
+    padding: "clamp(12px, 3vw, 24px)",
+    overflowX: "hidden",
+  },
 
   container: {
-    maxWidth: 1400,
+    width: "100%",
+    maxWidth: 1320,
     margin: "0 auto",
     display: "flex",
     flexDirection: "column",
     gap: 16,
-    width: "100%",
-  overflowX: "hidden",
+    overflowX: "hidden",
   },
 
   heroCard: {
-    background: "#FFFFFF",
-    border: "1px solid rgba(15,23,42,0.08)",
-    borderRadius: 24,
-    padding: 22,
-    boxShadow: "0 12px 26px rgba(15,23,42,0.04)",
+    position: "relative",
+    overflow: "hidden",
+    background:
+      "linear-gradient(135deg, #0B3C5D 0%, #075E73 48%, #00BFDF 100%)",
+    border: "1px solid rgba(255,255,255,0.20)",
+    borderRadius: 28,
+    padding: "clamp(18px, 4vw, 30px)",
+    boxShadow: "0 22px 55px rgba(11,60,93,0.22)",
+  },
+
+  heroTop: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 16,
+    flexWrap: "wrap",
+    position: "relative",
+    zIndex: 1,
+  },
+
+  heroActions: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
+
+  title: {
+    margin: 0,
+    fontSize: "clamp(24px, 5vw, 38px)",
+    lineHeight: 1.05,
+    fontWeight: 1000,
+    color: "#FFFFFF",
+    letterSpacing: -0.7,
+    maxWidth: 760,
+  },
+
+  subtitle: {
+    margin: "12px 0 0 0",
+    maxWidth: 780,
+    fontSize: "clamp(13px, 2.8vw, 15px)",
+    lineHeight: 1.75,
+    fontWeight: 750,
+    color: "rgba(255,255,255,0.82)",
+  },
+
+  summaryGrid: {
+    marginTop: 22,
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(170px, 100%), 1fr))",
+    gap: 12,
+    position: "relative",
+    zIndex: 1,
+  },
+
+  summaryCard: {
+    borderRadius: 20,
+    padding: "16px 14px",
+    border: "1px solid rgba(255,255,255,0.18)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10)",
+    minWidth: 0,
+  },
+
+  summaryToneEmerald: {
+    background: "rgba(94,252,161,0.16)",
+    borderColor: "rgba(94,252,161,0.34)",
+  },
+
+  summaryToneAmber: {
+    background: "rgba(251,191,36,0.16)",
+    borderColor: "rgba(253,230,138,0.34)",
+  },
+
+  summaryToneGreen: {
+    background: "rgba(46,139,87,0.22)",
+    borderColor: "rgba(94,252,161,0.26)",
+  },
+
+  summaryToneBlue: {
+    background: "rgba(0,191,223,0.18)",
+    borderColor: "rgba(125,211,252,0.30)",
+  },
+
+  summaryToneSlate: {
+    background: "rgba(255,255,255,0.10)",
+    borderColor: "rgba(255,255,255,0.18)",
+  },
+
+  summaryLabel: {
+    margin: 0,
+    fontSize: 12,
+    fontWeight: 900,
+    color: "rgba(255,255,255,0.76)",
+  },
+
+  summaryValue: {
+    margin: "8px 0 0 0",
+    fontSize: "clamp(18px, 4vw, 25px)",
+    lineHeight: 1.1,
+    fontWeight: 1000,
+    color: "#FFFFFF",
+    wordBreak: "break-word",
+  },
+
+  statsGrid: {
+    marginTop: 14,
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(145px, 100%), 1fr))",
+    gap: 12,
+    position: "relative",
+    zIndex: 1,
+  },
+
+  statCard: {
+    background: "rgba(255,255,255,0.92)",
+    border: "1px solid rgba(15,23,42,0.07)",
+    borderRadius: 18,
+    padding: 14,
+    boxShadow: "0 10px 25px rgba(15,23,42,0.05)",
+    minWidth: 0,
+  },
+
+  statLabel: {
+    margin: 0,
+    fontSize: 12,
+    fontWeight: 850,
+    color: "#64748B",
+  },
+
+  statValue: {
+    margin: "7px 0 0 0",
+    fontSize: 22,
+    fontWeight: 1000,
+    color: "#0B3C5D",
   },
 
   payoutCard: {
     background:
-      "linear-gradient(135deg, rgba(11,60,93,1) 0%, rgba(15,23,42,1) 100%)",
-    borderRadius: 24,
-    padding: 22,
+      "linear-gradient(135deg, rgba(15,23,42,1) 0%, rgba(11,60,93,1) 54%, rgba(0,191,223,0.92) 100%)",
+    borderRadius: 28,
+    padding: "clamp(18px, 4vw, 26px)",
     color: "#FFFFFF",
-    boxShadow: "0 16px 30px rgba(15,23,42,0.12)",
+    boxShadow: "0 18px 45px rgba(11,60,93,0.18)",
+    border: "1px solid rgba(255,255,255,0.16)",
+    overflow: "hidden",
   },
 
   payoutTop: {
@@ -1213,9 +1347,9 @@ const styles: Record<string, CSSProperties> = {
   payoutMain: {
     display: "flex",
     flexDirection: "column",
-    gap: 8,
+    gap: 9,
     flex: 1,
-    minWidth: 280,
+    minWidth: 0,
   },
 
   payoutHeaderRow: {
@@ -1230,6 +1364,7 @@ const styles: Record<string, CSSProperties> = {
     gap: 10,
     flexWrap: "wrap",
     alignItems: "center",
+    minWidth: 0,
   },
 
   payoutBadge: {
@@ -1237,72 +1372,71 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 999,
-    padding: "6px 10px",
+    padding: "7px 11px",
     fontSize: 11,
     fontWeight: 1000,
-    whiteSpace: "nowrap",
+    whiteSpace: "normal",
+    textAlign: "center",
   },
 
   payoutBadgeSuccess: {
-    background: "#DCFCE7",
-    color: "#166534",
+    background: "rgba(94,252,161,0.20)",
+    color: "#D8FFE9",
+    border: "1px solid rgba(94,252,161,0.30)",
   },
 
   payoutBadgeWarning: {
-    background: "#FEF3C7",
-    color: "#92400E",
+    background: "rgba(253,230,138,0.18)",
+    color: "#FEF3C7",
+    border: "1px solid rgba(253,230,138,0.28)",
   },
 
   payoutBadgeNeutral: {
-    background: "#E2E8F0",
-    color: "#334155",
+    background: "rgba(226,232,240,0.18)",
+    color: "#F8FAFC",
+    border: "1px solid rgba(226,232,240,0.20)",
   },
 
   payoutGrid: {
     marginTop: 18,
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(190px, 100%), 1fr))",
     gap: 12,
   },
 
   payoutMetricCard: {
-    background: "rgba(255,255,255,0.08)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    borderRadius: 18,
-    padding: 14,
-    backdropFilter: "blur(6px)",
+    background: "rgba(255,255,255,0.10)",
+    border: "1px solid rgba(255,255,255,0.14)",
+    borderRadius: 20,
+    padding: 15,
+    backdropFilter: "blur(8px)",
+    minWidth: 0,
   },
 
   payoutMetricLabel: {
     margin: 0,
     fontSize: 12,
-    fontWeight: 800,
-    color: "rgba(255,255,255,0.78)",
+    fontWeight: 850,
+    color: "rgba(255,255,255,0.76)",
   },
 
   payoutMetricValue: {
-    margin: "8px 0 0 0",
-    fontSize: 20,
+    margin: "9px 0 0 0",
+    fontSize: "clamp(17px, 4vw, 22px)",
+    lineHeight: 1.18,
     fontWeight: 1000,
+    wordBreak: "break-word",
   },
 
-  payoutMetricValueDefault: {
-    color: "#FFFFFF",
-  },
-
-  payoutMetricValueEmerald: {
-    color: "#BBF7D0",
-  },
-
-  payoutMetricValueAmber: {
-    color: "#FDE68A",
-  },
+  payoutMetricValueDefault: { color: "#FFFFFF" },
+  payoutMetricValueEmerald: { color: "#BBF7D0" },
+  payoutMetricValueAmber: { color: "#FDE68A" },
 
   payoutRequestBox: {
     marginTop: 10,
-    background: "rgba(255,255,255,0.08)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    borderRadius: 16,
+    background: "rgba(255,255,255,0.10)",
+    border: "1px solid rgba(255,255,255,0.14)",
+    borderRadius: 18,
     padding: 14,
   },
 
@@ -1325,13 +1459,14 @@ const styles: Record<string, CSSProperties> = {
     margin: "4px 0 0 0",
     fontSize: 13,
     lineHeight: 1.6,
-    fontWeight: 700,
-    color: "rgba(255,255,255,0.88)",
+    fontWeight: 750,
+    color: "rgba(255,255,255,0.86)",
   },
 
   sectionTitleLight: {
     margin: 0,
-    fontSize: 20,
+    fontSize: "clamp(20px, 4vw, 26px)",
+    lineHeight: 1.12,
     fontWeight: 1000,
     color: "#FFFFFF",
   },
@@ -1340,135 +1475,29 @@ const styles: Record<string, CSSProperties> = {
     margin: 0,
     color: "rgba(255,255,255,0.82)",
     fontSize: 13,
-    lineHeight: 1.6,
-    fontWeight: 700,
-  },
-
-  heroTop: {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 16,
-    flexWrap: "wrap",
-  },
-
-  heroActions: {
-    display: "flex",
-    gap: 10,
-    flexWrap: "wrap",
-  },
-
-  title: {
-    margin: 0,
-    fontSize: 30,
-    fontWeight: 1000,
-    color: "#0B3C5D",
-  },
-
-  subtitle: {
-    margin: "8px 0 0 0",
+    lineHeight: 1.65,
+    fontWeight: 750,
     maxWidth: 760,
-    fontSize: 14,
-    lineHeight: 1.7,
-    fontWeight: 700,
-    color: "#64748B",
-  },
-
-  summaryGrid: {
-    marginTop: 18,
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-    gap: 12,
-  },
-
-  summaryCard: {
-    borderRadius: 18,
-    padding: 14,
-    border: "1px solid transparent",
-  },
-
-  summaryToneEmerald: {
-    background: "#ECFDF5",
-    borderColor: "#A7F3D0",
-  },
-
-  summaryToneAmber: {
-    background: "#FFFBEB",
-    borderColor: "#FDE68A",
-  },
-
-  summaryToneGreen: {
-    background: "#F0FDF4",
-    borderColor: "#BBF7D0",
-  },
-
-  summaryToneBlue: {
-    background: "#EFF6FF",
-    borderColor: "#BFDBFE",
-  },
-
-  summaryToneSlate: {
-    background: "#F8FAFC",
-    borderColor: "#E2E8F0",
-  },
-
-  summaryLabel: {
-    margin: 0,
-    fontSize: 12,
-    fontWeight: 800,
-    color: "#64748B",
-  },
-
-  summaryValue: {
-    margin: "8px 0 0 0",
-    fontSize: 22,
-    fontWeight: 1000,
-    color: "#0F172A",
-  },
-
-  statsGrid: {
-    marginTop: 14,
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-    gap: 12,
-  },
-
-  statCard: {
-    background: "#F8FAFC",
-    border: "1px solid rgba(15,23,42,0.06)",
-    borderRadius: 16,
-    padding: 14,
-  },
-
-  statLabel: {
-    margin: 0,
-    fontSize: 12,
-    fontWeight: 800,
-    color: "#64748B",
-  },
-
-  statValue: {
-    margin: "6px 0 0 0",
-    fontSize: 22,
-    fontWeight: 1000,
-    color: "#0F172A",
   },
 
   mainGrid: {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))",
-  gap: 16,
-},
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(330px, 100%), 1fr))",
+    gap: 16,
+    minWidth: 0,
+  },
 
   card: {
-    background: "#FFFFFF",
+    background: "rgba(255,255,255,0.96)",
     border: "1px solid rgba(15,23,42,0.08)",
-    borderRadius: 22,
-    padding: 18,
-    boxShadow: "0 10px 24px rgba(15,23,42,0.04)",
+    borderRadius: 24,
+    padding: "clamp(16px, 3vw, 20px)",
+    boxShadow: "0 14px 32px rgba(15,23,42,0.06)",
     display: "flex",
     flexDirection: "column",
     gap: 16,
+    minWidth: 0,
+    overflow: "hidden",
   },
 
   sectionHeader: {
@@ -1480,7 +1509,8 @@ const styles: Record<string, CSSProperties> = {
 
   sectionTitle: {
     margin: 0,
-    fontSize: 20,
+    fontSize: "clamp(18px, 4vw, 22px)",
+    lineHeight: 1.18,
     fontWeight: 1000,
     color: "#0F172A",
   },
@@ -1490,46 +1520,41 @@ const styles: Record<string, CSSProperties> = {
     color: "#64748B",
     fontSize: 13,
     lineHeight: 1.6,
-    fontWeight: 700,
+    fontWeight: 750,
   },
 
   metricsGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(165px, 100%), 1fr))",
     gap: 12,
   },
 
   metricCard: {
-    background: "#F8FAFC",
-    border: "1px solid rgba(15,23,42,0.06)",
-    borderRadius: 16,
+    background: "linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)",
+    border: "1px solid rgba(15,23,42,0.07)",
+    borderRadius: 18,
     padding: 14,
+    minWidth: 0,
   },
 
   metricLabel: {
     margin: 0,
     fontSize: 12,
-    fontWeight: 800,
+    fontWeight: 850,
     color: "#64748B",
   },
 
   metricValue: {
     margin: "8px 0 0 0",
-    fontSize: 20,
+    fontSize: "clamp(17px, 4vw, 21px)",
+    lineHeight: 1.18,
     fontWeight: 1000,
+    wordBreak: "break-word",
   },
 
-  metricValueDefault: {
-    color: "#0F172A",
-  },
-
-  metricValueEmerald: {
-    color: "#047857",
-  },
-
-  metricValueAmber: {
-    color: "#B45309",
-  },
+  metricValueDefault: { color: "#0F172A" },
+  metricValueEmerald: { color: "#047857" },
+  metricValueAmber: { color: "#B45309" },
 
   infoPills: {
     display: "flex",
@@ -1542,26 +1567,29 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     borderRadius: 999,
     padding: "10px 12px",
-    background: "#F8FAFC",
-    border: "1px solid rgba(15,23,42,0.08)",
-    color: "#334155",
-    fontSize: 13,
-    fontWeight: 800,
+    background: "rgba(0,191,223,0.08)",
+    border: "1px solid rgba(0,191,223,0.16)",
+    color: "#0B3C5D",
+    fontSize: 12,
+    lineHeight: 1.35,
+    fontWeight: 900,
+    maxWidth: "100%",
   },
 
   filtersCard: {
     background: "#F8FAFC",
-    border: "1px solid rgba(15,23,42,0.06)",
-    borderRadius: 18,
+    border: "1px solid rgba(15,23,42,0.07)",
+    borderRadius: 20,
     padding: 14,
     display: "flex",
     flexDirection: "column",
     gap: 12,
+    minWidth: 0,
   },
 
   filtersGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(170px, 100%), 1fr))",
     gap: 12,
   },
 
@@ -1569,17 +1597,19 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 8,
+    minWidth: 0,
   },
 
   fieldLabel: {
     fontSize: 12,
-    fontWeight: 800,
+    fontWeight: 850,
     color: "#475569",
   },
 
   input: {
     width: "100%",
-    borderRadius: 12,
+    maxWidth: "100%",
+    borderRadius: 14,
     border: "1px solid rgba(15,23,42,0.12)",
     background: "#FFFFFF",
     padding: "12px 14px",
@@ -1590,7 +1620,8 @@ const styles: Record<string, CSSProperties> = {
 
   select: {
     width: "100%",
-    borderRadius: 12,
+    maxWidth: "100%",
+    borderRadius: 14,
     border: "1px solid rgba(15,23,42,0.12)",
     background: "#FFFFFF",
     padding: "12px 14px",
@@ -1610,7 +1641,7 @@ const styles: Record<string, CSSProperties> = {
   filterResultText: {
     margin: 0,
     fontSize: 13,
-    fontWeight: 800,
+    fontWeight: 850,
     color: "#64748B",
   },
 
@@ -1618,7 +1649,7 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(15,23,42,0.1)",
     background: "#FFFFFF",
     color: "#0F172A",
-    borderRadius: 12,
+    borderRadius: 14,
     padding: "10px 12px",
     fontSize: 13,
     fontWeight: 900,
@@ -1629,26 +1660,28 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 10,
+    minWidth: 0,
   },
 
   transactionRow: {
-  display: "flex",
-  flexWrap: "wrap", // 👈 ESSENCIAL
-  justifyContent: "space-between",
-  alignItems: "flex-start",
-  gap: 14,
-  padding: 14,
-  borderRadius: 16,
-  background: "#F8FAFC",
-  border: "1px solid rgba(15,23,42,0.06)",
-},
+    display: "flex",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    padding: 14,
+    borderRadius: 18,
+    background: "linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)",
+    border: "1px solid rgba(15,23,42,0.07)",
+    minWidth: 0,
+  },
 
   transactionMain: {
     display: "flex",
     flexDirection: "column",
     gap: 6,
     minWidth: 0,
-    flex: 1,
+    flex: "1 1 230px",
   },
 
   transactionTop: {
@@ -1680,13 +1713,15 @@ const styles: Record<string, CSSProperties> = {
     margin: 0,
     fontSize: 12,
     lineHeight: 1.6,
-    fontWeight: 700,
+    fontWeight: 750,
     color: "#64748B",
     wordBreak: "break-word",
+    overflowWrap: "anywhere",
   },
 
   transactionAmounts: {
     minWidth: 0,
+    flex: "0 1 140px",
     display: "flex",
     flexDirection: "column",
     alignItems: "flex-end",
@@ -1695,14 +1730,15 @@ const styles: Record<string, CSSProperties> = {
 
   transactionAmountLabel: {
     fontSize: 12,
-    fontWeight: 800,
+    fontWeight: 850,
     color: "#64748B",
   },
 
   transactionAmountValue: {
     fontSize: 15,
     fontWeight: 1000,
-    color: "#0F172A",
+    color: "#0B3C5D",
+    wordBreak: "break-word",
   },
 
   loadMoreWrap: {
@@ -1715,6 +1751,7 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 12,
+    minWidth: 0,
   },
 
   tournamentRow: {
@@ -1722,20 +1759,21 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 16,
-    padding: 16,
-    borderRadius: 18,
-    background: "#F8FAFC",
-    border: "1px solid rgba(15,23,42,0.06)",
+    padding: "clamp(14px, 3vw, 18px)",
+    borderRadius: 20,
+    background: "linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)",
+    border: "1px solid rgba(15,23,42,0.07)",
     flexWrap: "wrap",
+    minWidth: 0,
   },
 
   tournamentMain: {
-  flex: 1,
-  minWidth: 0, // 👈 MUITO IMPORTANTE
-  display: "flex",
-  flexDirection: "column",
-  gap: 12,
-},
+    flex: "1 1 320px",
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
 
   tournamentTop: {
     display: "flex",
@@ -1748,67 +1786,66 @@ const styles: Record<string, CSSProperties> = {
   tournamentTitle: {
     margin: 0,
     fontSize: 17,
+    lineHeight: 1.25,
     fontWeight: 1000,
     color: "#0F172A",
+    overflowWrap: "anywhere",
   },
 
   tournamentSubtitle: {
     margin: "4px 0 0 0",
     fontSize: 12,
-    fontWeight: 700,
+    fontWeight: 750,
     color: "#64748B",
   },
 
   tournamentMeta: {
     margin: "6px 0 0 0",
     fontSize: 13,
-    fontWeight: 800,
+    fontWeight: 850,
     color: "#475569",
+    overflowWrap: "anywhere",
   },
 
   tournamentMetricsGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(132px, 100%), 1fr))",
     gap: 10,
   },
 
   miniMetricCard: {
     background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.08)",
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 12,
+    minWidth: 0,
   },
 
   miniMetricLabel: {
     margin: 0,
     fontSize: 12,
-    fontWeight: 800,
+    fontWeight: 850,
     color: "#64748B",
   },
 
   miniMetricValue: {
     margin: "8px 0 0 0",
     fontSize: 15,
+    lineHeight: 1.2,
     fontWeight: 1000,
+    wordBreak: "break-word",
   },
 
-  miniMetricValueDefault: {
-    color: "#0F172A",
-  },
-
-  miniMetricValueEmerald: {
-    color: "#047857",
-  },
-
-  miniMetricValueAmber: {
-    color: "#B45309",
-  },
+  miniMetricValueDefault: { color: "#0F172A" },
+  miniMetricValueEmerald: { color: "#047857" },
+  miniMetricValueAmber: { color: "#B45309" },
 
   tournamentActions: {
     display: "flex",
     gap: 10,
     flexWrap: "wrap",
     alignItems: "center",
+    minWidth: 0,
   },
 
   statusBadge: {
@@ -1825,10 +1862,10 @@ const styles: Record<string, CSSProperties> = {
   emptyCard: {
     background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.08)",
-    borderRadius: 24,
-    padding: 28,
+    borderRadius: 26,
+    padding: "clamp(22px, 5vw, 34px)",
     textAlign: "center",
-    boxShadow: "0 12px 26px rgba(15,23,42,0.04)",
+    boxShadow: "0 14px 32px rgba(15,23,42,0.06)",
   },
 
   emptyEmoji: {
@@ -1837,7 +1874,7 @@ const styles: Record<string, CSSProperties> = {
 
   emptyTitle: {
     margin: "14px 0 0 0",
-    fontSize: 22,
+    fontSize: "clamp(20px, 5vw, 24px)",
     fontWeight: 1000,
     color: "#0F172A",
   },
@@ -1847,7 +1884,7 @@ const styles: Record<string, CSSProperties> = {
     maxWidth: 620,
     fontSize: 14,
     lineHeight: 1.7,
-    fontWeight: 700,
+    fontWeight: 750,
     color: "#64748B",
   },
 
@@ -1857,12 +1894,13 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "center",
     textDecoration: "none",
     padding: "12px 16px",
-    borderRadius: 14,
-    background: "#0B3C5D",
+    borderRadius: 15,
+    background: "linear-gradient(135deg, #0B3C5D 0%, #00BFDF 100%)",
     color: "#FFFFFF",
     fontSize: 14,
-    fontWeight: 900,
+    fontWeight: 950,
     whiteSpace: "nowrap",
+    boxShadow: "0 12px 24px rgba(11,60,93,0.16)",
   },
 
   secondaryAction: {
@@ -1871,35 +1909,36 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "center",
     textDecoration: "none",
     padding: "12px 16px",
-    borderRadius: 14,
-    background: "#FFFFFF",
-    color: "#0F172A",
-    border: "1px solid rgba(15,23,42,0.10)",
+    borderRadius: 15,
+    background: "rgba(255,255,255,0.92)",
+    color: "#0B3C5D",
+    border: "1px solid rgba(255,255,255,0.42)",
     fontSize: 14,
-    fontWeight: 900,
+    fontWeight: 950,
     whiteSpace: "nowrap",
   },
 
   primaryButton: {
     border: "none",
-    borderRadius: 14,
+    borderRadius: 15,
     padding: "12px 16px",
     background: "#FFFFFF",
     color: "#0B3C5D",
     fontSize: 14,
-    fontWeight: 900,
+    fontWeight: 950,
     cursor: "pointer",
     whiteSpace: "nowrap",
+    boxShadow: "0 12px 28px rgba(15,23,42,0.14)",
   },
 
   secondaryButton: {
     border: "1px solid rgba(15,23,42,0.10)",
-    borderRadius: 14,
+    borderRadius: 15,
     padding: "12px 16px",
     background: "#FFFFFF",
     color: "#0F172A",
     fontSize: 14,
-    fontWeight: 900,
+    fontWeight: 950,
     cursor: "pointer",
     whiteSpace: "nowrap",
   },
@@ -1911,24 +1950,24 @@ const styles: Record<string, CSSProperties> = {
 
   successNotice: {
     marginTop: 10,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: "10px 12px",
     background: "rgba(34,197,94,0.18)",
     border: "1px solid rgba(187,247,208,0.45)",
     color: "#DCFCE7",
     fontSize: 13,
-    fontWeight: 800,
+    fontWeight: 850,
   },
 
   errorNotice: {
     marginTop: 10,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: "10px 12px",
     background: "rgba(239,68,68,0.18)",
     border: "1px solid rgba(254,202,202,0.45)",
     color: "#FEE2E2",
     fontSize: 13,
-    fontWeight: 800,
+    fontWeight: 850,
   },
 
   errorCard: {
@@ -1950,7 +1989,7 @@ const styles: Record<string, CSSProperties> = {
     margin: "8px 0 0 0",
     fontSize: 14,
     lineHeight: 1.6,
-    fontWeight: 700,
+    fontWeight: 750,
     color: "#7F1D1D",
   },
 
@@ -1958,7 +1997,7 @@ const styles: Record<string, CSSProperties> = {
     margin: 0,
     color: "#64748B",
     fontSize: 14,
-    fontWeight: 700,
+    fontWeight: 750,
     lineHeight: 1.6,
   },
 };
