@@ -9,7 +9,15 @@ type SellerClientProps = {
   email?: string | null;
 };
 
-type SellerStatus = "Ativo" | "Em configuração" | "Em breve";
+type CardItem = {
+  title: string;
+  description: string;
+  emoji: string;
+  href: string;
+  cta: string;
+  featured?: boolean;
+  status: string;
+};
 
 function formatUid(uid: string) {
   if (!uid) return "";
@@ -17,386 +25,158 @@ function formatUid(uid: string) {
   return `${uid.slice(0, 6)}…${uid.slice(-4)}`;
 }
 
-function statusChipStyle(status: SellerStatus): CSSProperties {
-  const base: CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    padding: "7px 12px",
-    borderRadius: 999,
-    fontSize: 12,
-    fontWeight: 900,
-    border: "1px solid rgba(15,23,42,0.10)",
-    whiteSpace: "nowrap",
-    minHeight: 32,
-  };
-
-  if (status === "Ativo") {
-    return {
-      ...base,
-      background: "rgba(94,252,161,0.14)",
-      color: "#166534",
-      border: "1px solid rgba(34,197,94,0.18)",
-    };
-  }
-
-  if (status === "Em configuração") {
-    return {
-      ...base,
-      background: "rgba(0,191,223,0.12)",
-      color: "#0B3C5D",
-      border: "1px solid rgba(11,60,93,0.10)",
-    };
-  }
-
-  return {
-    ...base,
-    background: "rgba(100,116,139,0.10)",
-    color: "#334155",
-  };
-}
-
-function getModuleIcon(title: string) {
-  switch (title) {
-    case "Wallet do organizador":
-      return "💳";
-    case "Meu pesqueiro":
-      return "📍";
-    case "Marketplace":
-      return "🛍️";
-    case "Pedidos":
-      return "📦";
-    default:
-      return "✨";
-  }
-}
-
 export default function SellerClient({ uid, email }: SellerClientProps) {
   const router = useRouter();
 
-  const stats = useMemo(
+  const cards = useMemo<CardItem[]>(
     () => [
-      { label: "Carteira", value: "Ativa", hint: "central financeira" },
-      { label: "Meu pesqueiro", value: "0", hint: "cadastros ativos" },
-      { label: "Produtos", value: "0", hint: "itens publicados" },
-      { label: "Plano", value: "Inativo", hint: "assinatura" },
+      {
+        title: "Carteira",
+        description:
+          "Acompanhe saldo, repasses, extrato e financeiro dos torneios.",
+        emoji: "💳",
+        href: "/seller/wallet",
+        cta: "Abrir wallet",
+        featured: true,
+        status: "Ativa",
+      },
+      {
+        title: "Conta do organizador",
+        description:
+          "Atualize seu cadastro financeiro e acompanhe o status da aprovação.",
+        emoji: "🪪",
+        href: "/seller/account",
+        cta: "Ver cadastro",
+        status: "Importante",
+      },
+      {
+        title: "Meu pesqueiro",
+        description:
+          "Cadastre e gerencie as informações do seu estabelecimento.",
+        emoji: "🎣",
+        href: "/seller/fishery",
+        cta: "Gerenciar",
+        status: "Configurar",
+      },
+      {
+        title: "Torneios",
+        description:
+          "Crie torneios, acompanhe equipes, ranking e validações.",
+        emoji: "🏆",
+        href: "/seller/tournaments",
+        cta: "Abrir torneios",
+        status: "Disponível",
+      },
     ],
     []
   );
 
-  const modules = useMemo(
-    () => [
-      {
-        title: "Wallet do organizador",
-        status: "Ativo" as SellerStatus,
-        description:
-          "Acesse saldo disponível, valores pendentes, repasses, extrato e financeiro por torneio em um só lugar.",
-        cta: "Abrir carteira",
-        onClick: () => router.push("/seller/wallet"),
-        featured: true,
-      },
-      {
-        title: "Meu pesqueiro",
-        status: "Em configuração" as SellerStatus,
-        description:
-          "Cadastre seu pesqueiro para aparecer no app, receber avaliações e ganhar divulgação.",
-        cta: "Gerenciar pesqueiro",
-        onClick: () => router.push("/seller/fishery"),
-      },
-      {
-        title: "Marketplace",
-        status: "Em breve" as SellerStatus,
-        description:
-          "Venda produtos, pacotes e outros itens para os usuários do ConnectFish.",
-        cta: "Ver módulo",
-        onClick: () => router.push("/seller/products"),
-      },
-      {
-        title: "Pedidos",
-        status: "Em breve" as SellerStatus,
-        description:
-          "Acompanhe pagamentos, entregas e movimentações da sua operação comercial.",
-        cta: "Ver pedidos",
-        onClick: () => router.push("/seller/orders"),
-      },
-    ],
-    [router]
-  );
-
-  const quickActions = useMemo(
-    () => [
-      {
-        title: "Carteira e repasses",
-        sub: "Entre na wallet para acompanhar saldo, pedidos de repasse e extrato.",
-        onClick: () => router.push("/seller/wallet"),
-        primary: true,
-      },
-      {
-        title: "Cadastrar pesqueiro",
-        sub: "Crie ou edite as informações do seu estabelecimento.",
-        onClick: () => router.push("/seller/fishery"),
-      },
-      {
-        title: "Plano e assinatura",
-        sub: "Gerencie cobrança e destaque do seu negócio.",
-        onClick: () => router.push("/seller/billing"),
-      },
-      {
-        title: "Configurações",
-        sub: "Dados da conta comercial, preferências e integrações.",
-        onClick: () => router.push("/seller/settings"),
-      },
-    ],
-    [router]
-  );
-
   return (
     <div style={styles.page}>
-      <section style={styles.heroCard}>
+      <section style={styles.hero}>
         <div style={styles.heroContent}>
-          <div style={styles.heroMain}>
-            <div style={styles.eyebrow}>Área Comercial</div>
+          <div style={styles.overline}>Área Comercial ConnectFish</div>
 
-            <h1 style={styles.heroTitle}>Central do vendedor ConnectFish</h1>
+          <h1 style={styles.title}>Painel do organizador</h1>
 
-            <p style={styles.heroSubtitle}>
-              Gerencie sua operação comercial com o mesmo padrão visual do
-              ecossistema ConnectFish: acesso rápido à wallet, ao pesqueiro,
-              produtos, pedidos e evolução da sua conta.
+          <p style={styles.subtitle}>
+            Controle sua operação, financeiro, torneios e cadastro de organizador
+            em uma central simples, segura e com a identidade do ConnectFish.
+          </p>
+
+          <div style={styles.accountRow}>
+            <span style={styles.accountPill}>
+              {email ? email : `UID ${formatUid(uid)}`}
+            </span>
+            <span style={styles.statusPill}>Painel ativo</span>
+          </div>
+
+          <div style={styles.actions}>
+            <button
+              type="button"
+              style={styles.primaryButton}
+              onClick={() => router.push("/seller/wallet")}
+            >
+              Abrir wallet
+            </button>
+
+            <button
+              type="button"
+              style={styles.secondaryButton}
+              onClick={() => router.push("/seller/account")}
+            >
+              Atualizar cadastro
+            </button>
+          </div>
+        </div>
+
+        <div style={styles.heroSide}>
+          <div style={styles.heroMetricCard}>
+            <span style={styles.heroMetricLabel}>Próximo passo</span>
+            <strong style={styles.heroMetricValue}>Cadastro financeiro</strong>
+            <p style={styles.heroMetricText}>
+              Mantenha seus dados atualizados para liberar torneios pagos e
+              repasses com segurança.
             </p>
-
-            <div style={styles.heroMeta}>
-              <span style={styles.metaPill}>
-                {email ? email : `UID ${formatUid(uid)}`}
-              </span>
-              <span style={styles.metaPill}>Painel comercial ativo</span>
-              <span style={styles.metaPillHighlight}>Wallet em destaque</span>
-            </div>
-
-            <div style={styles.heroActions}>
-              <button
-                type="button"
-                style={styles.primaryBtn}
-                onClick={() => router.push("/seller/wallet")}
-              >
-                Abrir wallet
-              </button>
-
-              <button
-                type="button"
-                style={styles.secondaryBtnSoft}
-                onClick={() => router.push("/seller/fishery")}
-              >
-                Meu pesqueiro
-              </button>
-            </div>
-          </div>
-
-          <div style={styles.heroSide}>
-            <div style={styles.heroFocusCard}>
-              <div style={styles.heroFocusOverline}>Acesso principal</div>
-              <div style={styles.heroFocusTitle}>Carteira do organizador</div>
-              <div style={styles.heroFocusText}>
-                Centralize saldo, repasses, extrato e gestão financeira em um só
-                lugar.
-              </div>
-
-              <div style={styles.heroFocusMetrics}>
-                <div style={styles.metricBox}>
-                  <div style={styles.metricLabel}>Status</div>
-                  <div style={styles.metricValue}>Ativa</div>
-                </div>
-
-                <div style={styles.metricBox}>
-                  <div style={styles.metricLabel}>Prioridade</div>
-                  <div style={styles.metricValue}>Alta</div>
-                </div>
-
-                <div style={styles.metricBox}>
-                  <div style={styles.metricLabel}>Fluxo</div>
-                  <div style={styles.metricValue}>Financeiro</div>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                style={styles.primaryBtnLight}
-                onClick={() => router.push("/seller/wallet")}
-              >
-                Ir para wallet
-              </button>
-            </div>
           </div>
         </div>
       </section>
 
-      <section style={styles.sectionCard}>
-        <div style={styles.sectionHeader}>
-          <div style={styles.sectionBadge}>📊</div>
-          <div style={{ flex: 1 }}>
-            <div style={styles.sectionTitle}>Sua operação no ConnectFish</div>
-            <div style={styles.sectionCaption}>
-              Um resumo rápido da estrutura comercial disponível no painel.
-            </div>
-          </div>
-        </div>
-
-        <div style={styles.statsGrid}>
-          {stats.map((item) => (
-            <div key={item.label} style={styles.statCard}>
-              <div style={styles.statLabel}>{item.label}</div>
-              <div style={styles.statValue}>{item.value}</div>
-              <div style={styles.statHint}>{item.hint}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section style={styles.mainGrid}>
-        <div style={styles.sectionCard}>
-          <div style={styles.sectionHeader}>
-            <div style={styles.sectionBadge}>🧩</div>
-            <div style={{ flex: 1 }}>
-              <div style={styles.sectionTitle}>Módulos da área comercial</div>
-              <div style={styles.sectionCaption}>
-                A wallet entra como núcleo operacional, seguida pelos demais
-                módulos do ecossistema.
-              </div>
-            </div>
-          </div>
-
-          <div style={styles.modulesGrid}>
-            {modules.map((item) => (
-              <div
-                key={item.title}
+      <section style={styles.cardsGrid}>
+        {cards.map((item) => (
+          <article
+            key={item.title}
+            style={{
+              ...styles.card,
+              ...(item.featured ? styles.cardFeatured : {}),
+            }}
+          >
+            <div style={styles.cardTop}>
+              <div style={styles.iconBox}>{item.emoji}</div>
+              <span
                 style={{
-                  ...styles.moduleCard,
-                  ...(item.featured ? styles.moduleCardFeatured : {}),
+                  ...styles.cardStatus,
+                  ...(item.featured ? styles.cardStatusFeatured : {}),
                 }}
               >
-                <div style={styles.moduleTop}>
-                  <div style={styles.moduleTitleWrap}>
-                    <div style={styles.moduleIcon}>
-                      {getModuleIcon(item.title)}
-                    </div>
-                    <div style={styles.moduleTitle}>{item.title}</div>
-                  </div>
-
-                  <span style={statusChipStyle(item.status)}>{item.status}</span>
-                </div>
-
-                <div style={styles.moduleDescription}>{item.description}</div>
-
-                <button
-                  type="button"
-                  style={item.featured ? styles.primaryModuleBtn : styles.secondaryBtn}
-                  onClick={item.onClick}
-                >
-                  {item.cta}
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={styles.sideColumn}>
-          <div style={styles.sectionCard}>
-            <div style={styles.sectionHeader}>
-              <div style={styles.sectionBadge}>⚡</div>
-              <div style={{ flex: 1 }}>
-                <div style={styles.sectionTitle}>Ações rápidas</div>
-                <div style={styles.sectionCaption}>
-                  Atalhos para acelerar sua rotina comercial.
-                </div>
-              </div>
+                {item.status}
+              </span>
             </div>
 
-            <div style={styles.actionsGrid}>
-              {quickActions.map((action) => (
-                <button
-                  key={action.title}
-                  type="button"
-                  style={action.primary ? styles.actionCardPrimary : styles.actionCard}
-                  onClick={action.onClick}
-                >
-                  <div
-                    style={
-                      action.primary ? styles.actionTitlePrimary : styles.actionTitle
-                    }
-                  >
-                    {action.title}
-                  </div>
-                  <div
-                    style={action.primary ? styles.actionSubPrimary : styles.actionSub}
-                  >
-                    {action.sub}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
+            <h2 style={styles.cardTitle}>{item.title}</h2>
+            <p style={styles.cardDescription}>{item.description}</p>
 
-          <div style={styles.noteCard}>
-            <div style={styles.noteTitle}>Nova lógica do painel</div>
-            <div style={styles.noteSub}>
-              Primeiro o vendedor entra no financeiro. Depois expande para
-              pesqueiro, assinatura, produtos, pedidos e operação completa.
-            </div>
-          </div>
-        </div>
+            <button
+              type="button"
+              style={item.featured ? styles.cardPrimaryButton : styles.cardButton}
+              onClick={() => router.push(item.href)}
+            >
+              {item.cta}
+            </button>
+          </article>
+        ))}
       </section>
 
-      <section style={styles.sectionCard}>
-        <div style={styles.sectionHeader}>
-          <div style={styles.sectionBadge}>✅</div>
-          <div style={{ flex: 1 }}>
-            <div style={styles.sectionTitle}>Checklist operacional</div>
-            <div style={styles.sectionCaption}>
-              Ordem recomendada para ativar toda a sua área comercial.
-            </div>
+      <section style={styles.infoGrid}>
+        <div style={styles.infoCard}>
+          <div style={styles.infoIcon}>✅</div>
+          <div>
+            <h2 style={styles.infoTitle}>Comece pelo cadastro</h2>
+            <p style={styles.infoText}>
+              O cadastro de organizador mostra se sua conta está aprovada, em
+              análise ou precisando de atualização.
+            </p>
           </div>
         </div>
 
-        <div style={styles.checkGrid}>
-          <div style={styles.checkItem}>
-            <div style={styles.checkDot} />
-            <div>
-              <div style={styles.checkTitle}>Abrir a wallet</div>
-              <div style={styles.checkSub}>
-                Acompanhar saldo, repasses e extrato financeiro da operação.
-              </div>
-            </div>
-          </div>
-
-          <div style={styles.checkItem}>
-            <div style={styles.checkDotMuted} />
-            <div>
-              <div style={styles.checkTitle}>Cadastrar o pesqueiro</div>
-              <div style={styles.checkSub}>
-                Nome, descrição, cidade, peixes, horário e contatos.
-              </div>
-            </div>
-          </div>
-
-          <div style={styles.checkItem}>
-            <div style={styles.checkDotMuted} />
-            <div>
-              <div style={styles.checkTitle}>Ativar plano</div>
-              <div style={styles.checkSub}>
-                Etapa para manter destaque e evoluir a conta comercial.
-              </div>
-            </div>
-          </div>
-
-          <div style={styles.checkItem}>
-            <div style={styles.checkDotMuted} />
-            <div>
-              <div style={styles.checkTitle}>Abrir marketplace</div>
-              <div style={styles.checkSub}>
-                Venda de produtos e outros serviços dentro da plataforma.
-              </div>
-            </div>
+        <div style={styles.infoCard}>
+          <div style={styles.infoIcon}>💳</div>
+          <div>
+            <h2 style={styles.infoTitle}>Depois acompanhe a wallet</h2>
+            <p style={styles.infoText}>
+              Na wallet você acompanha saldo, valores pendentes, repasses e
+              movimentações financeiras.
+            </p>
           </div>
         </div>
       </section>
@@ -406,102 +186,121 @@ export default function SellerClient({ uid, email }: SellerClientProps) {
 
 const styles: Record<string, CSSProperties> = {
   page: {
+    width: "100%",
     display: "grid",
     gap: 16,
-    width: "100%",
+    overflowX: "hidden",
   },
 
-  heroCard: {
-    borderRadius: 24,
-    padding: "clamp(18px, 3vw, 28px)",
+  hero: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1.5fr) minmax(260px, 0.7fr)",
+    gap: 16,
+    alignItems: "stretch",
+    borderRadius: 26,
+    padding: "clamp(20px, 4vw, 32px)",
     background:
-      "linear-gradient(135deg, rgba(11,60,93,0.08) 0%, rgba(0,191,223,0.08) 45%, rgba(94,252,161,0.10) 100%)",
-    border: "1px solid rgba(15,23,42,0.08)",
-    boxShadow: "0 12px 30px rgba(15,23,42,0.05)",
+      "linear-gradient(135deg, #071325 0%, #0B3C5D 48%, #00BFDF 135%)",
+    color: "#FFFFFF",
+    border: "1px solid rgba(255,255,255,0.10)",
+    boxShadow: "0 22px 55px rgba(0,0,0,0.22)",
+    overflow: "hidden",
   },
 
   heroContent: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: 16,
-    alignItems: "stretch",
-  },
-
-  heroMain: {
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "center",
     minWidth: 0,
   },
 
-  eyebrow: {
+  overline: {
     fontSize: 11,
     fontWeight: 1000,
-    color: "#0B3C5D",
     textTransform: "uppercase",
-    letterSpacing: 0.7,
+    letterSpacing: 0.8,
+    color: "rgba(234,240,255,0.68)",
   },
 
-  heroTitle: {
-    margin: "8px 0 0",
-    fontSize: "clamp(26px, 4vw, 36px)",
-    lineHeight: 1.08,
+  title: {
+    margin: "10px 0 0",
+    maxWidth: 760,
+    fontSize: "clamp(30px, 5vw, 44px)",
+    lineHeight: 1.04,
     fontWeight: 1000,
-    color: "#0F172A",
-    letterSpacing: -0.6,
+    letterSpacing: -1,
+    color: "#FFFFFF",
   },
 
-  heroSubtitle: {
-    margin: "12px 0 0",
-    fontSize: 14,
+  subtitle: {
+    margin: "14px 0 0",
+    maxWidth: 760,
+    fontSize: "clamp(14px, 2.5vw, 16px)",
     lineHeight: 1.7,
     fontWeight: 700,
-    color: "#475569",
-    maxWidth: 760,
+    color: "rgba(234,240,255,0.80)",
   },
 
-  heroMeta: {
-    marginTop: 16,
+  accountRow: {
+    marginTop: 18,
     display: "flex",
     flexWrap: "wrap",
     gap: 8,
   },
 
-  metaPill: {
+  accountPill: {
     display: "inline-flex",
     alignItems: "center",
-    justifyContent: "center",
     minHeight: 34,
     padding: "8px 12px",
     borderRadius: 999,
-    background: "#FFFFFF",
-    border: "1px solid rgba(15,23,42,0.08)",
-    color: "#334155",
+    background: "rgba(255,255,255,0.10)",
+    border: "1px solid rgba(255,255,255,0.14)",
+    color: "#FFFFFF",
     fontSize: 12,
     fontWeight: 900,
-    boxShadow: "0 6px 16px rgba(15,23,42,0.04)",
+    wordBreak: "break-word",
   },
 
-  metaPillHighlight: {
+  statusPill: {
     display: "inline-flex",
     alignItems: "center",
-    justifyContent: "center",
     minHeight: 34,
     padding: "8px 12px",
     borderRadius: 999,
-    background: "rgba(11,60,93,0.10)",
-    border: "1px solid rgba(11,60,93,0.12)",
-    color: "#0B3C5D",
+    background: "rgba(94,252,161,0.16)",
+    border: "1px solid rgba(94,252,161,0.28)",
+    color: "#DDFBEA",
     fontSize: 12,
     fontWeight: 1000,
-    boxShadow: "0 6px 16px rgba(15,23,42,0.04)",
   },
 
-  heroActions: {
-    marginTop: 18,
+  actions: {
+    marginTop: 22,
     display: "flex",
-    gap: 10,
     flexWrap: "wrap",
+    gap: 10,
+  },
+
+  primaryButton: {
+    height: 46,
+    padding: "0 18px",
+    borderRadius: 14,
+    border: "1px solid rgba(94,252,161,0.35)",
+    background: "#5EFCA1",
+    color: "#082F49",
+    fontSize: 13,
+    fontWeight: 1000,
+    cursor: "pointer",
+  },
+
+  secondaryButton: {
+    height: 46,
+    padding: "0 18px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: "rgba(255,255,255,0.10)",
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: 1000,
+    cursor: "pointer",
   },
 
   heroSide: {
@@ -509,403 +308,181 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
   },
 
-  heroFocusCard: {
+  heroMetricCard: {
     width: "100%",
-    background: "linear-gradient(135deg, #0B3C5D 0%, #00BFDF 100%)",
     borderRadius: 22,
     padding: 18,
-    color: "#FFFFFF",
+    background: "rgba(8,15,28,0.44)",
     border: "1px solid rgba(255,255,255,0.12)",
-    boxShadow: "0 16px 34px rgba(11,60,93,0.18)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)",
     display: "flex",
     flexDirection: "column",
-    gap: 14,
-    justifyContent: "space-between",
-    minHeight: 240,
+    justifyContent: "center",
   },
 
-  heroFocusOverline: {
-    fontSize: 11,
-    fontWeight: 1000,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    color: "rgba(255,255,255,0.74)",
+  heroMetricLabel: {
+    fontSize: 12,
+    fontWeight: 900,
+    color: "rgba(234,240,255,0.62)",
   },
 
-  heroFocusTitle: {
-    fontSize: 22,
-    lineHeight: 1.15,
-    fontWeight: 1000,
+  heroMetricValue: {
+    marginTop: 8,
+    fontSize: 20,
+    lineHeight: 1.2,
     color: "#FFFFFF",
   },
 
-  heroFocusText: {
+  heroMetricText: {
+    margin: "10px 0 0",
     fontSize: 13,
     lineHeight: 1.6,
     fontWeight: 700,
-    color: "rgba(255,255,255,0.86)",
+    color: "rgba(234,240,255,0.74)",
   },
 
-  heroFocusMetrics: {
+  cardsGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))",
-    gap: 10,
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(240px, 100%), 1fr))",
+    gap: 14,
   },
 
-  metricBox: {
-    borderRadius: 16,
-    padding: "12px 12px",
-    background: "rgba(255,255,255,0.10)",
-    border: "1px solid rgba(255,255,255,0.12)",
+  card: {
     minWidth: 0,
+    borderRadius: 22,
+    padding: 18,
+    background: "rgba(15,23,42,0.88)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    boxShadow: "0 18px 45px rgba(0,0,0,0.16)",
   },
 
-  metricLabel: {
-    fontSize: 11,
-    fontWeight: 800,
-    color: "rgba(255,255,255,0.72)",
-    marginBottom: 6,
+  cardFeatured: {
+    background:
+      "linear-gradient(135deg, rgba(11,60,93,0.92) 0%, rgba(8,15,28,0.92) 100%)",
+    border: "1px solid rgba(0,191,223,0.35)",
+    boxShadow: "0 18px 45px rgba(0,191,223,0.08)",
   },
 
-  metricValue: {
-    fontSize: 14,
-    fontWeight: 1000,
-    color: "#FFFFFF",
-  },
-
-  sectionCard: {
-    background: "#FFFFFF",
-    border: "1px solid rgba(15,23,42,0.08)",
-    borderRadius: 20,
-    padding: "clamp(16px, 2.5vw, 20px)",
-    boxShadow: "0 10px 24px rgba(15,23,42,0.05)",
-  },
-
-  sectionHeader: {
+  cardTop: {
     display: "flex",
-    alignItems: "flex-start",
+    alignItems: "center",
+    justifyContent: "space-between",
     gap: 12,
     marginBottom: 16,
   },
 
-  sectionBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
+  iconBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    display: "grid",
+    placeItems: "center",
     background: "rgba(0,191,223,0.12)",
-    display: "flex",
+    border: "1px solid rgba(0,191,223,0.18)",
+    fontSize: 22,
+  },
+
+  cardStatus: {
+    display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
+    padding: "7px 10px",
+    borderRadius: 999,
+    background: "rgba(255,255,255,0.08)",
+    color: "rgba(234,240,255,0.72)",
+    fontSize: 11,
+    fontWeight: 1000,
+    whiteSpace: "nowrap",
+  },
+
+  cardStatusFeatured: {
+    background: "rgba(94,252,161,0.16)",
+    color: "#DDFBEA",
+  },
+
+  cardTitle: {
+    margin: 0,
     fontSize: 18,
+    fontWeight: 1000,
+    color: "#FFFFFF",
+  },
+
+  cardDescription: {
+    margin: "8px 0 0",
+    minHeight: 48,
+    fontSize: 13,
+    lineHeight: 1.6,
+    fontWeight: 700,
+    color: "rgba(234,240,255,0.68)",
+  },
+
+  cardButton: {
+    marginTop: 16,
+    width: "100%",
+    height: 42,
+    borderRadius: 13,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.08)",
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: 1000,
+    cursor: "pointer",
+  },
+
+  cardPrimaryButton: {
+    marginTop: 16,
+    width: "100%",
+    height: 42,
+    borderRadius: 13,
+    border: "1px solid rgba(0,191,223,0.24)",
+    background: "#00BFDF",
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: 1000,
+    cursor: "pointer",
+  },
+
+  infoGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(280px, 100%), 1fr))",
+    gap: 14,
+  },
+
+  infoCard: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 14,
+    borderRadius: 22,
+    padding: 18,
+    background: "rgba(15,23,42,0.82)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    boxShadow: "0 18px 45px rgba(0,0,0,0.12)",
+  },
+
+  infoIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    display: "grid",
+    placeItems: "center",
+    background: "rgba(94,252,161,0.14)",
+    border: "1px solid rgba(94,252,161,0.22)",
+    fontSize: 20,
     flexShrink: 0,
   },
 
-  sectionTitle: {
+  infoTitle: {
+    margin: 0,
     fontSize: 16,
     fontWeight: 1000,
-    color: "#0F172A",
+    color: "#FFFFFF",
   },
 
-  sectionCaption: {
-    marginTop: 4,
-    fontSize: 12,
-    lineHeight: 1.55,
-    fontWeight: 700,
-    color: "#64748B",
-  },
-
-  statsGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-    gap: 12,
-  },
-
-  statCard: {
-    background: "rgba(248,250,252,0.98)",
-    border: "1px solid rgba(15,23,42,0.08)",
-    borderRadius: 18,
-    padding: 16,
-    minWidth: 0,
-  },
-
-  statLabel: {
-    fontSize: 12,
-    fontWeight: 900,
-    color: "#475569",
-  },
-
-  statValue: {
-    marginTop: 8,
-    fontSize: 24,
-    fontWeight: 1000,
-    color: "#0F172A",
-  },
-
-  statHint: {
-    marginTop: 6,
-    fontSize: 12,
-    lineHeight: 1.5,
-    fontWeight: 800,
-    color: "#64748B",
-  },
-
-  mainGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: 12,
-    alignItems: "start",
-  },
-
-  sideColumn: {
-    display: "grid",
-    gap: 12,
-    minWidth: 0,
-  },
-
-  modulesGrid: {
-    display: "grid",
-    gap: 12,
-  },
-
-  moduleCard: {
-    border: "1px solid rgba(15,23,42,0.08)",
-    borderRadius: 18,
-    padding: 16,
-    background: "rgba(248,250,252,0.96)",
-    minWidth: 0,
-  },
-
-  moduleCardFeatured: {
-    background:
-      "linear-gradient(135deg, rgba(11,60,93,0.06) 0%, rgba(94,252,161,0.10) 100%)",
-    border: "1px solid rgba(11,60,93,0.12)",
-    boxShadow: "0 10px 24px rgba(11,60,93,0.06)",
-  },
-
-  moduleTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 10,
-    flexWrap: "wrap",
-  },
-
-  moduleTitleWrap: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    minWidth: 0,
-    flex: 1,
-  },
-
-  moduleIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    background: "rgba(255,255,255,0.72)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 17,
-    flexShrink: 0,
-  },
-
-  moduleTitle: {
-    fontSize: 14,
-    fontWeight: 1000,
-    color: "#0F172A",
-    minWidth: 0,
-  },
-
-  moduleDescription: {
-    marginTop: 10,
+  infoText: {
+    margin: "5px 0 0",
     fontSize: 13,
     lineHeight: 1.6,
     fontWeight: 700,
-    color: "#475569",
-  },
-
-  actionsGrid: {
-    display: "grid",
-    gap: 10,
-  },
-
-  actionCard: {
-    textAlign: "left",
-    padding: 14,
-    borderRadius: 16,
-    border: "1px solid rgba(15,23,42,0.08)",
-    background: "#FFFFFF",
-    cursor: "pointer",
-  },
-
-  actionCardPrimary: {
-    textAlign: "left",
-    padding: 14,
-    borderRadius: 16,
-    border: "1px solid rgba(11,60,93,0.12)",
-    background:
-      "linear-gradient(135deg, rgba(11,60,93,0.06) 0%, rgba(94,252,161,0.10) 100%)",
-    cursor: "pointer",
-    boxShadow: "0 10px 24px rgba(11,60,93,0.06)",
-  },
-
-  actionTitle: {
-    fontSize: 13,
-    fontWeight: 1000,
-    color: "#0F172A",
-  },
-
-  actionTitlePrimary: {
-    fontSize: 13,
-    fontWeight: 1000,
-    color: "#0B3C5D",
-  },
-
-  actionSub: {
-    marginTop: 6,
-    fontSize: 12,
-    lineHeight: 1.55,
-    fontWeight: 700,
-    color: "#475569",
-  },
-
-  actionSubPrimary: {
-    marginTop: 6,
-    fontSize: 12,
-    lineHeight: 1.55,
-    fontWeight: 700,
-    color: "#334155",
-  },
-
-  noteCard: {
-    padding: 16,
-    borderRadius: 18,
-    background: "rgba(94,252,161,0.10)",
-    border: "1px solid rgba(46,139,87,0.18)",
-  },
-
-  noteTitle: {
-    fontSize: 12,
-    fontWeight: 1000,
-    color: "#14532D",
-  },
-
-  noteSub: {
-    marginTop: 6,
-    fontSize: 12,
-    lineHeight: 1.6,
-    fontWeight: 800,
-    color: "#14532D",
-  },
-
-  checkGrid: {
-    display: "grid",
-    gap: 12,
-  },
-
-  checkItem: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 12,
-    padding: 14,
-    borderRadius: 16,
-    border: "1px solid rgba(15,23,42,0.08)",
-    background: "rgba(248,250,252,0.96)",
-  },
-
-  checkDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 999,
-    background: "#2E8B57",
-    marginTop: 4,
-    flexShrink: 0,
-    boxShadow: "0 0 0 4px rgba(46,139,87,0.14)",
-  },
-
-  checkDotMuted: {
-    width: 12,
-    height: 12,
-    borderRadius: 999,
-    background: "#CBD5E1",
-    marginTop: 4,
-    flexShrink: 0,
-  },
-
-  checkTitle: {
-    fontSize: 13,
-    fontWeight: 1000,
-    color: "#0F172A",
-  },
-
-  checkSub: {
-    marginTop: 5,
-    fontSize: 12,
-    lineHeight: 1.55,
-    fontWeight: 700,
-    color: "#475569",
-  },
-
-  primaryBtn: {
-    height: 46,
-    padding: "0 18px",
-    borderRadius: 14,
-    border: "1px solid rgba(11,60,93,0.12)",
-    background: "#0B3C5D",
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: 1000,
-    cursor: "pointer",
-  },
-
-  primaryBtnLight: {
-    height: 44,
-    padding: "0 16px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.16)",
-    background: "#FFFFFF",
-    color: "#0F172A",
-    fontSize: 13,
-    fontWeight: 1000,
-    cursor: "pointer",
-  },
-
-  secondaryBtnSoft: {
-    height: 46,
-    padding: "0 18px",
-    borderRadius: 14,
-    border: "1px solid rgba(15,23,42,0.10)",
-    background: "#FFFFFF",
-    color: "#0F172A",
-    fontSize: 13,
-    fontWeight: 1000,
-    cursor: "pointer",
-  },
-
-  secondaryBtn: {
-    marginTop: 12,
-    height: 42,
-    padding: "0 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(15,23,42,0.10)",
-    background: "#FFFFFF",
-    color: "#0F172A",
-    fontSize: 12,
-    fontWeight: 1000,
-    cursor: "pointer",
-  },
-
-  primaryModuleBtn: {
-    marginTop: 12,
-    height: 42,
-    padding: "0 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(11,60,93,0.12)",
-    background: "#0B3C5D",
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: 1000,
-    cursor: "pointer",
+    color: "rgba(234,240,255,0.68)",
   },
 };
