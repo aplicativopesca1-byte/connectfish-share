@@ -3,6 +3,7 @@ import {
   ensureOrganizerPaymentProfile,
   getOrganizerPaymentProfile,
   markOrganizerOnboardingSubmitted,
+  setOrganizerOnboardingUrl,
   syncOrganizerProviderAccount,
   upsertOrganizerPaymentProfile,
   type OrganizerKycStatus,
@@ -67,6 +68,15 @@ type AsaasCreateAccountResponse = {
   id?: string;
   walletId?: string;
   apiKey?: string;
+};
+
+type AsaasMyAccountStatusResponse = {
+  onboardingUrl?: string | null;
+  commercialInfo?: string | null;
+  bankAccountInfo?: string | null;
+  documentation?: string | null;
+  general?: string | null;
+  [key: string]: unknown;
 };
 
 function safeTrim(value: unknown) {
@@ -315,6 +325,37 @@ async function createAsaasSubaccount(params: {
   };
 }
 
+async function getAsaasOnboardingUrl(providerApiKey: string | null) {
+  const apiKey = safeTrim(providerApiKey);
+  if (!apiKey) return null;
+
+  const response = await fetch(`${getAsaasBaseUrl()}/myAccount/status`, {
+    method: "GET",
+    headers: {
+      accept: "application/json",
+      access_token: apiKey,
+    },
+    cache: "no-store",
+  });
+
+  const result = (await response.json().catch(() => null)) as
+    | AsaasMyAccountStatusResponse
+    | { errors?: Array<{ description?: string }> }
+    | null;
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return nullableString(
+    (result as AsaasMyAccountStatusResponse | null)?.onboardingUrl
+  );
+}
+
+async function waitForAsaasProvisioning() {
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json().catch(() => null)) as RequestBody | null;
@@ -394,9 +435,7 @@ export async function POST(request: Request) {
     });
 
     if (missing.length > 0) {
-      return jsonError(
-        `Campos obrigatórios ausentes: ${missing.join(", ")}.`
-      );
+      return jsonError(`Campos obrigatórios ausentes: ${missing.join(", ")}.`);
     }
 
     await ensureOrganizerPaymentProfile(organizerUserId);
@@ -490,6 +529,21 @@ export async function POST(request: Request) {
       nextStatus = "pending";
     }
 
+    let onboardingUrl: string | null = null;
+
+    if (providerApiKey) {
+      await waitForAsaasProvisioning();
+
+      onboardingUrl = await getAsaasOnboardingUrl(providerApiKey);
+
+      if (onboardingUrl) {
+        await setOrganizerOnboardingUrl({
+          organizerUserId,
+          onboardingUrl,
+        });
+      }
+    }
+
     if (nextStatus === "pending") {
       await markOrganizerOnboardingSubmitted(organizerUserId);
     }
@@ -508,6 +562,7 @@ export async function POST(request: Request) {
         providerAccountId,
         providerWalletId,
         providerApiKey,
+        onboardingUrl: onboardingUrl || profile?.onboardingUrl || null,
         status: profile?.status || nextStatus,
       },
       { status: 200 }

@@ -3,6 +3,7 @@ import {
   findOrganizerPaymentProfileByProviderAccountId,
   markOrganizerOnboardingApproved,
   markOrganizerOnboardingRejected,
+  syncAsaasAccountStatus,
   syncOrganizerProviderAccount,
   type OrganizerKycStatus,
 } from "../../../../../app/services/organizerPaymentProfileService";
@@ -12,6 +13,8 @@ type AsaasAccountStatusValue =
   | "PENDING"
   | "REJECTED"
   | "AWAITING_APPROVAL"
+  | "EXPIRED"
+  | "EXPIRING_SOON"
   | string;
 
 type AsaasAccountStatusWebhookPayload = {
@@ -38,25 +41,24 @@ function safeTrim(value: unknown) {
 }
 
 function jsonError(message: string, status = 400) {
-  return NextResponse.json(
-    {
-      success: false,
-      message,
-    },
-    { status }
-  );
+  return NextResponse.json({ success: false, message }, { status });
 }
 
 function getWebhookToken() {
   return safeTrim(process.env.ASAAS_WEBHOOK_TOKEN);
 }
 
+function normalizeStatusValue(value: unknown) {
+  return safeTrim(value).toUpperCase();
+}
+
 function normalizeGeneralStatus(value: unknown): OrganizerKycStatus {
-  const raw = safeTrim(value).toUpperCase();
+  const raw = normalizeStatusValue(value);
 
   if (raw === "APPROVED") return "approved";
   if (raw === "REJECTED") return "rejected";
   if (raw === "PENDING" || raw === "AWAITING_APPROVAL") return "pending";
+
   return "pending";
 }
 
@@ -67,27 +69,71 @@ function inferStatusFromEvent(eventName: string): OrganizerKycStatus | null {
 
   if (event.endsWith("_APPROVED")) return "approved";
   if (event.endsWith("_REJECTED")) return "rejected";
-  if (event.endsWith("_PENDING") || event.endsWith("_AWAITING_APPROVAL")) {
+
+  if (
+    event.endsWith("_PENDING") ||
+    event.endsWith("_AWAITING_APPROVAL") ||
+    event.endsWith("_EXPIRING_SOON") ||
+    event.endsWith("_EXPIRED")
+  ) {
     return "pending";
   }
 
   return null;
 }
 
-function buildRejectionReason(payload: AsaasAccountStatusWebhookPayload) {
-  const general = safeTrim(payload.accountStatus?.general).toUpperCase();
-  const event = safeTrim(payload.event);
+function allCriticalApproved(payload: AsaasAccountStatusWebhookPayload) {
+  const commercialInfo = normalizeStatusValue(
+    payload.accountStatus?.commercialInfo
+  );
+  const bankAccountInfo = normalizeStatusValue(
+    payload.accountStatus?.bankAccountInfo
+  );
+  const documentation = normalizeStatusValue(
+    payload.accountStatus?.documentation
+  );
+  const general = normalizeStatusValue(payload.accountStatus?.general);
 
-  if (!general && !event) return "Conta reprovada no Asaas.";
-  return `Asaas informou reprovação da conta. Evento: ${event || "desconhecido"} | General: ${general || "desconhecido"}`;
+  return (
+    commercialInfo === "APPROVED" &&
+    bankAccountInfo === "APPROVED" &&
+    documentation === "APPROVED" &&
+    general === "APPROVED"
+  );
+}
+
+function hasCriticalRejected(payload: AsaasAccountStatusWebhookPayload) {
+  const values = [
+    payload.accountStatus?.commercialInfo,
+    payload.accountStatus?.bankAccountInfo,
+    payload.accountStatus?.documentation,
+    payload.accountStatus?.general,
+  ].map(normalizeStatusValue);
+
+  return values.includes("REJECTED");
+}
+
+function buildRejectionReason(payload: AsaasAccountStatusWebhookPayload) {
+  const event = safeTrim(payload.event) || "desconhecido";
+  const commercialInfo =
+    normalizeStatusValue(payload.accountStatus?.commercialInfo) ||
+    "desconhecido";
+  const bankAccountInfo =
+    normalizeStatusValue(payload.accountStatus?.bankAccountInfo) ||
+    "desconhecido";
+  const documentation =
+    normalizeStatusValue(payload.accountStatus?.documentation) ||
+    "desconhecido";
+  const general =
+    normalizeStatusValue(payload.accountStatus?.general) || "desconhecido";
+
+  return `Asaas informou reprovação ou pendência crítica. Evento: ${event} | commercialInfo: ${commercialInfo} | bankAccountInfo: ${bankAccountInfo} | documentation: ${documentation} | general: ${general}`;
 }
 
 export async function POST(request: Request) {
   try {
     const configuredToken = getWebhookToken();
-    const receivedToken = safeTrim(
-      request.headers.get("asaas-access-token")
-    );
+    const receivedToken = safeTrim(request.headers.get("asaas-access-token"));
 
     if (configuredToken && receivedToken !== configuredToken) {
       return jsonError("Token do webhook inválido.", 401);
@@ -101,13 +147,13 @@ export async function POST(request: Request) {
     }
 
     const providerAccountId = safeTrim(payload.account?.id);
+
     if (!providerAccountId) {
       return jsonError("providerAccountId ausente no payload.");
     }
 
-    const profile = await findOrganizerPaymentProfileByProviderAccountId(
-      providerAccountId
-    );
+    const profile =
+      await findOrganizerPaymentProfileByProviderAccountId(providerAccountId);
 
     if (!profile) {
       return NextResponse.json(
@@ -121,9 +167,29 @@ export async function POST(request: Request) {
       );
     }
 
-    const statusFromGeneral = normalizeGeneralStatus(payload.accountStatus?.general);
+    await syncAsaasAccountStatus({
+      organizerUserId: profile.organizerUserId,
+      commercialInfo: payload.accountStatus?.commercialInfo || null,
+      bankAccountInfo: payload.accountStatus?.bankAccountInfo || null,
+      documentation: payload.accountStatus?.documentation || null,
+      general: payload.accountStatus?.general || null,
+    });
+
     const statusFromEvent = inferStatusFromEvent(payload.event || "");
-    const nextStatus = statusFromEvent || statusFromGeneral;
+    const statusFromGeneral = normalizeGeneralStatus(
+      payload.accountStatus?.general
+    );
+
+    let nextStatus: OrganizerKycStatus =
+      statusFromEvent || statusFromGeneral || "pending";
+
+    if (allCriticalApproved(payload)) {
+      nextStatus = "approved";
+    }
+
+    if (hasCriticalRejected(payload)) {
+      nextStatus = "rejected";
+    }
 
     if (nextStatus === "approved") {
       await markOrganizerOnboardingApproved({
@@ -167,8 +233,17 @@ export async function POST(request: Request) {
         organizerUserId: profile.organizerUserId,
         providerAccountId,
         event: safeTrim(payload.event),
-        generalStatus: safeTrim(payload.accountStatus?.general).toUpperCase() || null,
         appliedStatus: nextStatus,
+        asaasStatus: {
+          commercialInfo:
+            normalizeStatusValue(payload.accountStatus?.commercialInfo) || null,
+          bankAccountInfo:
+            normalizeStatusValue(payload.accountStatus?.bankAccountInfo) ||
+            null,
+          documentation:
+            normalizeStatusValue(payload.accountStatus?.documentation) || null,
+          general: normalizeStatusValue(payload.accountStatus?.general) || null,
+        },
       },
       { status: 200 }
     );

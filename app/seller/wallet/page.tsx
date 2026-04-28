@@ -112,6 +112,28 @@ type WalletStats = {
   payoutsCount: number;
 };
 
+type OrganizerFinancialStatus = {
+  commercialInfo: string | null;
+  bankAccountInfo: string | null;
+  documentation: string | null;
+  general: string | null;
+};
+
+type OrganizerPaymentProfile = {
+  id: string;
+  organizerUserId: string;
+  providerAccountId: string | null;
+  providerWalletId: string | null;
+  providerApiKey: string | null;
+  status: "not_started" | "draft" | "pending" | "approved" | "rejected";
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  escrowEnabled: boolean;
+  onboardingUrl: string | null;
+  asaasStatus: OrganizerFinancialStatus | null;
+  rejectionReason: string | null;
+};
+
 type TransactionTypeFilter =
   | "all"
   | "payment_received"
@@ -143,6 +165,11 @@ type PayoutStatusResponse = {
   payoutOpen: boolean;
 };
 
+type OnboardingLinkResponse = {
+  onboardingUrl: string | null;
+  profile: OrganizerPaymentProfile | null;
+};
+
 const INITIAL_VISIBLE_TRANSACTIONS = 12;
 
 function safeTrim(value: unknown) {
@@ -157,6 +184,10 @@ function normalizeMoney(value: unknown) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0;
   return Number(parsed.toFixed(2));
+}
+
+function normalizeStatus(value: unknown) {
+  return safeTrim(value).toUpperCase();
 }
 
 function toIsoStringSafe(value: unknown): string | null {
@@ -267,6 +298,76 @@ function getPayoutStatusMeta(
   return { label: "Pendente", bg: "#FEF3C7", color: "#92400E" };
 }
 
+function getFinancialStatusMeta(profile: OrganizerPaymentProfile | null) {
+  const status = safeTrim(profile?.status).toLowerCase();
+  const documentation = normalizeStatus(profile?.asaasStatus?.documentation);
+  const general = normalizeStatus(profile?.asaasStatus?.general);
+
+  if (!profile || status === "not_started" || status === "draft") {
+    return {
+      title: "Cadastro financeiro pendente",
+      description:
+        "Complete seu cadastro financeiro para receber pagamentos dos torneios e solicitar repasses.",
+      badge: "Cadastro necessário",
+      tone: "warning" as const,
+      canOpenDocuments: false,
+      showCard: true,
+    };
+  }
+
+  if (status === "approved" || general === "APPROVED") {
+    return {
+      title: "Conta financeira aprovada",
+      description:
+        "Sua conta está liberada para operar. Você já pode acompanhar saldos, retenções e solicitações de repasse.",
+      badge: "Aprovada",
+      tone: "success" as const,
+      canOpenDocuments: false,
+      showCard: true,
+    };
+  }
+
+  if (status === "rejected") {
+    return {
+      title: "Conta financeira precisa de atenção",
+      description:
+        profile.rejectionReason ||
+        "O parceiro de pagamentos retornou uma pendência. Revise os dados ou envie novamente os documentos solicitados.",
+      badge: "Atenção necessária",
+      tone: "danger" as const,
+      canOpenDocuments: true,
+      showCard: true,
+    };
+  }
+
+  if (!documentation || documentation !== "APPROVED") {
+    return {
+      title: "Envie seus documentos",
+      description:
+        "Para liberar pagamentos e repasses, envie os documentos solicitados pelo parceiro financeiro. O envio acontece em uma página segura.",
+      badge:
+        documentation === "AWAITING_APPROVAL"
+          ? "Aguardando análise"
+          : documentation === "PENDING"
+            ? "Documentos pendentes"
+            : "Documentos necessários",
+      tone: "danger" as const,
+      canOpenDocuments: true,
+      showCard: true,
+    };
+  }
+
+  return {
+    title: "Conta financeira em análise",
+    description:
+      "Seus dados foram enviados e estão em análise pelo parceiro financeiro. Assim que a aprovação for concluída, os repasses serão liberados.",
+    badge: "Em análise",
+    tone: "warning" as const,
+    canOpenDocuments: false,
+    showCard: true,
+  };
+}
+
 async function getAuthToken() {
   const currentUser = auth.currentUser;
 
@@ -294,7 +395,7 @@ async function apiGet<T>(url: string): Promise<T> {
     throw new Error(payload?.message || "Falha na requisição.");
   }
 
-  return payload.data as T;
+  return (payload.data ?? payload.profile ?? payload) as T;
 }
 
 async function apiPost<T>(url: string, body?: Record<string, unknown>): Promise<T> {
@@ -315,7 +416,7 @@ async function apiPost<T>(url: string, body?: Record<string, unknown>): Promise<
     throw new Error(payload?.message || "Falha na requisição.");
   }
 
-  return payload.data as T;
+  return (payload.data ?? payload) as T;
 }
 
 export default function SellerWalletPage() {
@@ -348,6 +449,12 @@ export default function SellerWalletPage() {
     payoutsCount: 0,
   });
 
+  const [financialProfile, setFinancialProfile] =
+    useState<OrganizerPaymentProfile | null>(null);
+  const [onboardingLoading, setOnboardingLoading] = useState(false);
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  const [onboardingMessage, setOnboardingMessage] = useState<string | null>(null);
+
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState<TransactionTypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<TransactionStatusFilter>("all");
@@ -378,11 +485,18 @@ export default function SellerWalletPage() {
     try {
       setLoading(true);
       setError(null);
+      setOnboardingError(null);
+      setOnboardingMessage(null);
 
-      const [dashboard, payoutStatus] = await Promise.all([
+      const [dashboard, payoutStatus, profile] = await Promise.all([
         apiGet<DashboardResponse>("/api/finance/organizer/wallet/dashboard"),
         apiGet<PayoutStatusResponse>(
           "/api/finance/organizer/wallet/payout-status"
+        ),
+        apiGet<OrganizerPaymentProfile | null>(
+          `/api/finance/organizer/profile?organizerUserId=${encodeURIComponent(
+            uid || ""
+          )}`
         ),
       ]);
 
@@ -395,11 +509,54 @@ export default function SellerWalletPage() {
 
       setPayoutRequest(payoutStatus.latestPayoutRequest);
       setPayoutOpen(Boolean(payoutStatus.payoutOpen));
+      setFinancialProfile(profile);
     } catch (err) {
       console.error("Erro ao carregar wallet do organizador:", err);
       setError("Não foi possível carregar a carteira do organizador.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleOpenOnboarding() {
+    if (!uid) return;
+
+    try {
+      setOnboardingLoading(true);
+      setOnboardingError(null);
+      setOnboardingMessage(null);
+
+      const result = await apiPost<OnboardingLinkResponse>(
+        "/api/finance/organizer/asaas/onboarding-link",
+        {
+          organizerUserId: uid,
+        }
+      );
+
+      if (result.profile) {
+        setFinancialProfile(result.profile);
+      }
+
+      if (!result.onboardingUrl) {
+        setOnboardingError(
+          "Não foi possível abrir o envio de documentos agora. Tente novamente em alguns instantes."
+        );
+        return;
+      }
+
+      window.open(result.onboardingUrl, "_blank", "noopener,noreferrer");
+      setOnboardingMessage(
+        "Abrimos a página segura para envio dos documentos. Depois do envio, a análise pode levar algum tempo."
+      );
+    } catch (err) {
+      console.error("Erro ao abrir onboarding financeiro:", err);
+      setOnboardingError(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível abrir o envio de documentos."
+      );
+    } finally {
+      setOnboardingLoading(false);
     }
   }
 
@@ -429,6 +586,15 @@ export default function SellerWalletPage() {
       setPayoutLoading(false);
     }
   }
+
+  const financialMeta = useMemo(
+    () => getFinancialStatusMeta(financialProfile),
+    [financialProfile]
+  );
+
+  const financialApproved =
+    financialProfile?.status === "approved" ||
+    normalizeStatus(financialProfile?.asaasStatus?.general) === "APPROVED";
 
   const tournamentOptions = useMemo(() => {
     return tournamentRows.map((item) => ({
@@ -472,15 +638,17 @@ export default function SellerWalletPage() {
 
   const hasMoreTransactions = visibleTransactionItems.length < filteredTransactions.length;
 
-  const payoutStatusLabel =
-    walletSummary.availableAmount > 0
+  const payoutStatusLabel = !financialApproved
+    ? "Conta financeira pendente"
+    : walletSummary.availableAmount > 0
       ? "Saldo pronto para solicitar repasse"
       : walletSummary.pendingAmount > 0
         ? "Aguardando liberação de saldo"
         : "Sem saldo liberado no momento";
 
-  const payoutStatusTone =
-    walletSummary.availableAmount > 0
+  const payoutStatusTone = !financialApproved
+    ? styles.payoutBadgeWarning
+    : walletSummary.availableAmount > 0
       ? styles.payoutBadgeSuccess
       : walletSummary.pendingAmount > 0
         ? styles.payoutBadgeWarning
@@ -599,6 +767,96 @@ export default function SellerWalletPage() {
           </div>
         </section>
 
+        {financialMeta.showCard ? (
+          <section
+            style={{
+              ...styles.financialStatusCard,
+              ...(financialMeta.tone === "success"
+                ? styles.financialStatusSuccess
+                : financialMeta.tone === "danger"
+                  ? styles.financialStatusDanger
+                  : styles.financialStatusWarning),
+            }}
+          >
+            <div style={styles.financialStatusMain}>
+              <div style={styles.financialStatusHeader}>
+                <h2 style={styles.financialStatusTitle}>
+                  {financialMeta.title}
+                </h2>
+                <span
+                  style={{
+                    ...styles.financialStatusBadge,
+                    ...(financialMeta.tone === "success"
+                      ? styles.financialStatusBadgeSuccess
+                      : financialMeta.tone === "danger"
+                        ? styles.financialStatusBadgeDanger
+                        : styles.financialStatusBadgeWarning),
+                  }}
+                >
+                  {financialMeta.badge}
+                </span>
+              </div>
+
+              <p style={styles.financialStatusText}>
+                {financialMeta.description}
+              </p>
+
+              <div style={styles.financialStatusGrid}>
+                <FinancialStatusMini
+                  label="Dados comerciais"
+                  value={financialProfile?.asaasStatus?.commercialInfo || "—"}
+                />
+                <FinancialStatusMini
+                  label="Dados bancários"
+                  value={financialProfile?.asaasStatus?.bankAccountInfo || "—"}
+                />
+                <FinancialStatusMini
+                  label="Documentos"
+                  value={financialProfile?.asaasStatus?.documentation || "—"}
+                />
+                <FinancialStatusMini
+                  label="Status geral"
+                  value={financialProfile?.asaasStatus?.general || financialProfile?.status || "—"}
+                />
+              </div>
+
+              {onboardingMessage ? (
+                <div style={styles.successNoticeDark}>{onboardingMessage}</div>
+              ) : null}
+
+              {onboardingError ? (
+                <div style={styles.errorNoticeDark}>{onboardingError}</div>
+              ) : null}
+            </div>
+
+            <div style={styles.financialStatusActions}>
+              {financialMeta.canOpenDocuments ? (
+                <button
+                  type="button"
+                  style={{
+                    ...styles.primaryButton,
+                    ...(onboardingLoading ? styles.buttonDisabled : {}),
+                  }}
+                  onClick={handleOpenOnboarding}
+                  disabled={onboardingLoading}
+                >
+                  {onboardingLoading
+                    ? "Abrindo..."
+                    : "Enviar documentos"}
+                </button>
+              ) : null}
+
+              <button
+                type="button"
+                style={styles.secondaryButton}
+                onClick={loadWallet}
+              >
+                Atualizar status
+              </button>
+            </div>
+          </section>
+        ) : null}
+
         {error ? (
           <section style={styles.errorCard}>
             <h2 style={styles.errorTitle}>Erro na carteira</h2>
@@ -637,6 +895,17 @@ export default function SellerWalletPage() {
                     Use esta área para acompanhar o saldo que já pode ser repassado
                     e o histórico financeiro mais recente da sua operação.
                   </p>
+
+                  {!financialApproved ? (
+                    <div style={styles.payoutRequestBox}>
+                      <strong style={styles.payoutRequestTitle}>
+                        Repasse bloqueado temporariamente
+                      </strong>
+                      <p style={styles.payoutRequestText}>
+                        Para solicitar repasses, sua conta financeira precisa estar aprovada.
+                      </p>
+                    </div>
+                  ) : null}
 
                   {payoutRequest ? (
                     <div style={styles.payoutRequestBox}>
@@ -682,20 +951,28 @@ export default function SellerWalletPage() {
                     type="button"
                     style={{
                       ...styles.primaryButton,
-                      ...(payoutLoading || payoutOpen || walletSummary.availableAmount <= 0
+                      ...(payoutLoading ||
+                      payoutOpen ||
+                      walletSummary.availableAmount <= 0 ||
+                      !financialApproved
                         ? styles.buttonDisabled
                         : {}),
                     }}
                     onClick={handleRequestPayout}
                     disabled={
-                      payoutLoading || payoutOpen || walletSummary.availableAmount <= 0
+                      payoutLoading ||
+                      payoutOpen ||
+                      walletSummary.availableAmount <= 0 ||
+                      !financialApproved
                     }
                   >
                     {payoutLoading
                       ? "Solicitando..."
                       : payoutOpen
                         ? "Repasse em andamento"
-                        : "Solicitar repasse"}
+                        : !financialApproved
+                          ? "Conta pendente"
+                          : "Solicitar repasse"}
                   </button>
 
                   <button type="button" style={styles.secondaryButton}>
@@ -722,13 +999,15 @@ export default function SellerWalletPage() {
                 <PayoutMetric
                   label="Status operacional"
                   value={
-                    payoutOpen
-                      ? "Pedido em andamento"
-                      : walletSummary.availableAmount > 0
-                        ? "Pronto para saque"
-                        : walletSummary.pendingAmount > 0
-                          ? "Aguardando janela"
-                          : "Sem valores liberados"
+                    !financialApproved
+                      ? "Conta financeira pendente"
+                      : payoutOpen
+                        ? "Pedido em andamento"
+                        : walletSummary.availableAmount > 0
+                          ? "Pronto para saque"
+                          : walletSummary.pendingAmount > 0
+                            ? "Aguardando janela"
+                            : "Sem valores liberados"
                   }
                 />
               </div>
@@ -1058,6 +1337,26 @@ export default function SellerWalletPage() {
   );
 }
 
+function FinancialStatusMini({ label, value }: { label: string; value: string }) {
+  const normalized = normalizeStatus(value);
+  const isApproved = normalized === "APPROVED";
+  const isRejected = normalized === "REJECTED";
+
+  return (
+    <div style={styles.financialMiniCard}>
+      <p style={styles.financialMiniLabel}>{label}</p>
+      <p
+        style={{
+          ...styles.financialMiniValue,
+          color: isApproved ? "#BBF7D0" : isRejected ? "#FECACA" : "#FDE68A",
+        }}
+      >
+        {value || "—"}
+      </p>
+    </div>
+  );
+}
+
 function SummaryCard({
   label,
   value,
@@ -1323,6 +1622,127 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 22,
     fontWeight: 1000,
     color: "#0B3C5D",
+  },
+
+  financialStatusCard: {
+    borderRadius: 28,
+    padding: "clamp(18px, 4vw, 24px)",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 18,
+    flexWrap: "wrap",
+    boxShadow: "0 18px 40px rgba(15,23,42,0.10)",
+    border: "1px solid rgba(255,255,255,0.24)",
+    overflow: "hidden",
+  },
+
+  financialStatusSuccess: {
+    background:
+      "linear-gradient(135deg, rgba(6,95,70,1) 0%, rgba(4,120,87,1) 52%, rgba(16,185,129,0.92) 100%)",
+  },
+
+  financialStatusWarning: {
+    background:
+      "linear-gradient(135deg, rgba(120,53,15,1) 0%, rgba(180,83,9,1) 52%, rgba(245,158,11,0.92) 100%)",
+  },
+
+  financialStatusDanger: {
+    background:
+      "linear-gradient(135deg, rgba(127,29,29,1) 0%, rgba(185,28,28,1) 52%, rgba(239,68,68,0.92) 100%)",
+  },
+
+  financialStatusMain: {
+    flex: "1 1 560px",
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+
+  financialStatusHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+
+  financialStatusTitle: {
+    margin: 0,
+    fontSize: "clamp(20px, 4vw, 27px)",
+    lineHeight: 1.1,
+    fontWeight: 1000,
+    color: "#FFFFFF",
+  },
+
+  financialStatusBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 999,
+    padding: "7px 11px",
+    fontSize: 11,
+    fontWeight: 1000,
+    border: "1px solid rgba(255,255,255,0.28)",
+  },
+
+  financialStatusBadgeSuccess: {
+    background: "rgba(220,252,231,0.18)",
+    color: "#DCFCE7",
+  },
+
+  financialStatusBadgeWarning: {
+    background: "rgba(254,243,199,0.18)",
+    color: "#FEF3C7",
+  },
+
+  financialStatusBadgeDanger: {
+    background: "rgba(254,226,226,0.18)",
+    color: "#FEE2E2",
+  },
+
+  financialStatusText: {
+    margin: 0,
+    maxWidth: 820,
+    fontSize: 13,
+    lineHeight: 1.7,
+    fontWeight: 750,
+    color: "rgba(255,255,255,0.86)",
+  },
+
+  financialStatusActions: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
+
+  financialStatusGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
+    gap: 10,
+  },
+
+  financialMiniCard: {
+    background: "rgba(255,255,255,0.10)",
+    border: "1px solid rgba(255,255,255,0.16)",
+    borderRadius: 16,
+    padding: 12,
+    minWidth: 0,
+  },
+
+  financialMiniLabel: {
+    margin: 0,
+    color: "rgba(255,255,255,0.72)",
+    fontSize: 11,
+    fontWeight: 850,
+  },
+
+  financialMiniValue: {
+    margin: "6px 0 0 0",
+    fontSize: 13,
+    fontWeight: 1000,
+    wordBreak: "break-word",
   },
 
   payoutCard: {
@@ -1965,6 +2385,26 @@ const styles: Record<string, CSSProperties> = {
     padding: "10px 12px",
     background: "rgba(239,68,68,0.18)",
     border: "1px solid rgba(254,202,202,0.45)",
+    color: "#FEE2E2",
+    fontSize: 13,
+    fontWeight: 850,
+  },
+
+  successNoticeDark: {
+    borderRadius: 14,
+    padding: "10px 12px",
+    background: "rgba(34,197,94,0.18)",
+    border: "1px solid rgba(187,247,208,0.35)",
+    color: "#DCFCE7",
+    fontSize: 13,
+    fontWeight: 850,
+  },
+
+  errorNoticeDark: {
+    borderRadius: 14,
+    padding: "10px 12px",
+    background: "rgba(127,29,29,0.28)",
+    border: "1px solid rgba(254,202,202,0.35)",
     color: "#FEE2E2",
     fontSize: 13,
     fontWeight: 850,

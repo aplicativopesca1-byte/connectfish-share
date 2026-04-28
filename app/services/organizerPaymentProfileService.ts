@@ -14,6 +14,13 @@ export type OrganizerKycStatus =
 
 export type OrganizerPersonType = "FISICA" | "JURIDICA";
 
+export type OrganizerAsaasStatus = {
+  commercialInfo: string | null;
+  bankAccountInfo: string | null;
+  documentation: string | null;
+  general: string | null;
+};
+
 export type OrganizerPaymentProfile = {
   id: string;
   organizerUserId: string;
@@ -27,6 +34,9 @@ export type OrganizerPaymentProfile = {
   chargesEnabled: boolean;
   payoutsEnabled: boolean;
   escrowEnabled: boolean;
+
+  onboardingUrl: string | null;
+  asaasStatus: OrganizerAsaasStatus | null;
 
   personType: OrganizerPersonType | null;
   cpfCnpj: string | null;
@@ -152,6 +162,21 @@ function normalizePersonType(value: unknown): OrganizerPersonType | null {
   return null;
 }
 
+function normalizeAsaasStatus(value: unknown): OrganizerAsaasStatus | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const raw = value as Record<string, unknown>;
+
+  return {
+    commercialInfo: nullableString(raw.commercialInfo),
+    bankAccountInfo: nullableString(raw.bankAccountInfo),
+    documentation: nullableString(raw.documentation),
+    general: nullableString(raw.general),
+  };
+}
+
 function mapProfile(
   id: string,
   raw: Record<string, unknown> | undefined
@@ -171,6 +196,9 @@ function mapProfile(
     chargesEnabled: Boolean(raw.chargesEnabled),
     payoutsEnabled: Boolean(raw.payoutsEnabled),
     escrowEnabled: Boolean(raw.escrowEnabled),
+
+    onboardingUrl: nullableString(raw.onboardingUrl),
+    asaasStatus: normalizeAsaasStatus(raw.asaasStatus),
 
     personType: normalizePersonType(raw.personType),
     cpfCnpj: nullableString(raw.cpfCnpj),
@@ -259,6 +287,9 @@ export async function createOrganizerPaymentProfile(
     chargesEnabled: false,
     payoutsEnabled: false,
     escrowEnabled: false,
+
+    onboardingUrl: null,
+    asaasStatus: null,
 
     personType: null,
     cpfCnpj: null,
@@ -432,6 +463,8 @@ export async function markOrganizerOnboardingRejected(params: {
 
   await profileRef(userId).update({
     status: "rejected",
+    chargesEnabled: false,
+    payoutsEnabled: false,
     rejectedAt: now(),
     rejectionReason: nullableString(params.reason),
     updatedAt: now(),
@@ -486,6 +519,48 @@ export async function syncOrganizerProviderAccount(params: {
   }
 
   await profileRef(userId).set(payload, { merge: true });
+}
+
+export async function syncAsaasAccountStatus(params: {
+  organizerUserId: string;
+  commercialInfo?: string | null;
+  bankAccountInfo?: string | null;
+  documentation?: string | null;
+  general?: string | null;
+}) {
+  const userId = safeTrim(params.organizerUserId);
+  if (!userId) throw new Error("organizerUserId é obrigatório.");
+
+  await profileRef(userId).set(
+    {
+      asaasStatus: {
+        commercialInfo: nullableString(params.commercialInfo),
+        bankAccountInfo: nullableString(params.bankAccountInfo),
+        documentation: nullableString(params.documentation),
+        general: nullableString(params.general),
+      },
+      updatedAt: now(),
+      serverUpdatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+export async function setOrganizerOnboardingUrl(params: {
+  organizerUserId: string;
+  onboardingUrl: string | null;
+}) {
+  const userId = safeTrim(params.organizerUserId);
+  if (!userId) throw new Error("organizerUserId é obrigatório.");
+
+  await profileRef(userId).set(
+    {
+      onboardingUrl: nullableString(params.onboardingUrl),
+      updatedAt: now(),
+      serverUpdatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
 }
 
 export async function ensureOrganizerPaymentProfile(
