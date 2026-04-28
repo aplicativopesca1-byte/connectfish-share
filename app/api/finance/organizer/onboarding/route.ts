@@ -70,14 +70,28 @@ type AsaasCreateAccountResponse = {
   apiKey?: string;
 };
 
-type AsaasMyAccountStatusResponse = {
+type AsaasDocumentItem = {
+  id?: string;
+  type?: string;
+  status?: string;
+  title?: string;
+  description?: string;
   onboardingUrl?: string | null;
-  commercialInfo?: string | null;
-  bankAccountInfo?: string | null;
-  documentation?: string | null;
-  general?: string | null;
   [key: string]: unknown;
 };
+
+type AsaasDocumentsResponse =
+  | AsaasDocumentItem[]
+  | {
+      onboardingUrl?: string | null;
+      data?: AsaasDocumentItem[];
+      documents?: AsaasDocumentItem[];
+      commercialInfo?: string | null;
+      bankAccountInfo?: string | null;
+      documentation?: string | null;
+      general?: string | null;
+      [key: string]: unknown;
+    };
 
 function safeTrim(value: unknown) {
   return String(value ?? "").trim();
@@ -141,13 +155,7 @@ function normalizePersonType(value: unknown): OrganizerPersonType | null {
 }
 
 function jsonError(message: string, status = 400) {
-  return NextResponse.json(
-    {
-      success: false,
-      message,
-    },
-    { status }
-  );
+  return NextResponse.json({ success: false, message }, { status });
 }
 
 function getAsaasBaseUrl() {
@@ -155,6 +163,7 @@ function getAsaasBaseUrl() {
   if (explicit) return explicit.replace(/\/+$/, "");
 
   const sandbox = safeTrim(process.env.ASAAS_ENV).toLowerCase() === "sandbox";
+
   return sandbox
     ? "https://api-sandbox.asaas.com/v3"
     : "https://api.asaas.com/v3";
@@ -238,6 +247,39 @@ function buildDisplayName(params: {
   return params.fullName || params.companyName || "Organizador ConnectFish";
 }
 
+function extractDocuments(result: AsaasDocumentsResponse | null) {
+  if (!result) return [];
+
+  if (Array.isArray(result)) return result;
+
+  if (Array.isArray(result.data)) return result.data;
+  if (Array.isArray(result.documents)) return result.documents;
+
+  return [];
+}
+
+function findOnboardingUrl(result: AsaasDocumentsResponse | null) {
+  if (!result) return null;
+
+  if (!Array.isArray(result) && nullableString(result.onboardingUrl)) {
+    return nullableString(result.onboardingUrl);
+  }
+
+  const documents = extractDocuments(result);
+
+  const pendingWithLink = documents.find((item) => {
+    const status = safeTrim(item.status).toUpperCase();
+    return nullableString(item.onboardingUrl) && status !== "APPROVED";
+  });
+
+  if (pendingWithLink?.onboardingUrl) {
+    return nullableString(pendingWithLink.onboardingUrl);
+  }
+
+  const anyWithLink = documents.find((item) => nullableString(item.onboardingUrl));
+  return nullableString(anyWithLink?.onboardingUrl);
+}
+
 async function createAsaasSubaccount(params: {
   personType: OrganizerPersonType;
   fullName: string;
@@ -255,6 +297,7 @@ async function createAsaasSubaccount(params: {
   postalCode: string;
 }) {
   const apiKey = getAsaasApiKey();
+
   if (!apiKey) {
     throw new Error("ASAAS_API_KEY não configurada no servidor.");
   }
@@ -325,11 +368,11 @@ async function createAsaasSubaccount(params: {
   };
 }
 
-async function getAsaasOnboardingUrl(providerApiKey: string | null) {
+async function getAsaasDocuments(providerApiKey: string | null) {
   const apiKey = safeTrim(providerApiKey);
   if (!apiKey) return null;
 
-  const response = await fetch(`${getAsaasBaseUrl()}/myAccount/status`, {
+  const response = await fetch(`${getAsaasBaseUrl()}/myAccount/documents`, {
     method: "GET",
     headers: {
       accept: "application/json",
@@ -339,21 +382,20 @@ async function getAsaasOnboardingUrl(providerApiKey: string | null) {
   });
 
   const result = (await response.json().catch(() => null)) as
-    | AsaasMyAccountStatusResponse
-    | { errors?: Array<{ description?: string }> }
+    | AsaasDocumentsResponse
+    | { errors?: Array<{ description?: string; code?: string }> }
     | null;
 
   if (!response.ok) {
+    console.error("Erro ao buscar documentos pendentes Asaas:", result);
     return null;
   }
 
-  return nullableString(
-    (result as AsaasMyAccountStatusResponse | null)?.onboardingUrl
-  );
+  return result as AsaasDocumentsResponse;
 }
 
 async function waitForAsaasProvisioning() {
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await new Promise((resolve) => setTimeout(resolve, 15000));
 }
 
 export async function POST(request: Request) {
@@ -523,11 +565,14 @@ export async function POST(request: Request) {
     });
 
     let onboardingUrl: string | null = null;
+    let documents: AsaasDocumentItem[] = [];
 
     if (providerApiKey) {
       await waitForAsaasProvisioning();
 
-      onboardingUrl = await getAsaasOnboardingUrl(providerApiKey);
+      const documentsResult = await getAsaasDocuments(providerApiKey);
+      documents = extractDocuments(documentsResult);
+      onboardingUrl = findOnboardingUrl(documentsResult);
 
       if (onboardingUrl) {
         await setOrganizerOnboardingUrl({
@@ -556,6 +601,7 @@ export async function POST(request: Request) {
         providerWalletId,
         providerApiKey,
         onboardingUrl: onboardingUrl || profile?.onboardingUrl || null,
+        documents,
         status: profile?.status || nextStatus,
       },
       { status: 200 }
