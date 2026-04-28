@@ -309,7 +309,6 @@ async function createAsaasSubaccount(params: {
       companyName: params.companyName,
     }),
     email: params.email,
-    loginEmail: params.email,
     cpfCnpj: params.cpfCnpj,
     companyType: resolveCompanyType(params.personType),
     incomeValue: params.incomeValue,
