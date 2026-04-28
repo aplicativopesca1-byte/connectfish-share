@@ -438,6 +438,40 @@ export async function POST(request: Request) {
       return jsonError(`Campos obrigatórios ausentes: ${missing.join(", ")}.`);
     }
 
+    const existingProfile = await getOrganizerPaymentProfile(organizerUserId);
+
+    let nextStatus: OrganizerKycStatus = "pending";
+    let providerAccountId = existingProfile?.providerAccountId || null;
+    let providerWalletId = existingProfile?.providerWalletId || null;
+    let providerApiKey = existingProfile?.providerApiKey || null;
+    let reused = false;
+
+    if (providerAccountId && providerWalletId) {
+      reused = true;
+    } else {
+      const createdAccount = await createAsaasSubaccount({
+        personType: personType as OrganizerPersonType,
+        fullName,
+        companyName,
+        email,
+        cpfCnpj,
+        birthDate,
+        incomeValue: incomeValue as number,
+        phone,
+        mobilePhone,
+        address,
+        addressNumber,
+        complement,
+        province,
+        postalCode,
+      });
+
+      providerAccountId = createdAccount.providerAccountId;
+      providerWalletId = createdAccount.providerWalletId;
+      providerApiKey = createdAccount.providerApiKey;
+      reused = false;
+    }
+
     await ensureOrganizerPaymentProfile(organizerUserId);
 
     const savedProfile = await upsertOrganizerPaymentProfile({
@@ -475,59 +509,18 @@ export async function POST(request: Request) {
       termsAcceptedAt: Date.now(),
     });
 
-    let nextStatus: OrganizerKycStatus = "draft";
-    let providerAccountId = savedProfile.providerAccountId;
-    let providerWalletId = savedProfile.providerWalletId;
-    let providerApiKey = savedProfile.providerApiKey;
-    let reused = false;
+    nextStatus = savedProfile.status === "approved" ? "approved" : "pending";
 
-    if (savedProfile.providerAccountId && savedProfile.providerWalletId) {
-      reused = true;
-
-      await syncOrganizerProviderAccount({
-        organizerUserId,
-        providerAccountId: savedProfile.providerAccountId,
-        providerWalletId: savedProfile.providerWalletId,
-        providerApiKey: savedProfile.providerApiKey,
-        status: savedProfile.status === "approved" ? "approved" : "pending",
-      });
-
-      nextStatus = savedProfile.status === "approved" ? "approved" : "pending";
-    } else {
-      const createdAccount = await createAsaasSubaccount({
-        personType: personType as OrganizerPersonType,
-        fullName,
-        companyName,
-        email,
-        cpfCnpj,
-        birthDate,
-        incomeValue: incomeValue as number,
-        phone,
-        mobilePhone,
-        address,
-        addressNumber,
-        complement,
-        province,
-        postalCode,
-      });
-
-      providerAccountId = createdAccount.providerAccountId;
-      providerWalletId = createdAccount.providerWalletId;
-      providerApiKey = createdAccount.providerApiKey;
-
-      await syncOrganizerProviderAccount({
-        organizerUserId,
-        providerAccountId,
-        providerWalletId,
-        providerApiKey,
-        status: "pending",
-        chargesEnabled: false,
-        payoutsEnabled: false,
-        escrowEnabled: false,
-      });
-
-      nextStatus = "pending";
-    }
+    await syncOrganizerProviderAccount({
+      organizerUserId,
+      providerAccountId,
+      providerWalletId,
+      providerApiKey,
+      status: nextStatus,
+      chargesEnabled: nextStatus === "approved",
+      payoutsEnabled: nextStatus === "approved",
+      escrowEnabled: existingProfile?.escrowEnabled ?? false,
+    });
 
     let onboardingUrl: string | null = null;
 
