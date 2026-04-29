@@ -193,13 +193,13 @@ function getRegistrationBlockMessage(status: TournamentStatus) {
 }
 
 function isPubliclyVisibleTournament(raw: Record<string, unknown>) {
-  const status = String(raw.status ?? "draft").toLowerCase();
+  const status = String(raw.status ?? "").toLowerCase();
   const visibility = String(raw.visibility ?? "").toLowerCase();
 
-  return (
-    visibility === "published" ||
-    (visibility !== "published" && status !== "draft")
-  );
+  if (visibility === "draft") return false;
+  if (status === "draft") return false;
+
+  return true;
 }
 
 function mapTournamentDoc(
