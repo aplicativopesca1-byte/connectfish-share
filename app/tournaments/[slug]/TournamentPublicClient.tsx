@@ -360,11 +360,6 @@ export default function TournamentPublicClient({ slug }: Props) {
             return;
           }
 
-          if (slugValue && docSlug && docSlug !== slugValue) {
-            setError("Torneio não encontrado.");
-            return;
-          }
-
           setTournament(mapTournamentDoc(snap.id, raw));
           return;
         }
