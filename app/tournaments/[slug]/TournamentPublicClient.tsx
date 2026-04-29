@@ -348,23 +348,28 @@ export default function TournamentPublicClient({ slug }: Props) {
         return;
       }
 
+      // ✅ Fonte principal da verdade: ID do documento no Firestore.
+      // O slug é apenas visual/SEO e não deve bloquear a inscrição.
       if (idValue) {
         const snap = await getDoc(doc(db, "tournaments", idValue));
 
-        if (snap.exists()) {
-          const raw = snap.data() as Record<string, unknown>;
-          const docSlug = compactSpaces(raw.slug);
-
-          if (!isPubliclyVisibleTournament(raw)) {
-            setError("Torneio não encontrado.");
-            return;
-          }
-
-          setTournament(mapTournamentDoc(snap.id, raw));
+        if (!snap.exists()) {
+          setError("Torneio não encontrado.");
           return;
         }
+
+        const raw = snap.data() as Record<string, unknown>;
+
+        if (!isPubliclyVisibleTournament(raw)) {
+          setError("Torneio não encontrado.");
+          return;
+        }
+
+        setTournament(mapTournamentDoc(snap.id, raw));
+        return;
       }
 
+      // ✅ Fallback por slug apenas quando a URL não trouxe ?id=...
       if (!slugValue) {
         setError("Torneio não encontrado.");
         return;
@@ -381,9 +386,7 @@ export default function TournamentPublicClient({ slug }: Props) {
 
       const publishedDoc = snapshot.docs.find((item) => {
         const raw = item.data() as Record<string, unknown>;
-        if (!isPubliclyVisibleTournament(raw)) return false;
-        if (idValue && item.id !== idValue) return false;
-        return true;
+        return isPubliclyVisibleTournament(raw);
       });
 
       if (!publishedDoc) {
