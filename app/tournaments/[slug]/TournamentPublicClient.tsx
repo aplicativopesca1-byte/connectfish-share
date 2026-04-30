@@ -62,6 +62,7 @@ type UserSearchResponse = {
 type CreateTeamResponse = {
   success: boolean;
   teamId?: string;
+  captainMemberId?: string;
   message?: string;
 };
 
@@ -551,44 +552,55 @@ export default function TournamentPublicClient({ slug }: Props) {
 
       setMessage("Equipe criada. Preparando o pagamento...");
 
-      const paymentResponse = await fetch(
-        "/api/mercadopago/create-individual-preference",
-        {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            tournamentId: tournament.id,
-            teamId: createTeamData.teamId,
-            source: "public_tournament_web",
-          }),
-        }
-      );
+ // 🔥 1. Buscar member do capitão
+const memberResponse = await fetch(
+  `/api/tournaments/team/member-by-user?tournamentId=${tournament.id}&teamId=${createTeamData.teamId}`,
+  {
+    method: "GET",
+    credentials: "include",
+  }
+);
 
-      const paymentData =
-        (await paymentResponse.json()) as CreatePreferenceResponse;
+const memberData = await memberResponse.json();
 
-      if (!paymentResponse.ok || !paymentData.success) {
-        throw new Error(
-          paymentData.message || "Não foi possível iniciar o pagamento."
-        );
-      }
+if (!createTeamData.captainMemberId) {
+  throw new Error("Não foi possível identificar o membro do capitão.");
+}
 
-      if (!paymentData.checkoutUrl) {
-        throw new Error("O checkout não retornou uma URL válida.");
-      }
+const paymentResponse = await fetch("/api/asaas/tournament/checkout", {
+  method: "POST",
+  credentials: "include",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    tournamentId: tournament.id,
+    teamId: createTeamData.teamId,
+    teamMemberId: createTeamData.captainMemberId,
+    source: "public_tournament_web",
+    billingType: "PIX",
+  }),
+});
 
-      setMessage(
-        paymentData.reused
-          ? "Retomando pagamento existente..."
-          : paymentData.role === "captain"
-            ? "Redirecionando para o pagamento do capitão..."
-            : "Redirecionando para o pagamento individual..."
-      );
+const paymentData = await paymentResponse.json();
 
-      window.location.assign(paymentData.checkoutUrl);
+if (!paymentResponse.ok || !paymentData.success) {
+  throw new Error(
+    paymentData.message || "Não foi possível iniciar o pagamento."
+  );
+}
+
+const checkoutUrl =
+  paymentData.checkoutUrl ||
+  paymentData.charge?.invoiceUrl ||
+  paymentData.asaasInvoiceUrl;
+
+if (!checkoutUrl) {
+  throw new Error("O checkout não retornou uma URL válida.");
+}
+
+setMessage("Redirecionando para o pagamento do capitão...");
+window.location.assign(checkoutUrl);
     } catch (err) {
       console.error("Erro ao criar equipe e iniciar pagamento:", err);
       setMessage(null);
