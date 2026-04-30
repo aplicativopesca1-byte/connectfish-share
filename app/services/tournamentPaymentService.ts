@@ -1,18 +1,7 @@
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  limit,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-} from "firebase/firestore";
+import "server-only";
 
-import { db } from "@/lib/firebase";
+import { FieldValue } from "firebase-admin/firestore";
+import { adminDb } from "@/lib/firebaseAdmin";
 
 export type TournamentPaymentProvider = "asaas";
 export type TournamentPaymentCurrency = "BRL";
@@ -27,10 +16,7 @@ export type TournamentPaymentStatus =
   | "cancelled"
   | "failed";
 
-export type TournamentPaymentEscrowStatus =
-  | "none"
-  | "held"
-  | "released";
+export type TournamentPaymentEscrowStatus = "none" | "held" | "released";
 
 export type TournamentPayment = {
   id: string;
@@ -148,12 +134,12 @@ function normalizeEscrowStatus(value: unknown): TournamentPaymentEscrowStatus {
   return "none";
 }
 
-function paymentRef(paymentId: string) {
-  return doc(db, "tournamentPayments", safeTrim(paymentId));
+function paymentCollection() {
+  return adminDb().collection("tournamentPayments");
 }
 
-function paymentCollection() {
-  return collection(db, "tournamentPayments");
+function paymentRef(paymentId: string) {
+  return paymentCollection().doc(safeTrim(paymentId));
 }
 
 function mapTournamentPayment(
@@ -201,10 +187,13 @@ export async function getTournamentPayment(
   const id = safeTrim(paymentId);
   if (!id) return null;
 
-  const snap = await getDoc(paymentRef(id));
-  if (!snap.exists()) return null;
+  const snap = await paymentRef(id).get();
+  if (!snap.exists) return null;
 
-  return mapTournamentPayment(snap.id, snap.data() as Record<string, unknown>);
+  return mapTournamentPayment(
+    snap.id,
+    snap.data() as Record<string, unknown> | undefined
+  );
 }
 
 export async function createTournamentPayment(
@@ -214,19 +203,11 @@ export async function createTournamentPayment(
   const organizerUserId = safeTrim(input.organizerUserId);
   const participantUserId = safeTrim(input.participantUserId);
 
-  if (!tournamentId) {
-    throw new Error("tournamentId é obrigatório.");
-  }
+  if (!tournamentId) throw new Error("tournamentId é obrigatório.");
+  if (!organizerUserId) throw new Error("organizerUserId é obrigatório.");
+  if (!participantUserId) throw new Error("participantUserId é obrigatório.");
 
-  if (!organizerUserId) {
-    throw new Error("organizerUserId é obrigatório.");
-  }
-
-  if (!participantUserId) {
-    throw new Error("participantUserId é obrigatório.");
-  }
-
-  const paymentDoc = doc(paymentCollection());
+  const paymentDoc = paymentCollection().doc();
   const createdAt = now();
 
   const payload = {
@@ -258,11 +239,11 @@ export async function createTournamentPayment(
 
     createdAt,
     updatedAt: createdAt,
-    serverCreatedAt: serverTimestamp(),
-    serverUpdatedAt: serverTimestamp(),
+    serverCreatedAt: FieldValue.serverTimestamp(),
+    serverUpdatedAt: FieldValue.serverTimestamp(),
   };
 
-  await setDoc(paymentRef(paymentDoc.id), payload);
+  await paymentDoc.set(payload);
 
   return {
     id: paymentDoc.id,
@@ -274,14 +255,12 @@ export async function updateTournamentPaymentStatus(
   input: UpdateTournamentPaymentStatusInput
 ): Promise<void> {
   const paymentId = safeTrim(input.paymentId);
-  if (!paymentId) {
-    throw new Error("paymentId é obrigatório.");
-  }
+  if (!paymentId) throw new Error("paymentId é obrigatório.");
 
   const payload: Record<string, unknown> = {
     status: normalizeStatus(input.status),
     updatedAt: now(),
-    serverUpdatedAt: serverTimestamp(),
+    serverUpdatedAt: FieldValue.serverTimestamp(),
   };
 
   if (input.paidAt !== undefined) {
@@ -304,7 +283,7 @@ export async function updateTournamentPaymentStatus(
     payload.externalReference = nullableString(input.externalReference);
   }
 
-  await updateDoc(paymentRef(paymentId), payload);
+  await paymentRef(paymentId).update(payload);
 }
 
 export async function updateTournamentPaymentProviderData(params: {
@@ -317,13 +296,11 @@ export async function updateTournamentPaymentProviderData(params: {
   externalReference?: string | null;
 }) {
   const paymentId = safeTrim(params.paymentId);
-  if (!paymentId) {
-    throw new Error("paymentId é obrigatório.");
-  }
+  if (!paymentId) throw new Error("paymentId é obrigatório.");
 
   const payload: Record<string, unknown> = {
     updatedAt: now(),
-    serverUpdatedAt: serverTimestamp(),
+    serverUpdatedAt: FieldValue.serverTimestamp(),
   };
 
   if (params.providerPaymentId !== undefined) {
@@ -350,7 +327,7 @@ export async function updateTournamentPaymentProviderData(params: {
     payload.externalReference = nullableString(params.externalReference);
   }
 
-  await updateDoc(paymentRef(paymentId), payload);
+  await paymentRef(paymentId).update(payload);
 }
 
 export async function getTournamentPaymentByProviderPaymentId(
@@ -359,17 +336,19 @@ export async function getTournamentPaymentByProviderPaymentId(
   const value = safeTrim(providerPaymentId);
   if (!value) return null;
 
-  const q = query(
-    paymentCollection(),
-    where("providerPaymentId", "==", value),
-    limit(1)
-  );
+  const snap = await paymentCollection()
+    .where("providerPaymentId", "==", value)
+    .limit(1)
+    .get();
 
-  const snap = await getDocs(q);
   if (snap.empty) return null;
 
   const first = snap.docs[0];
-  return mapTournamentPayment(first.id, first.data() as Record<string, unknown>);
+
+  return mapTournamentPayment(
+    first.id,
+    first.data() as Record<string, unknown> | undefined
+  );
 }
 
 export async function listTournamentPaymentsByTournament(
@@ -378,17 +357,17 @@ export async function listTournamentPaymentsByTournament(
   const value = safeTrim(tournamentId);
   if (!value) return [];
 
-  const q = query(
-    paymentCollection(),
-    where("tournamentId", "==", value),
-    orderBy("createdAt", "desc")
-  );
-
-  const snap = await getDocs(q);
+  const snap = await paymentCollection()
+    .where("tournamentId", "==", value)
+    .orderBy("createdAt", "desc")
+    .get();
 
   return snap.docs
     .map((docSnap) =>
-      mapTournamentPayment(docSnap.id, docSnap.data() as Record<string, unknown>)
+      mapTournamentPayment(
+        docSnap.id,
+        docSnap.data() as Record<string, unknown> | undefined
+      )
     )
     .filter(Boolean) as TournamentPayment[];
 }
@@ -399,17 +378,17 @@ export async function listTournamentPaymentsByOrganizer(
   const value = safeTrim(organizerUserId);
   if (!value) return [];
 
-  const q = query(
-    paymentCollection(),
-    where("organizerUserId", "==", value),
-    orderBy("createdAt", "desc")
-  );
-
-  const snap = await getDocs(q);
+  const snap = await paymentCollection()
+    .where("organizerUserId", "==", value)
+    .orderBy("createdAt", "desc")
+    .get();
 
   return snap.docs
     .map((docSnap) =>
-      mapTournamentPayment(docSnap.id, docSnap.data() as Record<string, unknown>)
+      mapTournamentPayment(
+        docSnap.id,
+        docSnap.data() as Record<string, unknown> | undefined
+      )
     )
     .filter(Boolean) as TournamentPayment[];
 }
@@ -420,17 +399,17 @@ export async function listTournamentPaymentsByParticipant(
   const value = safeTrim(participantUserId);
   if (!value) return [];
 
-  const q = query(
-    paymentCollection(),
-    where("participantUserId", "==", value),
-    orderBy("createdAt", "desc")
-  );
-
-  const snap = await getDocs(q);
+  const snap = await paymentCollection()
+    .where("participantUserId", "==", value)
+    .orderBy("createdAt", "desc")
+    .get();
 
   return snap.docs
     .map((docSnap) =>
-      mapTournamentPayment(docSnap.id, docSnap.data() as Record<string, unknown>)
+      mapTournamentPayment(
+        docSnap.id,
+        docSnap.data() as Record<string, unknown> | undefined
+      )
     )
     .filter(Boolean) as TournamentPayment[];
 }
