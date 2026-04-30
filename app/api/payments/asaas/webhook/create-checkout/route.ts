@@ -565,15 +565,18 @@ export async function POST(request: NextRequest) {
     );
     const paymentStatus = normalizeMemberPaymentStatus(memberRaw.paymentStatus);
 
-    if (inviteStatus !== "accepted") {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "O convite precisa estar aceito antes do pagamento.",
-        },
-        { status: 400 }
-      );
-    }
+    const memberRole = compactSpaces(memberRaw.role).toLowerCase();
+const isCaptain = memberRole === "captain";
+
+if (!isCaptain && inviteStatus !== "accepted") {
+  return NextResponse.json(
+    {
+      success: false,
+      message: "O convite precisa estar aceito antes do pagamento.",
+    },
+    { status: 400 }
+  );
+}
 
     if (
       registrationStatus !== "awaiting_payment" &&
