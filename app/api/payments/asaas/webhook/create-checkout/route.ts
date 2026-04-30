@@ -274,6 +274,7 @@ async function getUserProfile(userId: string) {
   if (!snap.exists) return null;
 
   const data = snap.data() as Record<string, unknown>;
+  const billing = isObject(data.billing) ? data.billing : {};
 
   return {
     userId: snap.id,
@@ -284,6 +285,8 @@ async function getUserProfile(userId: string) {
       "Participante",
     email: nullableString(data.email),
     cpfCnpj:
+      nullableString(billing.documentNumber) ||
+      nullableString(data.documentNumber) ||
       nullableString(data.cpfCnpj) ||
       nullableString(data.cpf) ||
       nullableString(data.document),
@@ -709,6 +712,11 @@ export async function POST(request: NextRequest) {
     }
 
     const participantProfile = await getUserProfile(participantUserId);
+    console.log("🔥 PARTICIPANT PROFILE ASAAS:", {
+  participantUserId,
+  authenticatedUserId,
+  participantProfile,
+});
 
     const participantName = requireField(
       body.participantName ||
