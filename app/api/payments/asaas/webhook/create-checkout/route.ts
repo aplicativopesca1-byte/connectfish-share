@@ -230,12 +230,10 @@ function buildExternalReference(params: {
 }) {
   return [
     "cf",
-    "team",
-    params.tournamentId,
-    params.teamId,
-    params.teamMemberId,
-    params.participantUserId,
-    Date.now(),
+    params.tournamentId.slice(0, 8),
+    params.teamId.slice(0, 8),
+    params.participantUserId.slice(0, 8),
+    Date.now().toString(36),
   ].join("_");
 }
 
@@ -730,6 +728,16 @@ export async function POST(request: NextRequest) {
       nullableString(body.participantCpfCnpj) ||
       participantProfile?.cpfCnpj ||
       null;
+      if (!participantCpfCnpj) {
+  return NextResponse.json(
+    {
+      success: false,
+      message: "Você precisa completar seu CPF antes de pagar a inscrição.",
+      code: "MISSING_CPF",
+    },
+    { status: 400 }
+  );
+}
 
     const participantMobilePhone =
       nullableString(body.participantMobilePhone) ||
