@@ -41,6 +41,24 @@ export type CreateAsaasTournamentChargeInput = {
   split?: AsaasSplitItem[];
 };
 
+export type AsaasPaymentResponse = {
+  id: string;
+  invoiceUrl?: string;
+  bankSlipUrl?: string;
+  transactionReceiptUrl?: string;
+  status?: string;
+  customer?: string;
+  externalReference?: string;
+  value?: number;
+  billingType?: string;
+};
+
+export type AsaasPixResponse = {
+  encodedImage?: string;
+  payload?: string;
+  expirationDate?: string;
+};
+
 function safeTrim(value: unknown) {
   return String(value ?? "").trim();
 }
@@ -85,9 +103,12 @@ async function asaasRequest<T>(
     cache: "no-store",
   });
 
-  const json = (await response.json().catch(() => null)) as T | {
-    errors?: Array<{ code?: string; description?: string }>;
-  } | null;
+  const json = (await response.json().catch(() => null)) as
+    | T
+    | {
+        errors?: Array<{ code?: string; description?: string }>;
+      }
+    | null;
 
   if (!response.ok) {
     const message =
@@ -195,14 +216,7 @@ export async function createAsaasTournamentCharge(
       : undefined,
   };
 
-  type AsaasPaymentResponse = {
-  id: string;
-  invoiceUrl?: string;
-  pixQrCode?: string;
-  pixCopyPaste?: string;
-};
-
-return asaasRequest<AsaasPaymentResponse>("/payments",{
+  return asaasRequest<AsaasPaymentResponse>("/payments", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -215,6 +229,17 @@ export async function getAsaasPayment(paymentId: string) {
   }
 
   return asaasRequest<Record<string, unknown>>(`/payments/${id}`, {
+    method: "GET",
+  });
+}
+
+export async function getAsaasPix(paymentId: string) {
+  const id = safeTrim(paymentId);
+  if (!id) {
+    throw new Error("paymentId é obrigatório.");
+  }
+
+  return asaasRequest<AsaasPixResponse>(`/payments/${id}/pixQrCode`, {
     method: "GET",
   });
 }
