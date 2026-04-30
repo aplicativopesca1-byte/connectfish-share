@@ -548,10 +548,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    organizerUserId = requireField(
-      teamRaw.captainUserId || tournamentRaw.organizerUserId,
-      "organizerUserId"
-    );
+   organizerUserId = requireField(
+  tournamentRaw.organizerUserId ||
+    tournamentRaw.ownerId ||
+    tournamentRaw.createdBy ||
+    tournamentRaw.createdByUserId ||
+    teamRaw.organizerUserId ||
+    teamRaw.captainUserId, // fallback final (segurança)
+  "organizerUserId"
+);
 
     const inviteStatus = normalizeInviteStatus(memberRaw.inviteStatus);
     const registrationStatus = normalizeRegistrationStatus(
