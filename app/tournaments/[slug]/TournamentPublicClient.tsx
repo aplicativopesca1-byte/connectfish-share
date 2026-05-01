@@ -542,13 +542,37 @@ export default function TournamentPublicClient({ slug }: Props) {
 
       const createTeamData = (await createTeamResponse.json()) as CreateTeamResponse;
 
-      if (
-        !createTeamResponse.ok ||
-        !createTeamData.success ||
-        !createTeamData.teamId
-      ) {
-        throw new Error(createTeamData.message || "Não foi possível criar a equipe.");
+let teamId = createTeamData.teamId;
+
+if (!createTeamResponse.ok || !createTeamData.success) {
+  // 🔥 TRATAMENTO DO 409
+  if (createTeamResponse.status === 409) {
+    console.log("Equipe já existe — continuando fluxo");
+
+    // 👉 BUSCAR TEAM EXISTENTE
+    const existingMemberResponse = await fetch(
+      `/api/tournaments/team/member-by-user?tournamentId=${tournament.id}`,
+      {
+        method: "GET",
+        credentials: "include",
       }
+    );
+
+    const existingMemberData = await existingMemberResponse.json();
+
+    if (!existingMemberData?.teamId) {
+      throw new Error("Equipe existente não encontrada.");
+    }
+
+    teamId = existingMemberData.teamId;
+  } else {
+    throw new Error(createTeamData.message || "Não foi possível criar a equipe.");
+  }
+}
+
+if (!teamId) {
+  throw new Error("teamId inválido.");
+}
 
       setMessage("Equipe criada. Preparando o pagamento...");
 
@@ -575,8 +599,8 @@ const paymentResponse = await fetch("/api/asaas/tournament/checkout", {
   },
   body: JSON.stringify({
     tournamentId: tournament.id,
-    teamId: createTeamData.teamId,
-    teamMemberId: createTeamData.captainMemberId,
+    teamId: teamId,
+teamMemberId: createTeamData.captainMemberId,
     source: "public_tournament_web",
     billingType: "PIX",
   }),
