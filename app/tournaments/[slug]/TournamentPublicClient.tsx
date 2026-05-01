@@ -595,12 +595,29 @@ const checkoutUrl =
   paymentData.charge?.invoiceUrl ||
   paymentData.asaasInvoiceUrl;
 
-if (!checkoutUrl) {
-  throw new Error("O checkout não retornou uma URL válida.");
+const pixQrCode = paymentData.charge?.pixQrCode || null;
+const pixCopyPaste = paymentData.charge?.pixCopyPaste || null;
+
+// 🔥 PRIORIDADE: PIX
+if (pixQrCode) {
+  setMessage("Pagamento PIX gerado. Use o QR Code para pagar.");
+
+  console.log("PIX QR:", pixQrCode);
+  console.log("PIX Copia e Cola:", pixCopyPaste);
+
+  // 👉 NÃO redireciona no PIX
+  return;
 }
 
-setMessage("Redirecionando para o pagamento do capitão...");
-window.location.assign(checkoutUrl);
+// 🔥 FALLBACK: URL
+if (checkoutUrl) {
+  setMessage("Redirecionando para o pagamento do capitão...");
+  window.location.assign(checkoutUrl);
+  return;
+}
+
+// 🚨 ERRO FINAL
+throw new Error("Não foi possível iniciar o pagamento.");
     } catch (err) {
       console.error("Erro ao criar equipe e iniciar pagamento:", err);
       setMessage(null);
