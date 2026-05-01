@@ -234,7 +234,7 @@ function buildExternalReference(params: {
     params.teamId.slice(0, 8),
     params.participantUserId.slice(0, 8),
     Date.now().toString(36),
-  ].join("_");
+  ].join("-");
 }
 
 async function getAuthenticatedUserId(request: NextRequest) {
