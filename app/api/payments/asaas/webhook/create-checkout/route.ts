@@ -954,11 +954,13 @@ if (!isCaptain && inviteStatus !== "accepted") {
       },
     });
 
-    return NextResponse.json(
-      {
-        success: true,
-        message: "Checkout criado com sucesso.",
-        paymentId: payment.id,
+ return NextResponse.json(
+  {
+    success: true,
+    message: "Checkout criado com sucesso.",
+    checkoutUrl: invoiceUrl,
+    asaasInvoiceUrl: invoiceUrl,
+    paymentId: payment.id,
         providerPaymentId,
         providerCustomerId,
         billingType,

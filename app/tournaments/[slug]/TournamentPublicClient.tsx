@@ -641,11 +641,14 @@ if (pixQrCode) {
 }
 
 // 🔥 FALLBACK: URL
-if (checkoutUrl) {
+if (checkoutUrl && /^https?:\/\//i.test(checkoutUrl)) {
   setMessage("Redirecionando para o pagamento do capitão...");
-  window.location.assign(checkoutUrl);
+  window.location.href = checkoutUrl;
   return;
 }
+
+console.log("Checkout URL inválida:", checkoutUrl);
+throw new Error("O checkout foi criado, mas o link de pagamento veio inválido.");
 
 // 🚨 ERRO FINAL
 throw new Error("Não foi possível iniciar o pagamento.");
