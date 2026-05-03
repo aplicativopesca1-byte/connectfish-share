@@ -591,7 +591,7 @@ if (!createTeamData.captainMemberId) {
   throw new Error("Não foi possível identificar o membro do capitão.");
 }
 
-const paymentResponse = await fetch("/api/asaas/tournament/checkout", {
+const paymentResponse = await fetch("/api/payments/asaas/create-checkout", {
   method: "POST",
   credentials: "include",
   headers: {
