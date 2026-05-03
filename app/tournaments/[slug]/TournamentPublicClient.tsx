@@ -609,6 +609,13 @@ teamMemberId: createTeamData.captainMemberId,
 const paymentData = await paymentResponse.json();
 
 if (!paymentResponse.ok || !paymentData.success) {
+  if (paymentData.code === "MISSING_CPF") {
+    setError(
+      "Cadastro incompleto. Para gerar o pagamento da inscrição, complete seu CPF/CNPJ na sua conta."
+    );
+    return;
+  }
+
   throw new Error(
     paymentData.message || "Não foi possível iniciar o pagamento."
   );
