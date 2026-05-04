@@ -1,25 +1,25 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 
-import { adminDb } from "../../../../../../src/lib/firebaseAdmin";
-import { adminAuth } from "../../../../../../src/lib/firebaseAdminAuth";
+import { adminDb } from "../../../../../src/lib/firebaseAdmin";
+import { adminAuth } from "../../../../../src/lib/firebaseAdminAuth";
 
 import {
   createAsaasCustomer,
   createAsaasTournamentCharge,
-} from "../../../../../../app/services/payments/asaasService";
+} from "../../../../services/payments/asaasService";
 import {
   calculateTournamentSplit,
   buildOrganizerSplitForAsaas,
   CONNECTFISH_DEFAULT_FEE_PERCENT,
-} from "../../../../../../app/services/payments/splitRulesService";
+} from "../../../../services/payments/splitRulesService";
 import {
   createTournamentPayment,
   updateTournamentPaymentProviderData,
-} from "../../../../../../app/services/tournamentPaymentService";
-import { getOrganizerPaymentProfile } from "../../../../../../app/services/organizerPaymentProfileService";
-import { isOrganizerFinanciallyReady } from "../../../../../../app/services/organizerPaymentProfile.shared";
-import { createFinancialAuditLog } from "../../../../../../app/services/financialAuditService";
+} from "../../../../services/tournamentPaymentService";
+import { getOrganizerPaymentProfile } from "../../../../services/organizerPaymentProfileService";
+import { isOrganizerFinanciallyReady } from "../../../../services/organizerPaymentProfile.shared";
+import { createFinancialAuditLog } from "../../../../services/financialAuditService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
