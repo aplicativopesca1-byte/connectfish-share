@@ -546,26 +546,28 @@ let teamId = createTeamData.teamId;
 
 if (!createTeamResponse.ok || !createTeamData.success) {
   // 🔥 TRATAMENTO DO 409
-  if (createTeamResponse.status === 409) {
-    console.log("Equipe já existe — continuando fluxo");
+if (createTeamResponse.status === 409) {
+  console.log("Equipe já existe — continuando fluxo");
 
-    // 👉 BUSCAR TEAM EXISTENTE
-    const existingMemberResponse = await fetch(
-      `/api/tournaments/team/member-by-user?tournamentId=${tournament.id}`,
-      {
-        method: "GET",
-        credentials: "include",
-      }
-    );
-
-    const existingMemberData = await existingMemberResponse.json();
-
-    if (!existingMemberData?.teamId) {
-      throw new Error("Equipe existente não encontrada.");
+  // 🔥 1. Buscar member (sem teamId)
+  const existingMemberResponse = await fetch(
+    `/api/tournaments/team/member-by-user?tournamentId=${tournament.id}`,
+    {
+      method: "GET",
+      credentials: "include",
     }
+  );
 
-    teamId = existingMemberData.teamId;
-  } else {
+  const existingMemberData = await existingMemberResponse.json();
+
+  if (!existingMemberData?.teamId) {
+    console.log("DEBUG existingMemberData:", existingMemberData);
+    throw new Error("Equipe existente não encontrada.");
+  }
+
+  // 🔥 2. agora temos o teamId correto
+  teamId = existingMemberData.teamId;
+} else {
     throw new Error(createTeamData.message || "Não foi possível criar a equipe.");
   }
 }
