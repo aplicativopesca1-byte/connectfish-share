@@ -545,65 +545,28 @@ export default function TournamentPublicClient({ slug }: Props) {
 let teamId = createTeamData.teamId;
 
 if (!createTeamResponse.ok || !createTeamData.success) {
-  // 🔥 TRATAMENTO DO 409
-if (createTeamResponse.status === 409) {
-  console.log("Equipe já existe — continuando fluxo");
-
-  // 🔥 1. Buscar member (sem teamId)
-  const existingMemberResponse = await fetch(
-    `/api/tournaments/team/member-by-user?tournamentId=${tournament.id}`,
-    {
-      method: "GET",
-      credentials: "include",
-    }
-  );
-
-  const existingMemberData = await existingMemberResponse.json();
-
-  if (!existingMemberData?.teamId) {
-    console.log("DEBUG existingMemberData:", existingMemberData);
-    throw new Error("Equipe existente não encontrada.");
+  if (createTeamResponse.status === 409) {
+    throw new Error(
+      createTeamData.message ||
+        "Você já possui uma equipe neste torneio. Para testar novamente, crie um torneio novo ou use outra conta."
+    );
   }
 
-  // 🔥 2. agora temos o teamId correto
-  teamId = existingMemberData.teamId;
-} else {
-    throw new Error(createTeamData.message || "Não foi possível criar a equipe.");
-  }
+  throw new Error(createTeamData.message || "Não foi possível criar a equipe.");
 }
 
 if (!teamId) {
   throw new Error("teamId inválido.");
 }
 
-      setMessage("Equipe criada. Preparando o pagamento...");
+setMessage("Equipe criada. Preparando o pagamento...");
 
- // 🔥 1. Buscar member do capitão
-// 🔥 1. Buscar member REAL do capitão (usando teamId correto)
-const memberResponse = await fetch(
-  `/api/tournaments/team/member-by-user?tournamentId=${tournament.id}&teamId=${teamId}`,
-  {
-    method: "GET",
-    credentials: "include",
-  }
-);
-
-const memberData = await memberResponse.json();
-
-// 🔥 pega o ID correto do membro
-const finalTeamMemberId =
-  createTeamData.captainMemberId ||
-  memberData.captainMemberId ||
-  memberData.teamMemberId ||
-  memberData.memberId ||
-  memberData.id;
+const finalTeamMemberId = createTeamData.captainMemberId || `${teamId}_${uid}`;
 
 if (!finalTeamMemberId) {
-  console.log("DEBUG memberData:", memberData);
   throw new Error("Não foi possível identificar o membro do capitão.");
 }
 
-// 🔥 checkout com dados corretos
 const paymentResponse = await fetch("/api/payments/asaas/create-checkout", {
   method: "POST",
   credentials: "include",
@@ -612,7 +575,7 @@ const paymentResponse = await fetch("/api/payments/asaas/create-checkout", {
   },
   body: JSON.stringify({
     tournamentId: tournament.id,
-    teamId: teamId,
+    teamId,
     teamMemberId: finalTeamMemberId,
     source: "public_tournament_web",
     billingType: "PIX",
