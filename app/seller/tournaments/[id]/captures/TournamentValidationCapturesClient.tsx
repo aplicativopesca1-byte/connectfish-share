@@ -10,7 +10,6 @@ import {
 import {
   collection,
   doc,
-  getDoc,
   onSnapshot,
   orderBy,
   query,
@@ -39,6 +38,31 @@ type TournamentDoc = {
 };
 
 type CaptureStatus = "pending" | "approved" | "rejected";
+type FilterStatus = "all" | CaptureStatus | "flagged";
+
+type AuditFlags = {
+  outsideBoundary?: boolean;
+  unknownBoundary?: boolean;
+  gpsAccuracyHigh?: boolean;
+  outsideSchedule?: boolean;
+  paymentNotConfirmed?: boolean;
+  inviteNotAccepted?: boolean;
+};
+
+type TournamentRuleSnapshot = {
+  tournamentStatus?: string | null;
+  minSizeCm?: number | null;
+  species?: string | null;
+  validFishCount?: number | null;
+  boundaryEnabled?: boolean | null;
+  boundaryType?: string | null;
+  boundaryStatus?: string | null;
+  scheduleStatus?: string | null;
+  scheduledStartAtMs?: number | null;
+  scheduledEndAtMs?: number | null;
+  maxGpsAccuracyM?: number | null;
+  gpsAccuracyM?: number | null;
+};
 
 type TournamentCapture = {
   id: string;
@@ -47,6 +71,7 @@ type TournamentCapture = {
   teamName: string;
   captainId: string | null;
   userId: string | null;
+  userName: string | null;
   species: string;
   declaredLengthCm: number;
   approvedLengthCm: number | null;
@@ -56,7 +81,19 @@ type TournamentCapture = {
   submittedAt: string | null;
   latitude: number | null;
   longitude: number | null;
+  gpsAccuracy: number | null;
   insideBoundary: boolean | null;
+  boundaryStatus: string | null;
+  scheduleStatus: string | null;
+  capturedWithinSchedule: boolean | null;
+  gpsAccuracyOk: boolean | null;
+  gpsMaxAllowedAccuracyM: number | null;
+  paymentStatus: string | null;
+  inviteStatus: string | null;
+  memberStatus: string | null;
+  captureHash: string | null;
+  tournamentRuleSnapshot: TournamentRuleSnapshot | null;
+  auditFlags: AuditFlags | null;
   status: CaptureStatus;
   judgeId: string | null;
   judgeName: string | null;
@@ -65,13 +102,13 @@ type TournamentCapture = {
   rejectedAt: string | null;
 };
 
-type FilterStatus = "all" | CaptureStatus;
-
 type CaptureAlert = {
   key: string;
   label: string;
-  tone: "red" | "yellow";
+  tone: "red" | "yellow" | "green";
 };
+
+type RiskLevel = "low" | "medium" | "high";
 
 function toIsoStringSafe(value: unknown): string | null {
   if (!value) return null;
@@ -98,7 +135,6 @@ function toIsoStringSafe(value: unknown): string | null {
 
 function formatDateTime(value: string | null) {
   if (!value) return "—";
-
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
 
@@ -108,15 +144,29 @@ function formatDateTime(value: string | null) {
   }).format(date);
 }
 
+function formatCoordinate(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "—";
+  return value.toFixed(6);
+}
+
+function formatBoundaryValue(value: boolean | null) {
+  if (value === true) return "Dentro da área";
+  if (value === false) return "Fora da área";
+  return "Não informado";
+}
+
+function normalizeStatus(value: unknown): CaptureStatus {
+  const statusRaw = String(value ?? "pending").toLowerCase();
+  return statusRaw === "approved" || statusRaw === "rejected"
+    ? statusRaw
+    : "pending";
+}
+
 function mapCaptureDoc(
   id: string,
   raw: Record<string, unknown>,
   tournamentId: string
 ): TournamentCapture {
-  const statusRaw = String(raw.status ?? "pending").toLowerCase();
-  const status: CaptureStatus =
-    statusRaw === "approved" || statusRaw === "rejected" ? statusRaw : "pending";
-
   return {
     id,
     tournamentId,
@@ -124,6 +174,7 @@ function mapCaptureDoc(
     teamName: raw.teamName ? String(raw.teamName) : "Equipe não identificada",
     captainId: raw.captainId ? String(raw.captainId) : null,
     userId: raw.userId ? String(raw.userId) : null,
+    userName: raw.userName ? String(raw.userName) : null,
     species: raw.species ? String(raw.species) : "Espécie não informada",
     declaredLengthCm: Number(raw.declaredLengthCm ?? raw.lengthCm ?? 0) || 0,
     approvedLengthCm:
@@ -146,9 +197,43 @@ function mapCaptureDoc(
       raw.longitude !== undefined && raw.longitude !== null
         ? Number(raw.longitude)
         : null,
+    gpsAccuracy:
+      raw.gpsAccuracy !== undefined && raw.gpsAccuracy !== null
+        ? Number(raw.gpsAccuracy)
+        : raw.gps &&
+          typeof raw.gps === "object" &&
+          "accuracy" in raw.gps &&
+          (raw.gps as Record<string, unknown>).accuracy !== null
+        ? Number((raw.gps as Record<string, unknown>).accuracy)
+        : null,
     insideBoundary:
       typeof raw.insideBoundary === "boolean" ? raw.insideBoundary : null,
-    status,
+    boundaryStatus: raw.boundaryStatus ? String(raw.boundaryStatus) : null,
+    scheduleStatus: raw.scheduleStatus ? String(raw.scheduleStatus) : null,
+    capturedWithinSchedule:
+      typeof raw.capturedWithinSchedule === "boolean"
+        ? raw.capturedWithinSchedule
+        : null,
+    gpsAccuracyOk:
+      typeof raw.gpsAccuracyOk === "boolean" ? raw.gpsAccuracyOk : null,
+    gpsMaxAllowedAccuracyM:
+      raw.gpsMaxAllowedAccuracyM !== undefined &&
+      raw.gpsMaxAllowedAccuracyM !== null
+        ? Number(raw.gpsMaxAllowedAccuracyM)
+        : null,
+    paymentStatus: raw.paymentStatus ? String(raw.paymentStatus) : null,
+    inviteStatus: raw.inviteStatus ? String(raw.inviteStatus) : null,
+    memberStatus: raw.memberStatus ? String(raw.memberStatus) : null,
+    captureHash: raw.captureHash ? String(raw.captureHash) : null,
+    tournamentRuleSnapshot:
+      raw.tournamentRuleSnapshot && typeof raw.tournamentRuleSnapshot === "object"
+        ? (raw.tournamentRuleSnapshot as TournamentRuleSnapshot)
+        : null,
+    auditFlags:
+      raw.auditFlags && typeof raw.auditFlags === "object"
+        ? (raw.auditFlags as AuditFlags)
+        : null,
+    status: normalizeStatus(raw.status),
     judgeId: raw.judgeId ? String(raw.judgeId) : null,
     judgeName: raw.judgeName ? String(raw.judgeName) : null,
     judgeNotes: raw.judgeNotes ? String(raw.judgeNotes) : null,
@@ -164,8 +249,10 @@ function deriveCaptureAlerts(params: {
   scheduledEndAt: string | null;
 }) {
   const alerts: CaptureAlert[] = [];
+  const { capture } = params;
+  const flags = capture.auditFlags || {};
 
-  if (params.minSizeCm > 0 && params.capture.declaredLengthCm < params.minSizeCm) {
+  if (params.minSizeCm > 0 && capture.declaredLengthCm < params.minSizeCm) {
     alerts.push({
       key: "min_size",
       label: `Peixe abaixo do mínimo (${params.minSizeCm} cm)`,
@@ -173,7 +260,7 @@ function deriveCaptureAlerts(params: {
     });
   }
 
-  if (params.capture.insideBoundary === false) {
+  if (capture.insideBoundary === false || flags.outsideBoundary) {
     alerts.push({
       key: "boundary",
       label: "Captura fora da área permitida",
@@ -181,9 +268,49 @@ function deriveCaptureAlerts(params: {
     });
   }
 
-  if (params.scheduledStartAt && params.capture.capturedAt) {
+  if (capture.boundaryStatus === "unknown" || flags.unknownBoundary) {
+    alerts.push({
+      key: "unknown_boundary",
+      label: "Área não confirmada",
+      tone: "yellow",
+    });
+  }
+
+  if (capture.gpsAccuracyOk === false || flags.gpsAccuracyHigh) {
+    alerts.push({
+      key: "gps",
+      label: "GPS com baixa precisão",
+      tone: "yellow",
+    });
+  }
+
+  if (capture.capturedWithinSchedule === false || flags.outsideSchedule) {
+    alerts.push({
+      key: "schedule",
+      label: "Fora do período do torneio",
+      tone: "red",
+    });
+  }
+
+  if (flags.paymentNotConfirmed) {
+    alerts.push({
+      key: "payment",
+      label: "Pagamento não confirmado",
+      tone: "red",
+    });
+  }
+
+  if (flags.inviteNotAccepted) {
+    alerts.push({
+      key: "invite",
+      label: "Inscrição não aceita",
+      tone: "red",
+    });
+  }
+
+  if (params.scheduledStartAt && capture.capturedAt) {
     const startMs = new Date(params.scheduledStartAt).getTime();
-    const captureMs = new Date(params.capture.capturedAt).getTime();
+    const captureMs = new Date(capture.capturedAt).getTime();
 
     if (!Number.isNaN(startMs) && !Number.isNaN(captureMs) && captureMs < startMs) {
       alerts.push({
@@ -194,9 +321,9 @@ function deriveCaptureAlerts(params: {
     }
   }
 
-  if (params.scheduledEndAt && params.capture.capturedAt) {
+  if (params.scheduledEndAt && capture.capturedAt) {
     const endMs = new Date(params.scheduledEndAt).getTime();
-    const captureMs = new Date(params.capture.capturedAt).getTime();
+    const captureMs = new Date(capture.capturedAt).getTime();
 
     if (!Number.isNaN(endMs) && !Number.isNaN(captureMs) && captureMs > endMs) {
       alerts.push({
@@ -208,6 +335,47 @@ function deriveCaptureAlerts(params: {
   }
 
   return alerts;
+}
+
+function calculateRiskScore(alerts: CaptureAlert[]) {
+  return alerts.reduce((score, alert) => {
+    if (alert.tone === "red") return score + 35;
+    if (alert.tone === "yellow") return score + 15;
+    return score;
+  }, 0);
+}
+
+function getRiskLevel(score: number): RiskLevel {
+  if (score >= 70) return "high";
+  if (score >= 30) return "medium";
+  return "low";
+}
+
+function getRiskMeta(level: RiskLevel) {
+  if (level === "high") {
+    return {
+      label: "Alto risco",
+      bg: "#FEE2E2",
+      color: "#991B1B",
+      recommendation: "Recomendação: revisar com muita atenção ou reprovar.",
+    };
+  }
+
+  if (level === "medium") {
+    return {
+      label: "Atenção",
+      bg: "#FEF3C7",
+      color: "#92400E",
+      recommendation: "Recomendação: revisar os alertas antes de aprovar.",
+    };
+  }
+
+  return {
+    label: "Baixo risco",
+    bg: "#DCFCE7",
+    color: "#166534",
+    recommendation: "Recomendação: captura sem alertas críticos.",
+  };
 }
 
 export default function TournamentValidationCapturesClient({ tournamentId }: Props) {
@@ -253,24 +421,50 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
     });
   }, [selectedCapture, tournamentMinSizeCm, scheduledStartAt, scheduledEndAt]);
 
+  const selectedRiskScore = useMemo(
+    () => calculateRiskScore(selectedCaptureAlerts),
+    [selectedCaptureAlerts]
+  );
+
+  const selectedRiskLevel = getRiskLevel(selectedRiskScore);
+  const selectedRiskMeta = getRiskMeta(selectedRiskLevel);
+
+  const capturesWithRisk = useMemo(() => {
+    return captures.map((capture) => {
+      const alerts = deriveCaptureAlerts({
+        capture,
+        minSizeCm: tournamentMinSizeCm,
+        scheduledStartAt,
+        scheduledEndAt,
+      });
+      const score = calculateRiskScore(alerts);
+      const level = getRiskLevel(score);
+
+      return {
+        capture,
+        alerts,
+        score,
+        level,
+      };
+    });
+  }, [captures, tournamentMinSizeCm, scheduledStartAt, scheduledEndAt]);
+
   const filteredCaptures = useMemo(() => {
     if (filterStatus === "all") return captures;
+    if (filterStatus === "flagged") {
+      return capturesWithRisk
+        .filter((item) => item.level !== "low")
+        .map((item) => item.capture);
+    }
     return captures.filter((item) => item.status === filterStatus);
-  }, [captures, filterStatus]);
+  }, [captures, capturesWithRisk, filterStatus]);
 
   const stats = useMemo(() => {
     const pending = captures.filter((item) => item.status === "pending").length;
     const approved = captures.filter((item) => item.status === "approved").length;
     const rejected = captures.filter((item) => item.status === "rejected").length;
-    const flagged = captures.filter(
-      (item) =>
-        deriveCaptureAlerts({
-          capture: item,
-          minSizeCm: tournamentMinSizeCm,
-          scheduledStartAt,
-          scheduledEndAt,
-        }).length > 0
-    ).length;
+    const flagged = capturesWithRisk.filter((item) => item.level !== "low").length;
+    const highRisk = capturesWithRisk.filter((item) => item.level === "high").length;
 
     return {
       total: captures.length,
@@ -278,8 +472,9 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
       approved,
       rejected,
       flagged,
+      highRisk,
     };
-  }, [captures, tournamentMinSizeCm, scheduledStartAt, scheduledEndAt]);
+  }, [captures, capturesWithRisk]);
 
   useEffect(() => {
     if (!tournamentId?.trim()) {
@@ -304,9 +499,7 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
     let capturesLoaded = false;
 
     const resolveLoading = () => {
-      if (tournamentLoaded && capturesLoaded) {
-        setLoading(false);
-      }
+      if (tournamentLoaded && capturesLoaded) setLoading(false);
     };
 
     unsubscribers.push(
@@ -365,9 +558,7 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
       )
     );
 
-    return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
-    };
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
   }, [tournamentId]);
 
   useEffect(() => {
@@ -407,11 +598,19 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
 
       await updateDoc(ref, {
         status: "approved",
+        validationStatus: "approved",
         approvedLengthCm: normalizedApprovedLength,
+        officialMeasure: normalizedApprovedLength,
         judgeName: judgeName.trim() || "Organização",
         judgeNotes: judgeNotes.trim() || null,
+        riskScore: selectedRiskScore,
+        riskLevel: selectedRiskLevel,
+        riskRecommendation: selectedRiskMeta.recommendation,
+        validationAlerts: selectedCaptureAlerts,
         approvedAt: serverTimestamp(),
         rejectedAt: null,
+        validatedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
 
       setMessage("Captura aprovada com sucesso.");
@@ -440,10 +639,18 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
 
       await updateDoc(ref, {
         status: "rejected",
+        validationStatus: "rejected",
         judgeName: judgeName.trim() || "Organização",
         judgeNotes: judgeNotes.trim(),
+        rejectionReason: judgeNotes.trim(),
+        riskScore: selectedRiskScore,
+        riskLevel: selectedRiskLevel,
+        riskRecommendation: selectedRiskMeta.recommendation,
+        validationAlerts: selectedCaptureAlerts,
         rejectedAt: serverTimestamp(),
         approvedAt: null,
+        validatedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
 
       setMessage("Captura reprovada com sucesso.");
@@ -507,11 +714,13 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
             <StatCard label="Aprovadas" value={String(stats.approved)} />
             <StatCard label="Reprovadas" value={String(stats.rejected)} />
             <StatCard label="Com alerta" value={String(stats.flagged)} />
+            <StatCard label="Alto risco" value={String(stats.highRisk)} />
           </div>
         </div>
 
         <div style={styles.filtersRow}>
           <FilterButton active={filterStatus === "pending"} label="Pendentes" onClick={() => setFilterStatus("pending")} />
+          <FilterButton active={filterStatus === "flagged"} label="Com alerta" onClick={() => setFilterStatus("flagged")} />
           <FilterButton active={filterStatus === "approved"} label="Aprovadas" onClick={() => setFilterStatus("approved")} />
           <FilterButton active={filterStatus === "rejected"} label="Reprovadas" onClick={() => setFilterStatus("rejected")} />
           <FilterButton active={filterStatus === "all"} label="Todas" onClick={() => setFilterStatus("all")} />
@@ -535,6 +744,9 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
                     scheduledStartAt,
                     scheduledEndAt,
                   });
+                  const riskScore = calculateRiskScore(alerts);
+                  const riskLevel = getRiskLevel(riskScore);
+                  const riskMeta = getRiskMeta(riskLevel);
 
                   return (
                     <button
@@ -556,12 +768,12 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
                       <div style={styles.captureMetaGrid}>
                         <MiniInfo label="Espécie" value={capture.species} />
                         <MiniInfo label="Medida" value={`${capture.declaredLengthCm} cm`} />
-                        <MiniInfo label="Enviado" value={formatDateTime(capture.submittedAt)} />
+                        <MiniInfo label="Risco" value={`${riskMeta.label} · ${riskScore}`} />
                       </div>
 
                       {alerts.length ? (
                         <div style={styles.inlineAlertsWrap}>
-                          {alerts.map((alert) => (
+                          {alerts.slice(0, 3).map((alert) => (
                             <span
                               key={`${capture.id}-${alert.key}`}
                               style={
@@ -603,6 +815,21 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
                   )}
                 </div>
 
+                <div
+                  style={{
+                    ...styles.riskPanel,
+                    background: selectedRiskMeta.bg,
+                    borderColor: selectedRiskMeta.color,
+                  }}
+                >
+                  <p style={{ ...styles.riskTitle, color: selectedRiskMeta.color }}>
+                    {selectedRiskMeta.label} · Score {selectedRiskScore}
+                  </p>
+                  <p style={{ ...styles.riskText, color: selectedRiskMeta.color }}>
+                    {selectedRiskMeta.recommendation}
+                  </p>
+                </div>
+
                 {selectedCaptureAlerts.length ? (
                   <div style={styles.alertPanel}>
                     <p style={styles.alertPanelTitle}>Alertas automáticos</p>
@@ -632,12 +859,19 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
 
                 <div style={styles.infoGrid}>
                   <InfoCard label="Equipe" value={selectedCapture.teamName} />
+                  <InfoCard label="Usuário" value={selectedCapture.userName || selectedCapture.userId || "—"} />
                   <InfoCard label="Espécie" value={selectedCapture.species} />
                   <InfoCard label="Medida enviada" value={`${selectedCapture.declaredLengthCm} cm`} />
                   <InfoCard label="Mínimo do torneio" value={`${tournamentMinSizeCm} cm`} />
                   <InfoCard label="Capturado em" value={formatDateTime(selectedCapture.capturedAt)} />
                   <InfoCard label="Enviado em" value={formatDateTime(selectedCapture.submittedAt)} />
                   <InfoCard label="Geofence" value={formatBoundaryValue(selectedCapture.insideBoundary)} />
+                  <InfoCard label="Boundary status" value={selectedCapture.boundaryStatus || "—"} />
+                  <InfoCard label="Horário" value={selectedCapture.scheduleStatus || "—"} />
+                  <InfoCard label="GPS precisão" value={selectedCapture.gpsAccuracy !== null ? `${Math.round(selectedCapture.gpsAccuracy)} m` : "—"} />
+                  <InfoCard label="Pagamento" value={selectedCapture.paymentStatus || "—"} />
+                  <InfoCard label="Convite" value={selectedCapture.inviteStatus || "—"} />
+                  <InfoCard label="Hash" value={selectedCapture.captureHash || "—"} />
                 </div>
 
                 <div style={styles.formGrid}>
@@ -789,37 +1023,14 @@ function getStatusLabel(status: CaptureStatus) {
 
 function getStatusBadgeStyle(status: CaptureStatus): CSSProperties {
   if (status === "approved") {
-    return {
-      ...styles.statusBadge,
-      background: "#DCFCE7",
-      color: "#166534",
-    };
+    return { ...styles.statusBadge, background: "#DCFCE7", color: "#166534" };
   }
 
   if (status === "rejected") {
-    return {
-      ...styles.statusBadge,
-      background: "#FEE2E2",
-      color: "#B91C1C",
-    };
+    return { ...styles.statusBadge, background: "#FEE2E2", color: "#B91C1C" };
   }
 
-  return {
-    ...styles.statusBadge,
-    background: "#FEF3C7",
-    color: "#92400E",
-  };
-}
-
-function formatBoundaryValue(value: boolean | null) {
-  if (value === true) return "Dentro da área";
-  if (value === false) return "Fora da área";
-  return "Não informado";
-}
-
-function formatCoordinate(value: number | null) {
-  if (value === null || !Number.isFinite(value)) return "—";
-  return value.toFixed(6);
+  return { ...styles.statusBadge, background: "#FEF3C7", color: "#92400E" };
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -836,7 +1047,7 @@ const styles: Record<string, CSSProperties> = {
   badgesWrap: { display: "flex", gap: 10, flexWrap: "wrap" },
   badgeBlue: { display: "inline-flex", alignItems: "center", padding: "8px 12px", borderRadius: 999, background: "#EAF2F7", color: "#0B3C5D", fontSize: 13, fontWeight: 800 },
   badgeYellow: { display: "inline-flex", alignItems: "center", padding: "8px 12px", borderRadius: 999, background: "#FEF3C7", color: "#92400E", fontSize: 13, fontWeight: 800 },
-  statsGrid: { marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 },
+  statsGrid: { marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 },
   statCard: { background: "#F8FAFC", borderRadius: 14, padding: 14 },
   statLabel: { margin: 0, color: "#64748B", fontSize: 12, fontWeight: 800 },
   statValue: { margin: "6px 0 0 0", color: "#0F172A", fontSize: 22, fontWeight: 900 },
@@ -862,6 +1073,9 @@ const styles: Record<string, CSSProperties> = {
   imageCard: { borderRadius: 18, overflow: "hidden", border: "1px solid rgba(15,23,42,0.08)", background: "#F8FAFC" },
   captureImage: { width: "100%", maxHeight: 460, objectFit: "cover", display: "block" },
   imageFallback: { minHeight: 260, display: "flex", alignItems: "center", justifyContent: "center", color: "#64748B", fontWeight: 700 },
+  riskPanel: { border: "1px solid", borderRadius: 16, padding: 16 },
+  riskTitle: { margin: 0, fontSize: 15, fontWeight: 900 },
+  riskText: { margin: "8px 0 0 0", fontSize: 14, fontWeight: 700, lineHeight: 1.6 },
   alertPanel: { background: "#FFF7ED", border: "1px solid #FDBA74", borderRadius: 16, padding: 16 },
   alertPanelTitle: { margin: 0, color: "#9A3412", fontSize: 14, fontWeight: 900 },
   okPanel: { background: "#ECFDF5", border: "1px solid #A7F3D0", borderRadius: 16, padding: 16 },
@@ -873,7 +1087,7 @@ const styles: Record<string, CSSProperties> = {
   infoGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 },
   infoCard: { background: "#F8FAFC", borderRadius: 14, padding: 14 },
   infoLabel: { margin: 0, color: "#64748B", fontSize: 12, fontWeight: 800 },
-  infoValue: { margin: "6px 0 0 0", color: "#0F172A", fontSize: 14, fontWeight: 900, lineHeight: 1.5 },
+  infoValue: { margin: "6px 0 0 0", color: "#0F172A", fontSize: 14, fontWeight: 900, lineHeight: 1.5, wordBreak: "break-word" },
   formGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 },
   field: { display: "flex", flexDirection: "column", gap: 8 },
   label: { fontSize: 13, color: "#475569", fontWeight: 800 },

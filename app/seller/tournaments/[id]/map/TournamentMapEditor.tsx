@@ -10,6 +10,7 @@ import {
 import { doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 import { db } from "../../../../../src/lib/firebase";
+import { useAuth } from "@/context/AuthContext";
 import BoundaryMapEditor from "../../components/map/boundary/BoundaryMapEditor";
 
 type Props = {
@@ -34,14 +35,21 @@ type PolygonBoundary = {
 
 type TournamentBoundary = CircleBoundary | PolygonBoundary | null;
 type BoundaryType = "circle" | "polygon";
+type TournamentStatus = "draft" | "scheduled" | "live" | "finished" | string;
 
 type TournamentDoc = {
   title?: string;
   location?: string;
+  status?: TournamentStatus;
+  visibility?: string;
   boundaryEnabled?: boolean;
   boundary?: TournamentBoundary;
   boundaryCompleted?: boolean;
   setupStep?: number;
+  boundaryType?: BoundaryType | null;
+  boundaryCenter?: LatLng | null;
+  boundaryRadiusM?: number | null;
+  boundaryPolygonPoints?: LatLng[] | null;
 };
 
 const DEFAULT_CENTER: LatLng = {
@@ -51,8 +59,21 @@ const DEFAULT_CENTER: LatLng = {
 
 const DEFAULT_RADIUS_M = 5000;
 
+const RADIUS_PRESETS = [
+  { label: "500 m", value: 500 },
+  { label: "1 km", value: 1000 },
+  { label: "3 km", value: 3000 },
+  { label: "5 km", value: 5000 },
+  { label: "10 km", value: 10000 },
+  { label: "20 km", value: 20000 },
+];
+
 export default function TournamentMapEditor({ tournamentId }: Props) {
   const router = useRouter();
+
+  const { uid } = useAuth() as {
+    uid?: string | null;
+  };
 
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -60,6 +81,8 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
 
   const [title, setTitle] = useState("Torneio");
   const [location, setLocation] = useState("Local não definido");
+  const [status, setStatus] = useState<TournamentStatus>("draft");
+  const [visibility, setVisibility] = useState("draft");
 
   const [boundaryEnabled, setBoundaryEnabled] = useState(true);
   const [boundaryType, setBoundaryType] = useState<BoundaryType>("circle");
@@ -80,6 +103,11 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
   const safeTournamentId = useMemo(() => {
     return typeof tournamentId === "string" ? tournamentId.trim() : "";
   }, [tournamentId]);
+
+  const isOperationallyLocked = useMemo(() => {
+    const normalizedStatus = String(status || "").toLowerCase();
+    return normalizedStatus === "live" || normalizedStatus === "finished";
+  }, [status]);
 
   useEffect(() => {
     if (!safeTournamentId) {
@@ -110,6 +138,8 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
 
       setTitle(data.title || "Torneio");
       setLocation(data.location || "Local não definido");
+      setStatus(data.status || "draft");
+      setVisibility(data.visibility || "draft");
 
       const enabled = data.boundaryEnabled !== false;
       setBoundaryEnabled(enabled);
@@ -155,6 +185,43 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
         return;
       }
 
+      // Fallback para documentos antigos que salvaram metadados separados.
+      if (
+        data.boundaryType === "circle" &&
+        data.boundaryCenter &&
+        Number.isFinite(data.boundaryCenter.latitude) &&
+        Number.isFinite(data.boundaryCenter.longitude)
+      ) {
+        setBoundaryType("circle");
+        setLatitude(data.boundaryCenter.latitude);
+        setLongitude(data.boundaryCenter.longitude);
+        setRadiusM(Number(data.boundaryRadiusM ?? DEFAULT_RADIUS_M));
+        setPolygonPoints([]);
+        return;
+      }
+
+      if (
+        data.boundaryType === "polygon" &&
+        Array.isArray(data.boundaryPolygonPoints)
+      ) {
+        const safePoints = data.boundaryPolygonPoints.filter(
+          (point) =>
+            Number.isFinite(point?.latitude) &&
+            Number.isFinite(point?.longitude)
+        );
+
+        setBoundaryType("polygon");
+        setPolygonPoints(safePoints);
+
+        const center = safePoints.length
+          ? calculatePolygonCenter(safePoints)
+          : DEFAULT_CENTER;
+
+        setLatitude(center.latitude);
+        setLongitude(center.longitude);
+        return;
+      }
+
       setBoundaryType("circle");
       setLatitude(DEFAULT_CENTER.latitude);
       setLongitude(DEFAULT_CENTER.longitude);
@@ -168,7 +235,20 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
     }
   }
 
+  function clearFeedback() {
+    setMessage(null);
+    setError(null);
+  }
+
   function validateBeforeSave() {
+    if (isOperationallyLocked) {
+      return {
+        ok: false as const,
+        message:
+          "Este torneio está ao vivo ou finalizado. O perímetro não pode ser alterado.",
+      };
+    }
+
     if (!boundaryEnabled) {
       return { ok: true as const };
     }
@@ -241,6 +321,57 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
     };
   }
 
+  function buildBoundaryMetadata() {
+    if (!boundaryEnabled) {
+      return {
+        boundaryType: null,
+        boundaryCenter: null,
+        boundaryRadiusM: null,
+        boundaryPolygonPoints: [],
+        boundaryAreaKm2: null,
+        boundaryAreaHectares: null,
+        boundaryPointCount: 0,
+      };
+    }
+
+    if (boundaryType === "circle") {
+      const areaKm2 = calculateCircleAreaKm2(radiusM);
+
+      return {
+        boundaryType: "circle" as const,
+        boundaryCenter: {
+          latitude,
+          longitude,
+        },
+        boundaryRadiusM: radiusM,
+        boundaryPolygonPoints: [],
+        boundaryAreaKm2: roundNumber(areaKm2, 4),
+        boundaryAreaHectares: roundNumber(areaKm2 * 100, 2),
+        boundaryPointCount: 0,
+      };
+    }
+
+    const center = polygonPoints.length
+      ? calculatePolygonCenter(polygonPoints)
+      : null;
+
+    const areaKm2 =
+      polygonPoints.length >= 3 ? calculatePolygonAreaKm2(polygonPoints) : 0;
+
+    return {
+      boundaryType: "polygon" as const,
+      boundaryCenter: center,
+      boundaryRadiusM: null,
+      boundaryPolygonPoints: polygonPoints.map((point) => ({
+        latitude: point.latitude,
+        longitude: point.longitude,
+      })),
+      boundaryAreaKm2: roundNumber(areaKm2, 4),
+      boundaryAreaHectares: roundNumber(areaKm2 * 100, 2),
+      boundaryPointCount: polygonPoints.length,
+    };
+  }
+
   async function persistBoundary() {
     if (!safeTournamentId) {
       throw new Error("ID do torneio inválido.");
@@ -256,7 +387,10 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
     await updateDoc(ref, {
       boundaryEnabled,
       boundary: buildBoundary(),
-      boundaryCompleted: true,
+      ...buildBoundaryMetadata(),
+      boundaryCompleted: boundaryEnabled ? true : true,
+      boundaryUpdatedAt: serverTimestamp(),
+      boundaryUpdatedBy: uid || null,
       setupStep: 2,
       updatedAt: serverTimestamp(),
     });
@@ -264,15 +398,16 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
 
   async function handleSave() {
     setSaving(true);
-    setMessage(null);
-    setError(null);
+    clearFeedback();
 
     try {
       await persistBoundary();
       setMessage("Perímetro salvo com sucesso.");
     } catch (err) {
       console.error("Erro ao salvar perímetro:", err);
-      setError(err instanceof Error ? err.message : "Não foi possível salvar o perímetro.");
+      setError(
+        err instanceof Error ? err.message : "Não foi possível salvar o perímetro."
+      );
     } finally {
       setSaving(false);
     }
@@ -280,8 +415,7 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
 
   async function handleSaveAndGoToReview() {
     setSaving(true);
-    setMessage(null);
-    setError(null);
+    clearFeedback();
 
     try {
       await persistBoundary();
@@ -298,20 +432,62 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
     setLatitude(DEFAULT_CENTER.latitude);
     setLongitude(DEFAULT_CENTER.longitude);
     setRadiusM(DEFAULT_RADIUS_M);
-    setMessage(null);
-    setError(null);
+    clearFeedback();
   }
 
   function clearPolygon() {
     setPolygonPoints([]);
-    setMessage(null);
-    setError(null);
+    clearFeedback();
   }
 
   function removeLastPolygonPoint() {
     setPolygonPoints((prev) => prev.slice(0, -1));
-    setMessage(null);
-    setError(null);
+    clearFeedback();
+  }
+
+  function useCurrentLocation() {
+    clearFeedback();
+
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setError("Seu navegador não permite acessar a localização atual.");
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLatitude(position.coords.latitude);
+        setLongitude(position.coords.longitude);
+
+        if (boundaryType === "polygon") {
+          setBoundaryType("circle");
+          setPolygonPoints([]);
+        }
+
+        setMessage("Localização atual aplicada ao mapa.");
+      },
+      () => {
+        setError("Não foi possível obter sua localização atual.");
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 12000,
+        maximumAge: 30000,
+      }
+    );
+  }
+
+  function centerByTournamentLocation() {
+    clearFeedback();
+
+    const query = encodeURIComponent(location || title || "Brasil");
+
+    if (typeof window !== "undefined") {
+      window.open(`https://www.google.com/maps/search/${query}`, "_blank");
+    }
+
+    setMessage(
+      "Abrimos a busca no Google Maps. Copie as coordenadas do local e ajuste no mapa."
+    );
   }
 
   const previewMapUrl = useMemo(() => {
@@ -332,6 +508,34 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
     return calculatePolygonCenter(polygonPoints);
   }, [polygonPoints]);
 
+  const circleAreaKm2 = useMemo(() => {
+    return calculateCircleAreaKm2(radiusM);
+  }, [radiusM]);
+
+  const polygonAreaKm2 = useMemo(() => {
+    if (polygonPoints.length < 3) return 0;
+    return calculatePolygonAreaKm2(polygonPoints);
+  }, [polygonPoints]);
+
+  const selectedAreaKm2 = useMemo(() => {
+    if (!boundaryEnabled) return 0;
+    if (boundaryType === "circle") return circleAreaKm2;
+    return polygonAreaKm2;
+  }, [boundaryEnabled, boundaryType, circleAreaKm2, polygonAreaKm2]);
+
+  const selectedAreaLabel = useMemo(() => {
+    if (!boundaryEnabled) return "—";
+
+    if (!selectedAreaKm2 || selectedAreaKm2 <= 0) {
+      return boundaryType === "polygon" ? "Desenhe ao menos 3 pontos" : "—";
+    }
+
+    return `${formatNumber(selectedAreaKm2, 2)} km² · ${formatNumber(
+      selectedAreaKm2 * 100,
+      1
+    )} ha`;
+  }, [boundaryEnabled, boundaryType, selectedAreaKm2]);
+
   const statusLabel = useMemo(() => {
     if (!boundaryEnabled) return "Perímetro desativado";
 
@@ -345,6 +549,8 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
           polygonPoints.length === 1 ? "" : "s"
         }`;
   }, [boundaryEnabled, boundaryType, radiusM, polygonPoints.length]);
+
+  const statusBadgeStyle = boundaryEnabled ? styles.metaSuccess : styles.metaNeutral;
 
   if (loading) {
     return (
@@ -379,16 +585,16 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
           <div style={styles.headerInfo}>
             <h1 style={styles.title}>Mapa do torneio</h1>
             <p style={styles.subtitle}>
-              Etapa 2 de 3 · Configure a área oficial de validação das capturas.
+              Etapa 2 de 3 · Configure a área oficial usada para validar as
+              capturas enviadas pelos participantes.
             </p>
 
             <div style={styles.headerMeta}>
               <span style={styles.metaPrimary}>{title}</span>
               <span style={styles.metaSecondary}>{location}</span>
-              <span
-                style={boundaryEnabled ? styles.metaSuccess : styles.metaNeutral}
-              >
-                {statusLabel}
+              <span style={statusBadgeStyle}>{statusLabel}</span>
+              <span style={styles.metaNeutral}>
+                Status: {getStatusLabel(status)} · {visibility || "draft"}
               </span>
             </div>
           </div>
@@ -396,7 +602,9 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
           <div style={styles.topActions}>
             <button
               type="button"
-              onClick={() => router.push(`/seller/tournaments/${safeTournamentId}/edit?step=1`)}
+              onClick={() =>
+                router.push(`/seller/tournaments/${safeTournamentId}/edit?step=1`)
+              }
               style={styles.secondaryButton}
             >
               Voltar para etapa 1
@@ -412,6 +620,16 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
           </div>
         </div>
 
+        {isOperationallyLocked ? (
+          <div style={styles.lockedBanner}>
+            <strong>Perímetro bloqueado.</strong>
+            <span>
+              Torneios ao vivo ou finalizados não devem ter a área oficial
+              alterada para preservar a integridade das capturas.
+            </span>
+          </div>
+        ) : null}
+
         <div style={styles.stepBanner}>
           <div style={styles.stepBannerLeft}>
             <strong style={styles.stepBannerTitle}>Fluxo de criação</strong>
@@ -423,10 +641,10 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
           <button
             type="button"
             onClick={handleSaveAndGoToReview}
-            disabled={saving}
+            disabled={saving || isOperationallyLocked}
             style={{
               ...styles.primaryButton,
-              ...(saving ? styles.disabledButton : {}),
+              ...(saving || isOperationallyLocked ? styles.disabledButton : {}),
             }}
           >
             {saving ? "Salvando..." : "Salvar e ir para etapa 3"}
@@ -437,30 +655,33 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
           <section style={styles.card}>
             <div style={styles.sectionHeaderCompact}>
               <h3 style={styles.sectionTitle}>Configuração</h3>
+              <p style={styles.sectionDescription}>
+                Defina se o torneio usará um raio simples ou uma área desenhada
+                no mapa. Capturas fora dessa área poderão ser recusadas
+                automaticamente no futuro.
+              </p>
             </div>
 
             <label style={styles.toggleRow}>
               <input
                 type="checkbox"
                 checked={boundaryEnabled}
+                disabled={isOperationallyLocked}
                 onChange={(e) => {
                   setBoundaryEnabled(e.target.checked);
-                  setMessage(null);
-                  setError(null);
+                  clearFeedback();
                 }}
               />
-              <span style={styles.toggleLabel}>
-                Ativar perímetro do torneio
-              </span>
+              <span style={styles.toggleLabel}>Ativar perímetro do torneio</span>
             </label>
 
             <div style={styles.modeSwitchWrap}>
               <button
                 type="button"
+                disabled={isOperationallyLocked}
                 onClick={() => {
                   setBoundaryType("circle");
-                  setMessage(null);
-                  setError(null);
+                  clearFeedback();
                 }}
                 style={
                   boundaryType === "circle"
@@ -473,10 +694,10 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
 
               <button
                 type="button"
+                disabled={isOperationallyLocked}
                 onClick={() => {
                   setBoundaryType("polygon");
-                  setMessage(null);
-                  setError(null);
+                  clearFeedback();
                 }}
                 style={
                   boundaryType === "polygon"
@@ -488,6 +709,25 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
               </button>
             </div>
 
+            <div style={styles.quickActions}>
+              <button
+                type="button"
+                onClick={useCurrentLocation}
+                disabled={isOperationallyLocked}
+                style={styles.secondaryBlueButton}
+              >
+                Usar minha localização
+              </button>
+
+              <button
+                type="button"
+                onClick={centerByTournamentLocation}
+                style={styles.secondaryButton}
+              >
+                Buscar local no Google Maps
+              </button>
+            </div>
+
             {boundaryType === "circle" ? (
               <>
                 <div style={styles.formGrid}>
@@ -496,11 +736,11 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
                       type="number"
                       step="0.000001"
                       value={latitude}
+                      disabled={isOperationallyLocked}
                       onChange={(e) => {
                         const value = Number(e.target.value);
                         if (Number.isFinite(value)) setLatitude(value);
-                        setMessage(null);
-                        setError(null);
+                        clearFeedback();
                       }}
                       style={styles.input}
                     />
@@ -511,11 +751,11 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
                       type="number"
                       step="0.000001"
                       value={longitude}
+                      disabled={isOperationallyLocked}
                       onChange={(e) => {
                         const value = Number(e.target.value);
                         if (Number.isFinite(value)) setLongitude(value);
-                        setMessage(null);
-                        setError(null);
+                        clearFeedback();
                       }}
                       style={styles.input}
                     />
@@ -528,15 +768,36 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
                     min={100}
                     step={100}
                     value={radiusM}
+                    disabled={isOperationallyLocked}
                     onChange={(e) => {
                       const value = Number(e.target.value);
                       if (Number.isFinite(value) && value > 0) setRadiusM(value);
-                      setMessage(null);
-                      setError(null);
+                      clearFeedback();
                     }}
                     style={styles.input}
                   />
                 </Field>
+
+                <div style={styles.presetGrid}>
+                  {RADIUS_PRESETS.map((preset) => (
+                    <button
+                      key={preset.value}
+                      type="button"
+                      disabled={isOperationallyLocked}
+                      onClick={() => {
+                        setRadiusM(preset.value);
+                        clearFeedback();
+                      }}
+                      style={
+                        radiusM === preset.value
+                          ? styles.presetButtonActive
+                          : styles.presetButton
+                      }
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
 
                 <div style={styles.sliderWrap}>
                   <input
@@ -545,10 +806,10 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
                     max={30000}
                     step={100}
                     value={radiusM}
+                    disabled={isOperationallyLocked}
                     onChange={(e) => {
                       setRadiusM(Number(e.target.value));
-                      setMessage(null);
-                      setError(null);
+                      clearFeedback();
                     }}
                     style={{ width: "100%" }}
                   />
@@ -588,14 +849,14 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
 
                 <p style={styles.helperText}>
                   Clique no mapa para adicionar pontos e arraste os vértices para
-                  ajustar.
+                  ajustar. Use pelo menos 3 pontos.
                 </p>
 
                 <div style={styles.actionsRowCompact}>
                   <button
                     type="button"
                     onClick={removeLastPolygonPoint}
-                    disabled={polygonPoints.length === 0}
+                    disabled={polygonPoints.length === 0 || isOperationallyLocked}
                     style={styles.secondaryButton}
                   >
                     Remover último
@@ -604,7 +865,7 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
                   <button
                     type="button"
                     onClick={clearPolygon}
-                    disabled={polygonPoints.length === 0}
+                    disabled={polygonPoints.length === 0 || isOperationallyLocked}
                     style={styles.secondaryButton}
                   >
                     Limpar área
@@ -613,14 +874,39 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
               </>
             )}
 
+            <div style={styles.metricsCard}>
+              <div style={styles.metricRow}>
+                <span style={styles.metricRowLabel}>Área aproximada</span>
+                <strong style={styles.metricRowValue}>{selectedAreaLabel}</strong>
+              </div>
+
+              <div style={styles.metricRow}>
+                <span style={styles.metricRowLabel}>Validação</span>
+                <strong style={styles.metricRowValue}>
+                  {boundaryEnabled
+                    ? "Capturas devem estar dentro da área"
+                    : "Validação geográfica desativada"}
+                </strong>
+              </div>
+            </div>
+
+            <div style={styles.warningBox}>
+              <strong style={styles.warningTitle}>Atenção</strong>
+              <p style={styles.warningText}>
+                Configure essa área com cuidado. Ela será a referência oficial
+                para validar capturas do torneio. Em torneios publicados, evite
+                alterar o perímetro sem avisar os participantes.
+              </p>
+            </div>
+
             <div style={styles.footerActions}>
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || isOperationallyLocked}
                 style={{
                   ...styles.primaryButton,
-                  ...(saving ? styles.disabledButton : {}),
+                  ...(saving || isOperationallyLocked ? styles.disabledButton : {}),
                 }}
               >
                 {saving ? "Salvando..." : "Salvar perímetro"}
@@ -629,10 +915,10 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
               <button
                 type="button"
                 onClick={handleSaveAndGoToReview}
-                disabled={saving}
+                disabled={saving || isOperationallyLocked}
                 style={{
                   ...styles.secondaryBlueButton,
-                  ...(saving ? styles.disabledButton : {}),
+                  ...(saving || isOperationallyLocked ? styles.disabledButton : {}),
                 }}
               >
                 {saving ? "Salvando..." : "Ir para etapa 3"}
@@ -640,6 +926,7 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
 
               <button
                 type="button"
+                disabled={isOperationallyLocked}
                 onClick={() => {
                   if (boundaryType === "circle") {
                     resetCircle();
@@ -659,7 +946,12 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
 
           <section style={styles.mapCard}>
             <div style={styles.mapHeader}>
-              <h3 style={styles.sectionTitle}>Editor visual</h3>
+              <div>
+                <h3 style={styles.sectionTitle}>Editor visual</h3>
+                <p style={styles.sectionDescription}>
+                  Ajuste a área oficial diretamente no mapa.
+                </p>
+              </div>
 
               <a
                 href={previewMapUrl}
@@ -680,15 +972,17 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
                   boundaryType={boundaryType}
                   polygonPoints={polygonPoints}
                   onChangeCenter={(nextCenter: LatLng) => {
+                    if (isOperationallyLocked) return;
+
                     setLatitude(nextCenter.latitude);
                     setLongitude(nextCenter.longitude);
-                    setMessage(null);
-                    setError(null);
+                    clearFeedback();
                   }}
                   onChangePolygonPoints={(nextPoints: LatLng[]) => {
+                    if (isOperationallyLocked) return;
+
                     setPolygonPoints(nextPoints);
-                    setMessage(null);
-                    setError(null);
+                    clearFeedback();
 
                     if (nextPoints.length > 0) {
                       const center = calculatePolygonCenter(nextPoints);
@@ -700,6 +994,13 @@ export default function TournamentMapEditor({ tournamentId }: Props) {
               ) : (
                 <div style={styles.mapLoading}>Carregando editor visual...</div>
               )}
+
+              {isOperationallyLocked ? (
+                <div style={styles.mapOverlay}>
+                  <strong>Mapa bloqueado</strong>
+                  <span>Este torneio não permite edição do perímetro.</span>
+                </div>
+              ) : null}
             </div>
           </section>
         </div>
@@ -747,6 +1048,67 @@ function calculatePolygonCenter(points: LatLng[]): LatLng {
     latitude: sum.latitude / points.length,
     longitude: sum.longitude / points.length,
   };
+}
+
+function calculateCircleAreaKm2(radiusM: number) {
+  if (!Number.isFinite(radiusM) || radiusM <= 0) return 0;
+
+  const radiusKm = radiusM / 1000;
+  return Math.PI * radiusKm * radiusKm;
+}
+
+function calculatePolygonAreaKm2(points: LatLng[]) {
+  if (!Array.isArray(points) || points.length < 3) return 0;
+
+  const earthRadiusM = 6378137;
+  const avgLat =
+    points.reduce((sum, point) => sum + point.latitude, 0) / points.length;
+  const avgLatRad = degreesToRadians(avgLat);
+
+  const projected = points.map((point) => ({
+    x: earthRadiusM * degreesToRadians(point.longitude) * Math.cos(avgLatRad),
+    y: earthRadiusM * degreesToRadians(point.latitude),
+  }));
+
+  let areaM2 = 0;
+
+  for (let index = 0; index < projected.length; index += 1) {
+    const current = projected[index];
+    const next = projected[(index + 1) % projected.length];
+
+    areaM2 += current.x * next.y - next.x * current.y;
+  }
+
+  return Math.abs(areaM2 / 2) / 1_000_000;
+}
+
+function degreesToRadians(value: number) {
+  return (value * Math.PI) / 180;
+}
+
+function roundNumber(value: number, decimals: number) {
+  if (!Number.isFinite(value)) return 0;
+
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
+function formatNumber(value: number, decimals: number) {
+  if (!Number.isFinite(value)) return "0";
+
+  return new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(value);
+}
+
+function getStatusLabel(status: TournamentStatus) {
+  const normalized = String(status || "").toLowerCase();
+
+  if (normalized === "live") return "Ao vivo";
+  if (normalized === "finished") return "Finalizado";
+  if (normalized === "scheduled") return "Publicado";
+  return "Rascunho";
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -838,6 +1200,18 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     fontWeight: 800,
   },
+  lockedBanner: {
+    background: "#FEF3C7",
+    border: "1px solid #FCD34D",
+    borderRadius: 18,
+    padding: 16,
+    color: "#92400E",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    fontSize: 14,
+    lineHeight: 1.5,
+  },
   stepBanner: {
     background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.08)",
@@ -874,7 +1248,7 @@ const styles: Record<string, CSSProperties> = {
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "minmax(340px, 400px) minmax(0, 1fr)",
+    gridTemplateColumns: "minmax(340px, 420px) minmax(0, 1fr)",
     gap: 16,
     alignItems: "start",
   },
@@ -901,7 +1275,7 @@ const styles: Record<string, CSSProperties> = {
   mapHeader: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 12,
     flexWrap: "wrap",
   },
@@ -910,6 +1284,13 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 18,
     fontWeight: 900,
     color: "#0F172A",
+  },
+  sectionDescription: {
+    margin: "8px 0 0 0",
+    fontSize: 13,
+    lineHeight: 1.55,
+    color: "#64748B",
+    fontWeight: 600,
   },
   toggleRow: {
     display: "flex",
@@ -926,7 +1307,7 @@ const styles: Record<string, CSSProperties> = {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     gap: 8,
-    marginBottom: 18,
+    marginBottom: 14,
     padding: 6,
     borderRadius: 14,
     background: "#F1F5F9",
@@ -951,6 +1332,12 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 900,
     cursor: "pointer",
     boxShadow: "0 6px 18px rgba(15,23,42,0.08)",
+  },
+  quickActions: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+    marginBottom: 18,
   },
   formGrid: {
     display: "grid",
@@ -978,6 +1365,32 @@ const styles: Record<string, CSSProperties> = {
     background: "#FFFFFF",
     outline: "none",
   },
+  presetGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, 1fr)",
+    gap: 8,
+    marginBottom: 12,
+  },
+  presetButton: {
+    border: "1px solid rgba(15,23,42,0.08)",
+    borderRadius: 12,
+    padding: "10px 12px",
+    background: "#FFFFFF",
+    color: "#334155",
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+  presetButtonActive: {
+    border: "1px solid #0B3C5D",
+    borderRadius: 12,
+    padding: "10px 12px",
+    background: "#EAF2F7",
+    color: "#0B3C5D",
+    fontSize: 13,
+    fontWeight: 900,
+    cursor: "pointer",
+  },
   sliderWrap: {
     marginTop: 4,
   },
@@ -993,6 +1406,16 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     gap: 10,
     marginTop: 4,
+  },
+  metricsCard: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    marginTop: 18,
+    padding: 14,
+    borderRadius: 16,
+    background: "#F8FAFC",
+    border: "1px solid rgba(15,23,42,0.08)",
   },
   metricRow: {
     display: "flex",
@@ -1020,6 +1443,27 @@ const styles: Record<string, CSSProperties> = {
     gap: 10,
     flexWrap: "wrap",
     marginTop: 14,
+  },
+  warningBox: {
+    marginTop: 16,
+    padding: 14,
+    borderRadius: 16,
+    background: "#FFF7ED",
+    border: "1px solid #FED7AA",
+  },
+  warningTitle: {
+    display: "block",
+    color: "#9A3412",
+    fontSize: 14,
+    fontWeight: 900,
+    marginBottom: 6,
+  },
+  warningText: {
+    margin: 0,
+    color: "#9A3412",
+    fontSize: 13,
+    lineHeight: 1.55,
+    fontWeight: 600,
   },
   footerActions: {
     display: "flex",
@@ -1074,8 +1518,8 @@ const styles: Record<string, CSSProperties> = {
   },
   mapWrap: {
     width: "100%",
-    height: 520,
-    minHeight: 520,
+    height: 560,
+    minHeight: 560,
     overflow: "hidden",
     borderRadius: 18,
     border: "1px solid rgba(15,23,42,0.08)",
@@ -1085,12 +1529,26 @@ const styles: Record<string, CSSProperties> = {
   mapLoading: {
     width: "100%",
     height: "100%",
-    minHeight: 520,
+    minHeight: 560,
     display: "grid",
     placeItems: "center",
     color: "#64748B",
     fontWeight: 700,
     background: "#F8FAFC",
+  },
+  mapOverlay: {
+    position: "absolute",
+    inset: 0,
+    background: "rgba(15,23,42,0.55)",
+    color: "#FFFFFF",
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    textAlign: "center",
+    padding: 24,
+    zIndex: 999,
   },
   linkButton: {
     display: "inline-flex",
