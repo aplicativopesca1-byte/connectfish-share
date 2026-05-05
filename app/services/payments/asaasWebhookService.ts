@@ -14,7 +14,7 @@ import {
   applyWalletPaymentReceived,
   applyWalletRefund,
   applyWalletReleaseToAvailable,
-}from "../../../app/services/server/organizerWalletSyncServerService";
+} from "../../../app/services/server/organizerWalletSyncServerService";
 import { adminDb } from "../../../src/lib/firebaseAdmin";
 
 export type AsaasWebhookEventType =
@@ -292,6 +292,38 @@ async function logIgnoredWebhook(params: {
   });
 }
 
+async function updateTournamentFinancialSummary(params: {
+  tournamentId?: string | null;
+  collectedAmount?: number;
+  pendingAmountDelta?: number;
+  releasedAmountDelta?: number;
+}) {
+  const tournamentId = safeTrim(params.tournamentId);
+
+  if (!tournamentId) return;
+
+  const db = adminDb();
+  const ref = db.collection("tournaments").doc(tournamentId);
+
+  await ref.set(
+    {
+      financialSummary: {
+        totalCollected: FieldValue.increment(
+          normalizeMoney(params.collectedAmount)
+        ),
+        totalPending: FieldValue.increment(
+          normalizeMoney(params.pendingAmountDelta)
+        ),
+        totalReleased: FieldValue.increment(
+          normalizeMoney(params.releasedAmountDelta)
+        ),
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
 async function syncTeamMemberPaymentStatus(params: {
   paymentId: string;
   providerPaymentId?: string | null;
@@ -360,7 +392,9 @@ async function recalculateTeamStatusByPaymentId(paymentId: string) {
     .where("teamId", "==", teamId)
     .get();
 
-  const members = membersSnap.docs.map((item) => item.data() as Record<string, unknown>);
+  const members = membersSnap.docs.map(
+    (item) => item.data() as Record<string, unknown>
+  );
 
   const totalSlots = members.length;
 
@@ -473,6 +507,15 @@ async function processReceivedOrConfirmedEvent(params: {
   });
 
   await recalculateTeamStatusByPaymentId(internalPayment.id);
+
+  await updateTournamentFinancialSummary({
+    tournamentId: internalPayment.tournamentId,
+    collectedAmount: internalPayment.organizerNetAmount,
+    pendingAmountDelta: 0,
+    releasedAmountDelta: shouldReleaseImmediately(internalPayment)
+      ? internalPayment.organizerNetAmount
+      : 0,
+  });
 }
 
 async function processRefundEvent(params: {
@@ -574,7 +617,8 @@ async function processSimpleStatusUpdate(params: {
     externalReference,
   });
 
-  const mappedMemberStatus = mapInternalPaymentToTeamMemberPaymentStatus(mappedStatus);
+  const mappedMemberStatus =
+    mapInternalPaymentToTeamMemberPaymentStatus(mappedStatus);
 
   let registrationStatus: TeamMemberRegistrationStatus | undefined;
 
