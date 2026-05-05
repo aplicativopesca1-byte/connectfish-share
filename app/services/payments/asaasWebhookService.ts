@@ -14,7 +14,7 @@ import {
   applyWalletPaymentReceived,
   applyWalletRefund,
   applyWalletReleaseToAvailable,
-} from "../../../app/services/organizerWalletSyncService";
+}from "../../../app/services/server/organizerWalletSyncServerService";
 import { adminDb } from "../../../src/lib/firebaseAdmin";
 
 export type AsaasWebhookEventType =
