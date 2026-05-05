@@ -26,6 +26,36 @@ type Props = {
 
 type TournamentStatus = "draft" | "scheduled" | "live" | "finished" | string;
 
+type RegistrationFieldRole = "captain" | "member" | "individual";
+
+type RegistrationFieldType =
+  | "text"
+  | "email"
+  | "tel"
+  | "date"
+  | "select"
+  | "textarea"
+  | "number";
+
+type RegistrationFieldConfig = {
+  key: string;
+  label: string;
+  type: RegistrationFieldType;
+  required: boolean;
+  enabled: boolean;
+  appliesTo: RegistrationFieldRole[];
+  options?: string[] | null;
+  helpText?: string | null;
+};
+
+type RegistrationFormConfig = {
+  fields: RegistrationFieldConfig[];
+};
+
+type RegistrationMode = "individual" | "team" | "both";
+
+type RegistrationAnswers = Record<string, string>;
+
 type TournamentPublic = {
   id: string;
   title: string;
@@ -44,6 +74,11 @@ type TournamentPublic = {
   boundaryEnabled: boolean;
   entryFee: number | null;
   currency: string;
+  registrationMode: RegistrationMode;
+  teamSizeMin: number;
+  teamSizeMax: number;
+  requiresBoatLicense: boolean;
+  registrationFormConfig: RegistrationFormConfig | null;
 };
 
 type UserSearchResult = {
@@ -66,18 +101,10 @@ type CreateTeamResponse = {
   message?: string;
 };
 
-type CreatePreferenceResponse = {
-  success: boolean;
-  checkoutUrl?: string;
-  preferenceId?: string;
-  externalReference?: string;
-  message?: string;
-  role?: string;
-  reused?: boolean;
-};
-
 const LOGIN_PATH = "/login";
 const SIGNUP_PATH = "/signup";
+
+const FALLBACK_MAX_ADDITIONAL_MEMBERS = 3;
 
 function compactSpaces(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -174,6 +201,84 @@ function normalizeRules(value: unknown) {
   return value.map((item) => compactSpaces(item)).filter(Boolean);
 }
 
+function normalizeRegistrationMode(value: unknown): RegistrationMode {
+  const normalized = compactSpaces(value).toLowerCase();
+
+  if (normalized === "individual") return "individual";
+  if (normalized === "both") return "both";
+  return "team";
+}
+
+function normalizeRegistrationFieldType(value: unknown): RegistrationFieldType {
+  const normalized = compactSpaces(value).toLowerCase();
+
+  if (
+    normalized === "email" ||
+    normalized === "tel" ||
+    normalized === "date" ||
+    normalized === "select" ||
+    normalized === "textarea" ||
+    normalized === "number"
+  ) {
+    return normalized;
+  }
+
+  return "text";
+}
+
+function normalizeRegistrationFieldRoles(value: unknown): RegistrationFieldRole[] {
+  if (!Array.isArray(value)) return ["captain"];
+
+  const roles = value
+    .map((item) => compactSpaces(item).toLowerCase())
+    .filter(
+      (item): item is RegistrationFieldRole =>
+        item === "captain" || item === "member" || item === "individual"
+    );
+
+  return roles.length ? roles : ["captain"];
+}
+
+function normalizeRegistrationFields(value: unknown): RegistrationFieldConfig[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((raw) => {
+      if (!raw || typeof raw !== "object") return null;
+
+      const item = raw as Record<string, unknown>;
+      const key = compactSpaces(item.key);
+      const label = compactSpaces(item.label);
+
+      if (!key || !label) return null;
+
+      return {
+        key,
+        label,
+        type: normalizeRegistrationFieldType(item.type),
+        required: Boolean(item.required),
+        enabled: item.enabled !== false,
+        appliesTo: normalizeRegistrationFieldRoles(item.appliesTo),
+        options: Array.isArray(item.options)
+          ? item.options.map((option) => compactSpaces(option)).filter(Boolean)
+          : null,
+        helpText: compactSpaces(item.helpText) || null,
+      };
+    })
+    .filter(Boolean) as RegistrationFieldConfig[];
+}
+
+function normalizeRegistrationFormConfig(value: unknown): RegistrationFormConfig | null {
+  if (!value || typeof value !== "object") return null;
+
+  const raw = value as Record<string, unknown>;
+  const fields = normalizeRegistrationFields(raw.fields);
+
+  if (!fields.length) return null;
+
+  return { fields };
+}
+
 function canAcceptRegistration(status: TournamentStatus) {
   const normalized = String(status || "").toLowerCase();
   return normalized === "scheduled" || normalized === "live";
@@ -239,7 +344,19 @@ function mapTournamentDoc(
     boundaryEnabled: raw.boundaryEnabled !== false,
     entryFee,
     currency,
+    registrationMode: normalizeRegistrationMode(raw.registrationMode),
+    teamSizeMin: Math.max(1, Number(raw.teamSizeMin ?? 1) || 1),
+    teamSizeMax: Math.max(1, Number(raw.teamSizeMax ?? 4) || 4),
+    requiresBoatLicense: Boolean(raw.requiresBoatLicense),
+    registrationFormConfig: normalizeRegistrationFormConfig(
+      raw.registrationFormConfig
+    ),
   };
+}
+
+function getFieldInputType(type: RegistrationFieldType) {
+  if (type === "textarea" || type === "select") return "text";
+  return type;
 }
 
 export default function TournamentPublicClient({ slug }: Props) {
@@ -260,12 +377,12 @@ export default function TournamentPublicClient({ slug }: Props) {
   const [memberQuery, setMemberQuery] = useState("");
   const [memberResults, setMemberResults] = useState<UserSearchResult[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<UserSearchResult[]>([]);
+  const [registrationAnswers, setRegistrationAnswers] =
+    useState<RegistrationAnswers>({});
 
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const maxAdditionalMembers = 3;
 
   const registrationBlockedMessage = useMemo(() => {
     if (!tournament) return null;
@@ -277,7 +394,38 @@ export default function TournamentPublicClient({ slug }: Props) {
     return tournament.rules.slice(0, 4);
   }, [tournament]);
 
+  const activeRegistrationFields = useMemo(() => {
+    if (!tournament?.registrationFormConfig?.fields?.length) return [];
+
+    const role: RegistrationFieldRole =
+      tournament.registrationMode === "individual" ? "individual" : "captain";
+
+    return tournament.registrationFormConfig.fields.filter(
+      (field) => field.enabled && field.appliesTo.includes(role)
+    );
+  }, [tournament]);
+
+  const requiredRegistrationFields = useMemo(
+    () => activeRegistrationFields.filter((field) => field.required),
+    [activeRegistrationFields]
+  );
+
+  const maxAdditionalMembers = useMemo(() => {
+    if (!tournament) return FALLBACK_MAX_ADDITIONAL_MEMBERS;
+    if (tournament.registrationMode === "individual") return 0;
+
+    return Math.max(
+      0,
+      Math.min(
+        FALLBACK_MAX_ADDITIONAL_MEMBERS,
+        Number(tournament.teamSizeMax || 1) - 1
+      )
+    );
+  }, [tournament]);
+
   const isLoggedIn = !!uid;
+  const isIndividualRegistration = tournament?.registrationMode === "individual";
+
   const isFormDisabled =
     saving ||
     bridgeProcessing ||
@@ -297,7 +445,7 @@ export default function TournamentPublicClient({ slug }: Props) {
   }, [slug, tournamentIdFromUrl]);
 
   useEffect(() => {
-    if (!isLoggedIn || bridgeProcessing) {
+    if (!isLoggedIn || bridgeProcessing || isIndividualRegistration) {
       setMemberResults([]);
       return;
     }
@@ -313,7 +461,14 @@ export default function TournamentPublicClient({ slug }: Props) {
     }, 250);
 
     return () => clearTimeout(timeout);
-  }, [memberQuery, isLoggedIn, selectedMembers, uid, bridgeProcessing]);
+  }, [
+    memberQuery,
+    isLoggedIn,
+    selectedMembers,
+    uid,
+    bridgeProcessing,
+    isIndividualRegistration,
+  ]);
 
   function clearFeedback() {
     if (error) setError(null);
@@ -335,10 +490,20 @@ export default function TournamentPublicClient({ slug }: Props) {
     router.push(`${SIGNUP_PATH}?next=${next}`);
   }
 
+  function updateRegistrationAnswer(fieldKey: string, value: string) {
+    clearFeedback();
+
+    setRegistrationAnswers((current) => ({
+      ...current,
+      [fieldKey]: value,
+    }));
+  }
+
   async function loadTournament() {
     setLoading(true);
     setError(null);
     setTournament(null);
+    setRegistrationAnswers({});
 
     try {
       const slugValue = compactSpaces(slug);
@@ -349,8 +514,6 @@ export default function TournamentPublicClient({ slug }: Props) {
         return;
       }
 
-      // ✅ Fonte principal da verdade: ID do documento no Firestore.
-      // O slug é apenas visual/SEO e não deve bloquear a inscrição.
       if (idValue) {
         const snap = await getDoc(doc(db, "tournaments", idValue));
 
@@ -370,7 +533,6 @@ export default function TournamentPublicClient({ slug }: Props) {
         return;
       }
 
-      // ✅ Fallback por slug apenas quando a URL não trouxe ?id=...
       if (!slugValue) {
         setError("Torneio não encontrado.");
         return;
@@ -489,8 +651,18 @@ export default function TournamentPublicClient({ slug }: Props) {
       );
     }
 
-    if (!compactSpaces(teamName) || compactSpaces(teamName).length < 3) {
-      return "Informe um nome de equipe válido com pelo menos 3 caracteres.";
+    if (!isIndividualRegistration) {
+      if (!compactSpaces(teamName) || compactSpaces(teamName).length < 3) {
+        return "Informe um nome de equipe válido com pelo menos 3 caracteres.";
+      }
+    }
+
+    for (const field of requiredRegistrationFields) {
+      const answer = compactSpaces(registrationAnswers[field.key]);
+
+      if (!answer) {
+        return `Preencha o campo obrigatório: ${field.label}.`;
+      }
     }
 
     if (!acceptedTerms) {
@@ -520,7 +692,15 @@ export default function TournamentPublicClient({ slug }: Props) {
         return;
       }
 
-      setMessage("Criando sua equipe...");
+      setMessage(
+        isIndividualRegistration
+          ? "Criando sua inscrição..."
+          : "Criando sua equipe..."
+      );
+
+      const normalizedTeamName = isIndividualRegistration
+        ? `Inscrição ${captainDisplayName}`
+        : compactSpaces(teamName);
 
       const createTeamResponse = await fetch("/api/tournaments/team/create", {
         method: "POST",
@@ -530,104 +710,103 @@ export default function TournamentPublicClient({ slug }: Props) {
         },
         body: JSON.stringify({
           tournamentId: tournament.id,
-          teamName: compactSpaces(teamName),
-          members: selectedMembers.map((member) => ({
-            userId: member.userId,
-            name: member.username || member.email || "",
-            email: member.email || null,
-          })),
+          teamName: normalizedTeamName,
+          members: isIndividualRegistration
+            ? []
+            : selectedMembers.map((member) => ({
+                userId: member.userId,
+                name: member.username || member.email || "",
+                email: member.email || null,
+              })),
+          registrationMode: tournament.registrationMode,
+          registrationAnswers,
+          registrationFieldsSnapshot: activeRegistrationFields,
           source: "public_tournament_web",
         }),
       });
 
       const createTeamData = (await createTeamResponse.json()) as CreateTeamResponse;
 
-let teamId = createTeamData.teamId;
+      const teamId = createTeamData.teamId;
 
-if (!createTeamResponse.ok || !createTeamData.success) {
-  if (createTeamResponse.status === 409) {
-    throw new Error(
-      createTeamData.message ||
-        "Você já possui uma equipe neste torneio. Para testar novamente, crie um torneio novo ou use outra conta."
-    );
-  }
+      if (!createTeamResponse.ok || !createTeamData.success) {
+        if (createTeamResponse.status === 409) {
+          throw new Error(
+            createTeamData.message ||
+              "Você já possui uma equipe neste torneio. Para testar novamente, crie um torneio novo ou use outra conta."
+          );
+        }
 
-  throw new Error(createTeamData.message || "Não foi possível criar a equipe.");
-}
+        throw new Error(createTeamData.message || "Não foi possível criar a equipe.");
+      }
 
-if (!teamId) {
-  throw new Error("teamId inválido.");
-}
+      if (!teamId) {
+        throw new Error("teamId inválido.");
+      }
 
-setMessage("Equipe criada. Preparando o pagamento...");
+      setMessage("Inscrição criada. Preparando o pagamento...");
 
-const finalTeamMemberId = createTeamData.captainMemberId || `${teamId}_${uid}`;
+      const finalTeamMemberId = createTeamData.captainMemberId || `${teamId}_${uid}`;
 
-if (!finalTeamMemberId) {
-  throw new Error("Não foi possível identificar o membro do capitão.");
-}
+      if (!finalTeamMemberId) {
+        throw new Error("Não foi possível identificar o membro do capitão.");
+      }
 
-const paymentResponse = await fetch("/api/payments/asaas/create-checkout", {
-  method: "POST",
-  credentials: "include",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    tournamentId: tournament.id,
-    teamId,
-    teamMemberId: finalTeamMemberId,
-    source: "public_tournament_web",
-    billingType: "PIX",
-  }),
-});
+      const paymentResponse = await fetch("/api/payments/asaas/create-checkout", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          tournamentId: tournament.id,
+          teamId,
+          teamMemberId: finalTeamMemberId,
+          source: "public_tournament_web",
+          billingType: "PIX",
+        }),
+      });
 
-const paymentData = await paymentResponse.json();
+      const paymentData = await paymentResponse.json();
 
-if (!paymentResponse.ok || !paymentData.success) {
-  if (paymentData.code === "MISSING_CPF") {
-    setError(
-      "Cadastro incompleto. Para gerar o pagamento da inscrição, complete seu CPF/CNPJ na sua conta."
-    );
-    return;
-  }
+      if (!paymentResponse.ok || !paymentData.success) {
+        if (paymentData.code === "MISSING_CPF") {
+          setError(
+            "Cadastro incompleto. Para gerar o pagamento da inscrição, complete seu CPF/CNPJ na sua conta."
+          );
+          return;
+        }
 
-  throw new Error(
-    paymentData.message || "Não foi possível iniciar o pagamento."
-  );
-}
+        throw new Error(
+          paymentData.message || "Não foi possível iniciar o pagamento."
+        );
+      }
 
-const checkoutUrl =
-  paymentData.checkoutUrl ||
-  paymentData.charge?.invoiceUrl ||
-  paymentData.asaasInvoiceUrl;
+      const checkoutUrl =
+        paymentData.checkoutUrl ||
+        paymentData.charge?.invoiceUrl ||
+        paymentData.asaasInvoiceUrl;
 
-const pixQrCode = paymentData.charge?.pixQrCode || null;
-const pixCopyPaste = paymentData.charge?.pixCopyPaste || null;
+      const pixQrCode = paymentData.charge?.pixQrCode || null;
+      const pixCopyPaste = paymentData.charge?.pixCopyPaste || null;
 
-// 🔥 PRIORIDADE: PIX
-if (pixQrCode) {
-  setMessage("Pagamento PIX gerado. Use o QR Code para pagar.");
+      if (pixQrCode) {
+        setMessage("Pagamento PIX gerado. Use o QR Code para pagar.");
 
-  console.log("PIX QR:", pixQrCode);
-  console.log("PIX Copia e Cola:", pixCopyPaste);
+        console.log("PIX QR:", pixQrCode);
+        console.log("PIX Copia e Cola:", pixCopyPaste);
 
-  // 👉 NÃO redireciona no PIX
-  return;
-}
+        return;
+      }
 
-// 🔥 FALLBACK: URL
-if (checkoutUrl && /^https?:\/\//i.test(checkoutUrl)) {
-  setMessage("Redirecionando para o pagamento do capitão...");
-  window.location.href = checkoutUrl;
-  return;
-}
+      if (checkoutUrl && /^https?:\/\//i.test(checkoutUrl)) {
+        setMessage("Redirecionando para o pagamento...");
+        window.location.href = checkoutUrl;
+        return;
+      }
 
-console.log("Checkout URL inválida:", checkoutUrl);
-throw new Error("O checkout foi criado, mas o link de pagamento veio inválido.");
-
-// 🚨 ERRO FINAL
-throw new Error("Não foi possível iniciar o pagamento.");
+      console.log("Checkout URL inválida:", checkoutUrl);
+      throw new Error("O checkout foi criado, mas o link de pagamento veio inválido.");
     } catch (err) {
       console.error("Erro ao criar equipe e iniciar pagamento:", err);
       setMessage(null);
@@ -780,12 +959,16 @@ throw new Error("Não foi possível iniciar o pagamento.");
             <section style={styles.checkoutCard}>
               <div style={styles.checkoutTop}>
                 <div>
-                  <span style={styles.checkoutEyebrow}>Equipe e pagamento</span>
-                  <h2 style={styles.checkoutTitle}>Criar minha equipe</h2>
+                  <span style={styles.checkoutEyebrow}>Inscrição e pagamento</span>
+                  <h2 style={styles.checkoutTitle}>
+                    {isIndividualRegistration
+                      ? "Fazer minha inscrição"
+                      : "Criar minha equipe"}
+                  </h2>
                   <p style={styles.sectionText}>
                     Para participar deste torneio, é obrigatório ter uma conta
-                    ConnectFish. O usuário logado será automaticamente o capitão
-                    da equipe.
+                    ConnectFish. O usuário logado será automaticamente o
+                    participante responsável pela inscrição.
                   </p>
                 </div>
 
@@ -843,7 +1026,9 @@ throw new Error("Não foi possível iniciar o pagamento.");
               ) : null}
 
               <div style={styles.checkoutSection}>
-                <p style={styles.checkoutSectionTitle}>Capitão da equipe</p>
+                <p style={styles.checkoutSectionTitle}>
+                  {isIndividualRegistration ? "Participante" : "Capitão da equipe"}
+                </p>
 
                 <div style={styles.captainCard}>
                   <div style={styles.captainAvatar}>
@@ -856,138 +1041,187 @@ throw new Error("Não foi possível iniciar o pagamento.");
                       Usuário logado no ConnectFish
                     </span>
                     <span style={styles.captainMeta}>
-                      O criador da equipe será o capitão automaticamente
+                      {isIndividualRegistration
+                        ? "Este usuário será o participante inscrito"
+                        : "O criador da equipe será o capitão automaticamente"}
                     </span>
                   </div>
                 </div>
               </div>
 
-              <div style={styles.checkoutSection}>
-                <p style={styles.checkoutSectionTitle}>Dados da equipe</p>
+              {!isIndividualRegistration ? (
+                <div style={styles.checkoutSection}>
+                  <p style={styles.checkoutSectionTitle}>Dados da equipe</p>
 
-                <div style={styles.formGrid}>
-                  <Field label="Nome da equipe *">
-                    <input
-                      type="text"
-                      value={teamName}
-                      onChange={(e) => {
-                        clearFeedback();
-                        setTeamName(e.target.value);
-                      }}
-                      style={styles.input}
-                      placeholder="Ex.: Tucuna Hunters"
-                      disabled={isFormDisabled}
-                      maxLength={60}
-                    />
-                  </Field>
-                </div>
-              </div>
-
-              <div style={styles.checkoutSection}>
-                <p style={styles.checkoutSectionTitle}>Convidar membros</p>
-
-                <Field label="Buscar por @username">
-                  <input
-                    type="text"
-                    value={memberQuery}
-                    onChange={(e) => {
-                      clearFeedback();
-                      setMemberQuery(e.target.value.replace(/^@+/, ""));
-                    }}
-                    style={styles.input}
-                    placeholder="Ex.: pescador_sp"
-                    disabled={
-                      isFormDisabled || selectedMembers.length >= maxAdditionalMembers
-                    }
-                    maxLength={40}
-                  />
-                </Field>
-
-                {searchingMembers ? (
-                  <p style={styles.helperText}>Buscando usuários...</p>
-                ) : null}
-
-                {memberResults.length > 0 ? (
-                  <div style={styles.searchResults}>
-                    {memberResults.map((user) => (
-                      <button
-                        key={user.userId}
-                        type="button"
-                        onClick={() => addMember(user)}
-                        style={styles.searchResultButton}
+                  <div style={styles.formGrid}>
+                    <Field label="Nome da equipe *">
+                      <input
+                        type="text"
+                        value={teamName}
+                        onChange={(e) => {
+                          clearFeedback();
+                          setTeamName(e.target.value);
+                        }}
+                        style={styles.input}
+                        placeholder="Ex.: Tucuna Hunters"
                         disabled={isFormDisabled}
-                      >
-                        <span style={styles.searchResultUsername}>
-                          @{user.username}
-                        </span>
-                        <span style={styles.searchResultMeta}>
-                          {user.email || "Usuário ConnectFish"}
-                        </span>
-                      </button>
-                    ))}
+                        maxLength={60}
+                      />
+                    </Field>
                   </div>
-                ) : null}
+                </div>
+              ) : null}
 
-                <div style={styles.selectedMembersBox}>
-                  <p style={styles.selectedMembersTitle}>
-                    Membros adicionados ({selectedMembers.length}/{maxAdditionalMembers})
+              {activeRegistrationFields.length > 0 ? (
+                <div style={styles.checkoutSection}>
+                  <p style={styles.checkoutSectionTitle}>
+                    Informações complementares
                   </p>
 
-                  {selectedMembers.length === 0 ? (
-                    <p style={styles.helperText}>
-                      Você pode convidar até {maxAdditionalMembers} membros para a equipe.
-                    </p>
-                  ) : (
-                    <div style={styles.selectedMembersList}>
-                      {selectedMembers.map((member) => (
-                        <div key={member.userId} style={styles.selectedMemberRow}>
-                          <div style={styles.selectedMemberInfo}>
-                            <strong style={styles.selectedMemberUsername}>
-                              @{member.username}
-                            </strong>
-                            <span style={styles.selectedMemberMeta}>
-                              Convite pendente após criação da equipe
-                            </span>
-                          </div>
+                  <p style={styles.helperText}>
+                    O organizador deste torneio solicitou os dados abaixo para
+                    confirmar a inscrição.
+                  </p>
 
-                          <button
-                            type="button"
-                            onClick={() => removeMember(member.userId)}
-                            style={styles.removeMemberButton}
-                            disabled={isFormDisabled}
-                          >
-                            Remover
-                          </button>
-                        </div>
+                  <div style={styles.formGrid}>
+                    {activeRegistrationFields.map((field) => (
+                      <RegistrationDynamicField
+                        key={field.key}
+                        field={field}
+                        value={registrationAnswers[field.key] || ""}
+                        disabled={isFormDisabled}
+                        onChange={(value) =>
+                          updateRegistrationAnswer(field.key, value)
+                        }
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {!isIndividualRegistration ? (
+                <div style={styles.checkoutSection}>
+                  <p style={styles.checkoutSectionTitle}>Convidar membros</p>
+
+                  <Field label="Buscar por @username">
+                    <input
+                      type="text"
+                      value={memberQuery}
+                      onChange={(e) => {
+                        clearFeedback();
+                        setMemberQuery(e.target.value.replace(/^@+/, ""));
+                      }}
+                      style={styles.input}
+                      placeholder="Ex.: pescador_sp"
+                      disabled={
+                        isFormDisabled ||
+                        selectedMembers.length >= maxAdditionalMembers
+                      }
+                      maxLength={40}
+                    />
+                  </Field>
+
+                  {searchingMembers ? (
+                    <p style={styles.helperText}>Buscando usuários...</p>
+                  ) : null}
+
+                  {memberResults.length > 0 ? (
+                    <div style={styles.searchResults}>
+                      {memberResults.map((user) => (
+                        <button
+                          key={user.userId}
+                          type="button"
+                          onClick={() => addMember(user)}
+                          style={styles.searchResultButton}
+                          disabled={isFormDisabled}
+                        >
+                          <span style={styles.searchResultUsername}>
+                            @{user.username}
+                          </span>
+                          <span style={styles.searchResultMeta}>
+                            {user.email || "Usuário ConnectFish"}
+                          </span>
+                        </button>
                       ))}
                     </div>
-                  )}
+                  ) : null}
+
+                  <div style={styles.selectedMembersBox}>
+                    <p style={styles.selectedMembersTitle}>
+                      Membros adicionados ({selectedMembers.length}/
+                      {maxAdditionalMembers})
+                    </p>
+
+                    {selectedMembers.length === 0 ? (
+                      <p style={styles.helperText}>
+                        Você pode convidar até {maxAdditionalMembers} membros para
+                        a equipe.
+                      </p>
+                    ) : (
+                      <div style={styles.selectedMembersList}>
+                        {selectedMembers.map((member) => (
+                          <div key={member.userId} style={styles.selectedMemberRow}>
+                            <div style={styles.selectedMemberInfo}>
+                              <strong style={styles.selectedMemberUsername}>
+                                @{member.username}
+                              </strong>
+                              <span style={styles.selectedMemberMeta}>
+                                Convite pendente após criação da equipe
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => removeMember(member.userId)}
+                              style={styles.removeMemberButton}
+                              disabled={isFormDisabled}
+                            >
+                              Remover
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              ) : null}
 
               <div style={styles.checkoutSection}>
                 <p style={styles.checkoutSectionTitle}>Resumo da inscrição</p>
 
                 <div style={styles.summaryCard}>
                   <SummaryRow label="Torneio" value={tournament.title} />
+                  {!isIndividualRegistration ? (
+                    <SummaryRow
+                      label="Equipe"
+                      value={compactSpaces(teamName) || "A informar"}
+                    />
+                  ) : null}
                   <SummaryRow
-                    label="Equipe"
-                    value={compactSpaces(teamName) || "A informar"}
+                    label={isIndividualRegistration ? "Participante" : "Capitão"}
+                    value={captainDisplayName}
                   />
-                  <SummaryRow label="Capitão" value={captainDisplayName} />
+                  {!isIndividualRegistration ? (
+                    <SummaryRow
+                      label="Membros convidados"
+                      value={String(selectedMembers.length)}
+                    />
+                  ) : null}
                   <SummaryRow
-                    label="Membros convidados"
-                    value={String(selectedMembers.length)}
-                  />
-                  <SummaryRow
-                    label="Pagamento do capitão"
+                    label={
+                      isIndividualRegistration
+                        ? "Pagamento"
+                        : "Pagamento do capitão"
+                    }
                     value={formatMoney(tournament.entryFee, tournament.currency)}
                   />
-                  <SummaryRow
-                    label="Demais membros"
-                    value="Pagamento individual após aceite"
-                    highlight
-                  />
+                  {!isIndividualRegistration ? (
+                    <SummaryRow
+                      label="Demais membros"
+                      value="Pagamento individual após aceite"
+                      highlight
+                    />
+                  ) : null}
                 </div>
               </div>
 
@@ -1005,19 +1239,25 @@ throw new Error("Não foi possível iniciar o pagamento.");
                     <div style={styles.paymentInfoRow}>
                       <span style={styles.paymentInfoDot}>2</span>
                       <span style={styles.paymentInfoText}>
-                        O usuário logado será o capitão da equipe.
+                        Preencha as informações solicitadas pelo organizador.
                       </span>
                     </div>
+                    {!isIndividualRegistration ? (
+                      <div style={styles.paymentInfoRow}>
+                        <span style={styles.paymentInfoDot}>3</span>
+                        <span style={styles.paymentInfoText}>
+                          Adicione os membros por @username e envie os convites.
+                        </span>
+                      </div>
+                    ) : null}
                     <div style={styles.paymentInfoRow}>
-                      <span style={styles.paymentInfoDot}>3</span>
-                      <span style={styles.paymentInfoText}>
-                        Adicione os membros por @username e envie os convites.
+                      <span style={styles.paymentInfoDot}>
+                        {isIndividualRegistration ? "3" : "4"}
                       </span>
-                    </div>
-                    <div style={styles.paymentInfoRow}>
-                      <span style={styles.paymentInfoDot}>4</span>
                       <span style={styles.paymentInfoText}>
-                        O capitão paga agora e os demais membros pagam após aceitarem.
+                        {isIndividualRegistration
+                          ? "Finalize o pagamento para confirmar sua inscrição."
+                          : "O capitão paga agora e os demais membros pagam após aceitarem."}
                       </span>
                     </div>
                   </div>
@@ -1052,8 +1292,8 @@ throw new Error("Não foi possível iniciar o pagamento.");
                   disabled={isFormDisabled}
                 />
                 <span style={styles.checkboxText}>
-                  Confirmo que os dados da equipe estão corretos e aceito seguir
-                  para a criação da equipe e para o pagamento do capitão.
+                  Confirmo que os dados da inscrição estão corretos e aceito
+                  seguir para a criação da inscrição e para o pagamento.
                 </span>
               </label>
 
@@ -1070,8 +1310,10 @@ throw new Error("Não foi possível iniciar o pagamento.");
                   {bridgeProcessing
                     ? "Validando acesso vindo do app..."
                     : saving
-                      ? "Criando equipe..."
-                      : "Criar equipe e pagar inscrição do capitão"}
+                      ? "Criando inscrição..."
+                      : isIndividualRegistration
+                        ? "Fazer inscrição e pagar"
+                        : "Criar equipe e pagar inscrição do capitão"}
                 </button>
 
                 {!isLoggedIn ? (
@@ -1081,8 +1323,9 @@ throw new Error("Não foi possível iniciar o pagamento.");
                   </p>
                 ) : (
                   <p style={styles.securityText}>
-                    Os demais participantes receberão convite e pagarão a própria
-                    inscrição após aceitarem entrar na equipe.
+                    {isIndividualRegistration
+                      ? "Sua inscrição será vinculada ao seu usuário ConnectFish."
+                      : "Os demais participantes receberão convite e pagarão a própria inscrição após aceitarem entrar na equipe."}
                   </p>
                 )}
               </div>
@@ -1109,6 +1352,72 @@ function Field({
       <span style={styles.label}>{label}</span>
       {children}
     </label>
+  );
+}
+
+function RegistrationDynamicField({
+  field,
+  value,
+  disabled,
+  onChange,
+}: {
+  field: RegistrationFieldConfig;
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const label = `${field.label}${field.required ? " *" : ""}`;
+
+  if (field.type === "textarea") {
+    return (
+      <Field label={label}>
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ ...styles.input, ...styles.textarea }}
+          placeholder={field.helpText || field.label}
+          disabled={disabled}
+          maxLength={500}
+        />
+        {field.helpText ? <p style={styles.helperText}>{field.helpText}</p> : null}
+      </Field>
+    );
+  }
+
+  if (field.type === "select") {
+    return (
+      <Field label={label}>
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={styles.input}
+          disabled={disabled}
+        >
+          <option value="">Selecione uma opção</option>
+          {(field.options || []).map((option) => (
+            <option key={`${field.key}-${option}`} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+        {field.helpText ? <p style={styles.helperText}>{field.helpText}</p> : null}
+      </Field>
+    );
+  }
+
+  return (
+    <Field label={label}>
+      <input
+        type={getFieldInputType(field.type)}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={styles.input}
+        placeholder={field.helpText || field.label}
+        disabled={disabled}
+        maxLength={field.type === "number" ? undefined : 120}
+      />
+      {field.helpText ? <p style={styles.helperText}>{field.helpText}</p> : null}
+    </Field>
   );
 }
 
@@ -1385,6 +1694,11 @@ const styles: Record<string, CSSProperties> = {
     outline: "none",
     background: "#FFFFFF",
   },
+  textarea: {
+    minHeight: 96,
+    resize: "vertical",
+    fontFamily: "inherit",
+  },
   helperText: {
     margin: 0,
     fontSize: 13,
@@ -1534,9 +1848,10 @@ const styles: Record<string, CSSProperties> = {
     padding: "12px 14px",
     display: "flex",
     alignItems: "flex-start",
+    flexDirection: "column",
     gap: 4,
     cursor: "pointer",
-    textAlign: "left" as const,
+    textAlign: "left",
   },
   searchResultUsername: {
     fontSize: 14,
@@ -1634,7 +1949,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     color: "#0F172A",
     fontWeight: 700,
-    textAlign: "right" as const,
+    textAlign: "right",
   },
   summaryValueHighlight: {
     color: "#0B3C5D",

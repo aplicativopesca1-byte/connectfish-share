@@ -12,6 +12,8 @@ type MemberInput = {
   email?: string | null;
 };
 
+type RegistrationMode = "individual" | "team" | "both";
+
 type RequestBody = {
   tournamentId?: string;
   teamName?: string;
@@ -22,6 +24,11 @@ type RequestBody = {
   };
   members?: MemberInput[];
   source?: string | null;
+
+  // ✅ Dados extras do formulário dinâmico da inscrição
+  registrationAnswers?: Record<string, unknown>;
+  registrationFieldsSnapshot?: unknown[];
+  registrationMode?: RegistrationMode;
 };
 
 type UserRecord = {
@@ -48,6 +55,60 @@ function uniqueStrings(values: string[]) {
 
 function buildTeamMemberDocId(teamId: string, userId: string) {
   return `${teamId}_${userId}`;
+}
+
+function normalizeRegistrationMode(value: unknown): RegistrationMode {
+  const normalized = compactSpaces(value).toLowerCase();
+
+  if (normalized === "individual") return "individual";
+  if (normalized === "both") return "both";
+  return "team";
+}
+
+function sanitizeRegistrationAnswers(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const raw = value as Record<string, unknown>;
+  const sanitized: Record<string, string> = {};
+
+  for (const [key, answer] of Object.entries(raw)) {
+    const safeKey = compactSpaces(key);
+
+    if (!safeKey) continue;
+
+    // Evita objetos/arrays dentro das respostas e limita tamanho.
+    const safeAnswer = compactSpaces(answer).slice(0, 1000);
+
+    sanitized[safeKey] = safeAnswer;
+  }
+
+  return sanitized;
+}
+
+function sanitizeRegistrationFieldsSnapshot(value: unknown): unknown[] {
+  if (!Array.isArray(value)) return [];
+
+  // Mantém snapshot simples e evita payload gigante.
+  return value.slice(0, 50).map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+
+    const raw = item as Record<string, unknown>;
+
+    return {
+      key: compactSpaces(raw.key),
+      label: compactSpaces(raw.label),
+      type: compactSpaces(raw.type) || "text",
+      required: Boolean(raw.required),
+      enabled: raw.enabled !== false,
+      appliesTo: Array.isArray(raw.appliesTo)
+        ? raw.appliesTo.map((role) => compactSpaces(role)).filter(Boolean)
+        : [],
+      options: Array.isArray(raw.options)
+        ? raw.options.map((option) => compactSpaces(option)).filter(Boolean)
+        : null,
+      helpText: compactSpaces(raw.helpText) || null,
+    };
+  });
 }
 
 async function getAuthenticatedUserId(request: NextRequest) {
@@ -208,6 +269,13 @@ export async function POST(request: NextRequest) {
     const captainUserId = authenticatedUserId;
 
     const rawMembers: MemberInput[] = Array.isArray(body.members) ? body.members : [];
+
+    // ✅ Novos dados vindos da página pública
+    const registrationMode = normalizeRegistrationMode(body.registrationMode);
+    const registrationAnswers = sanitizeRegistrationAnswers(body.registrationAnswers);
+    const registrationFieldsSnapshot = sanitizeRegistrationFieldsSnapshot(
+      body.registrationFieldsSnapshot
+    );
 
     if (!tournamentId) {
       return NextResponse.json(
@@ -424,6 +492,12 @@ export async function POST(request: NextRequest) {
       amountPerParticipant,
       currency,
 
+      // ✅ Dados extras da inscrição no nível da equipe
+      registrationMode,
+      registrationData: registrationAnswers,
+      registrationAnswers,
+      registrationFieldsSnapshot,
+
       source,
 
       createdByUserId: authenticatedUserId,
@@ -475,6 +549,13 @@ export async function POST(request: NextRequest) {
       asaasPixQrCode: null,
       asaasPixCopyPaste: null,
       payerEmail: captain.email || null,
+
+      // ✅ Dados extras da inscrição no membro capitão
+      registrationMode,
+      registrationData: registrationAnswers,
+      registrationAnswers,
+      registrationFieldsSnapshot,
+      registrationCompletedAt: FieldValue.serverTimestamp(),
 
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
@@ -528,6 +609,13 @@ export async function POST(request: NextRequest) {
         asaasPixCopyPaste: null,
         payerEmail: member.email || null,
 
+        // ✅ Preparado para o membro preencher depois no aceite do convite
+        registrationMode,
+        registrationData: {},
+        registrationAnswers: {},
+        registrationFieldsSnapshot,
+        registrationCompletedAt: null,
+
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
@@ -555,6 +643,10 @@ export async function POST(request: NextRequest) {
         paymentMode: "individual",
         paymentProvider: "asaas",
 
+        // ✅ Snapshot também no convite para uso futuro na tela de aceite
+        registrationMode,
+        registrationFieldsSnapshot,
+
         source,
 
         createdByUserId: authenticatedUserId,
@@ -570,6 +662,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       teamId,
+      captainMemberId: captainMemberDocId,
       message: "Equipe criada com sucesso.",
     });
   } catch (error) {
