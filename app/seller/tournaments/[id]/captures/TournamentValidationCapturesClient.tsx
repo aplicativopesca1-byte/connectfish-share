@@ -100,6 +100,11 @@ type TournamentCapture = {
   judgeNotes: string | null;
   approvedAt: string | null;
   rejectedAt: string | null;
+    capturedInsideOfficialWindow: boolean | null;
+  captureWindowStatus: string | null;
+  rankingMode: string | null;
+  manualRankingSelectionAllowed: boolean | null;
+ maxValidCaptures: number | null;
 };
 
 type CaptureAlert = {
@@ -239,6 +244,26 @@ function mapCaptureDoc(
     judgeNotes: raw.judgeNotes ? String(raw.judgeNotes) : null,
     approvedAt: toIsoStringSafe(raw.approvedAt),
     rejectedAt: toIsoStringSafe(raw.rejectedAt),
+        capturedInsideOfficialWindow:
+      typeof raw.capturedInsideOfficialWindow === "boolean"
+        ? raw.capturedInsideOfficialWindow
+        : null,
+
+    captureWindowStatus: raw.captureWindowStatus
+      ? String(raw.captureWindowStatus)
+      : null,
+
+    rankingMode: raw.rankingMode ? String(raw.rankingMode) : null,
+
+    manualRankingSelectionAllowed:
+      typeof raw.manualRankingSelectionAllowed === "boolean"
+        ? raw.manualRankingSelectionAllowed
+        : null,
+
+    maxValidCaptures:
+      raw.maxValidCaptures !== undefined && raw.maxValidCaptures !== null
+        ? Number(raw.maxValidCaptures)
+        : null,
   };
 }
 
@@ -247,7 +272,8 @@ function deriveCaptureAlerts(params: {
   minSizeCm: number;
   scheduledStartAt: string | null;
   scheduledEndAt: string | null;
-}) {
+}) 
+{
   const alerts: CaptureAlert[] = [];
   const { capture } = params;
   const flags = capture.auditFlags || {};
@@ -595,6 +621,35 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
       }
 
       const ref = doc(db, "tournamentCaptures", selectedCapture.id);
+            if (normalizedApprovedLength > selectedCapture.declaredLengthCm) {
+        setError(
+          "A medida aprovada não pode ser maior que a medida enviada pelo atleta."
+        );
+        return;
+      }
+
+      if (selectedCapture.capturedInsideOfficialWindow !== true) {
+        setError("Esta captura foi realizada fora da janela oficial do torneio.");
+        return;
+      }
+
+      if (selectedCapture.captureWindowStatus !== "inside_window") {
+        setError("A captura está fora do horário oficial permitido.");
+        return;
+      }
+
+      if (selectedCapture.manualRankingSelectionAllowed === true) {
+        setError("Captura inválida: seleção manual não permitida.");
+        return;
+      }
+
+      if (
+        selectedCapture.rankingMode &&
+        selectedCapture.rankingMode !== "auto_best_valid"
+      ) {
+        setError("Modo de ranking incompatível com este torneio.");
+        return;
+      }
 
       await updateDoc(ref, {
         status: "approved",
@@ -611,6 +666,13 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
         rejectedAt: null,
         validatedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+                capturedInsideOfficialWindow:
+          selectedCapture.capturedInsideOfficialWindow === true,
+        captureWindowStatus: selectedCapture.captureWindowStatus || null,
+        rankingMode: selectedCapture.rankingMode || "auto_best_valid",
+        manualRankingSelectionAllowed: false,
+        rankingSelectionLocked: true,
+        maxValidCaptures: selectedCapture.maxValidCaptures || null,
       });
 
       setMessage("Captura aprovada com sucesso.");
@@ -747,6 +809,43 @@ export default function TournamentValidationCapturesClient({ tournamentId }: Pro
                   const riskScore = calculateRiskScore(alerts);
                   const riskLevel = getRiskLevel(riskScore);
                   const riskMeta = getRiskMeta(riskLevel);
+                    if (capture.capturedInsideOfficialWindow === false) {
+    alerts.push({
+      key: "official_window",
+      label: "Captura fora da janela oficial",
+      tone: "red",
+    });
+  }
+
+  if (
+    capture.captureWindowStatus &&
+    capture.captureWindowStatus !== "inside_window"
+  ) {
+    alerts.push({
+      key: "capture_window_status",
+      label: "Status de janela oficial inválido",
+      tone: "red",
+    });
+  }
+
+  if (
+    capture.rankingMode &&
+    capture.rankingMode !== "auto_best_valid"
+  ) {
+    alerts.push({
+      key: "ranking_mode",
+      label: "Modo de ranking incompatível",
+      tone: "red",
+    });
+  }
+
+  if (capture.manualRankingSelectionAllowed === true) {
+    alerts.push({
+      key: "manual_selection",
+      label: "Seleção manual não permitida",
+      tone: "red",
+    });
+  }
 
                   return (
                     <button

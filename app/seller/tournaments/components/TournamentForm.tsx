@@ -89,6 +89,9 @@ type TournamentFinancialConfig = {
   currency: string;
 };
 
+type RankingMode = "auto_best_valid" | "all_captures_sum";
+type CaptureSourceMode = "camera_live_only";
+
 type TournamentDoc = {
   title?: string;
   subtitle?: string | null;
@@ -101,6 +104,24 @@ type TournamentDoc = {
   currency?: string | null;
   minSizeCm?: number;
   validFishCount?: number;
+  maxValidCaptures?: number;
+  rankingMaxCaptures?: number;
+  scoreFishCount?: number;
+  rankingMode?: RankingMode | string;
+  manualRankingSelectionAllowed?: boolean;
+  rankingSelectionLocked?: boolean;
+  captureSource?: CaptureSourceMode | string;
+  galleryUploadAllowed?: boolean;
+  requiresLiveCameraCapture?: boolean;
+  allowLateSync?: boolean;
+  rejectCapturesOutsideSchedule?: boolean;
+  captureWindowMode?: string;
+  startAt?: unknown;
+  endAt?: unknown;
+  startsAt?: unknown;
+  endsAt?: unknown;
+  tournamentStartAtMs?: number;
+  tournamentEndAtMs?: number;
   rules?: string[];
   status?: TournamentStatus;
   visibility?: TournamentVisibility;
@@ -325,6 +346,28 @@ function getRegistrationRoleLabel(role: RegistrationFieldRole) {
   if (role === "captain") return "Capitão";
   if (role === "member") return "Membro";
   return "Individual";
+}
+
+function normalizeRankingMode(value: unknown): RankingMode {
+  if (value === "all_captures_sum") return "all_captures_sum";
+  return "auto_best_valid";
+}
+
+function getRankingModeLabel(mode: RankingMode) {
+  if (mode === "all_captures_sum") return "Soma de todas as capturas aprovadas";
+  return "Melhores peixes válidos automaticamente";
+}
+
+function normalizeValidFishCount(value: unknown) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 3;
+  return Math.min(5, Math.max(2, Math.round(n)));
+}
+
+function getDateMsFromInput(value: string) {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
 }
 
 function toDateTimeLocalInput(value: unknown): string {
@@ -644,6 +687,14 @@ export default function TournamentForm({
   const [currency, setCurrency] = useState("BRL");
   const [minSizeCm, setMinSizeCm] = useState<number>(30);
   const [validFishCount, setValidFishCount] = useState<number>(3);
+  const [rankingMode, setRankingMode] =
+    useState<RankingMode>("auto_best_valid");
+  const [manualRankingSelectionAllowed, setManualRankingSelectionAllowed] =
+    useState(false);
+  const [rankingSelectionLocked, setRankingSelectionLocked] = useState(true);
+  const [captureSource, setCaptureSource] =
+    useState<CaptureSourceMode>("camera_live_only");
+  const [galleryUploadAllowed, setGalleryUploadAllowed] = useState(false);
   const [rulesText, setRulesText] = useState("");
   const [status, setStatus] = useState<TournamentStatus>("draft");
   const [visibility, setVisibility] = useState<TournamentVisibility>("draft");
@@ -694,6 +745,10 @@ export default function TournamentForm({
   const canEditStructure = !isOperationallyLocked;
 
   const parsedRules = useMemo(() => parseRules(rulesText), [rulesText]);
+  const safeValidFishCount = useMemo(
+    () => normalizeValidFishCount(validFishCount),
+    [validFishCount]
+  );
 
   const enabledRegistrationFields = useMemo(
     () => registrationFields.filter((field) => field.enabled),
@@ -782,7 +837,24 @@ export default function TournamentForm({
     if (!species.trim()) missing.push("Espécie");
     if (Number(entryFee) < 0) missing.push("Valor da inscrição inválido");
     if (Number(minSizeCm) < 0) missing.push("Tamanho mínimo inválido");
-    if (Number(validFishCount) < 1) missing.push("Quantidade de peixes válidos");
+    if (safeValidFishCount < 2 || safeValidFishCount > 5) {
+      missing.push("Quantidade de peixes válidos entre 2 e 5");
+    }
+    if (rankingMode !== "auto_best_valid") {
+      missing.push("Critério de ranking profissional obrigatório");
+    }
+    if (manualRankingSelectionAllowed) {
+      missing.push("Escolha manual de peixes deve ficar bloqueada");
+    }
+    if (!rankingSelectionLocked) {
+      missing.push("Trava de seleção do ranking obrigatória");
+    }
+    if (captureSource !== "camera_live_only") {
+      missing.push("Captura deve ser por câmera ao vivo");
+    }
+    if (galleryUploadAllowed) {
+      missing.push("Upload de galeria deve ficar bloqueado");
+    }
     if (parsedRules.length === 0) missing.push("Regras do torneio");
     if (!scheduledStartAt) missing.push("Início programado");
     if (!scheduledEndAt) missing.push("Fim programado");
@@ -808,7 +880,12 @@ export default function TournamentForm({
     species,
     entryFee,
     minSizeCm,
-    validFishCount,
+    safeValidFishCount,
+    rankingMode,
+    manualRankingSelectionAllowed,
+    rankingSelectionLocked,
+    captureSource,
+    galleryUploadAllowed,
     parsedRules,
     scheduledStartAt,
     scheduledEndAt,
@@ -1005,12 +1082,29 @@ export default function TournamentForm({
       setEntryFee(Number(data.entryFee ?? 0) || 0);
       setCurrency(safeTrim(data.currency).toUpperCase() || "BRL");
       setMinSizeCm(Number(data.minSizeCm ?? 30) || 30);
-      setValidFishCount(Number(data.validFishCount ?? 3) || 3);
+      setValidFishCount(
+        normalizeValidFishCount(
+          data.validFishCount ??
+            data.maxValidCaptures ??
+            data.rankingMaxCaptures ??
+            data.scoreFishCount ??
+            3
+        )
+      );
+      setRankingMode("auto_best_valid");
+      setManualRankingSelectionAllowed(false);
+      setRankingSelectionLocked(true);
+      setCaptureSource("camera_live_only");
+      setGalleryUploadAllowed(false);
       setRulesText(Array.isArray(data.rules) ? data.rules.join("\n") : "");
       setStatus(data.status || "draft");
       setVisibility(data.visibility || "draft");
-      setScheduledStartAt(toDateTimeLocalInput(data.scheduledStartAt));
-      setScheduledEndAt(toDateTimeLocalInput(data.scheduledEndAt));
+      setScheduledStartAt(
+        toDateTimeLocalInput(data.scheduledStartAt || data.startAt || data.startsAt)
+      );
+      setScheduledEndAt(
+        toDateTimeLocalInput(data.scheduledEndAt || data.endAt || data.endsAt)
+      );
       setBoundaryEnabled(data.boundaryEnabled !== false);
       setRegistrationMode(normalizeRegistrationMode(data.registrationMode));
       setRequiresBoatLicense(Boolean(data.requiresBoatLicense));
@@ -1070,6 +1164,11 @@ export default function TournamentForm({
     }
 
     const normalizedCurrency = safeTrim(currency).toUpperCase() || "BRL";
+    const startDate = scheduledStartAt ? new Date(scheduledStartAt) : null;
+    const endDate = scheduledEndAt ? new Date(scheduledEndAt) : null;
+    const tournamentStartAtMs = getDateMsFromInput(scheduledStartAt);
+    const tournamentEndAtMs = getDateMsFromInput(scheduledEndAt);
+    const normalizedValidFishCount = normalizeValidFishCount(validFishCount);
     const urls = buildTournamentUrls(finalSlugPreview, tournamentDocId);
 
     if (!urls.publicUrl || !urls.registrationUrl || !urls.adminUrl) {
@@ -1087,10 +1186,28 @@ export default function TournamentForm({
       entryFee: Number(entryFee || 0),
       currency: normalizedCurrency,
       minSizeCm: Number(minSizeCm || 0),
-      validFishCount: Number(validFishCount || 0),
+      validFishCount: normalizedValidFishCount,
+      maxValidCaptures: normalizedValidFishCount,
+      rankingMaxCaptures: normalizedValidFishCount,
+      scoreFishCount: normalizedValidFishCount,
+      rankingMode: "auto_best_valid" as RankingMode,
+      manualRankingSelectionAllowed: false,
+      rankingSelectionLocked: true,
+      captureSource: "camera_live_only" as CaptureSourceMode,
+      galleryUploadAllowed: false,
+      requiresLiveCameraCapture: true,
+      allowLateSync: true,
+      rejectCapturesOutsideSchedule: true,
+      captureWindowMode: "scheduled_window",
       rules: parsedRules,
-      scheduledStartAt: scheduledStartAt ? new Date(scheduledStartAt) : null,
-      scheduledEndAt: scheduledEndAt ? new Date(scheduledEndAt) : null,
+      scheduledStartAt: startDate,
+      scheduledEndAt: endDate,
+      startAt: startDate,
+      endAt: endDate,
+      startsAt: startDate,
+      endsAt: endDate,
+      tournamentStartAtMs,
+      tournamentEndAtMs,
       boundaryEnabled,
       registrationMode,
       requiresBoatLicense,
@@ -1594,17 +1711,20 @@ export default function TournamentForm({
               </Field>
 
               <Field label="Quantidade de peixes válidos *">
-                <input
-                  type="number"
-                  min={1}
-                  value={validFishCount}
+                <select
+                  value={safeValidFishCount}
                   onChange={(e) => {
                     clearFeedback();
-                    setValidFishCount(Number(e.target.value));
+                    setValidFishCount(normalizeValidFishCount(e.target.value));
                   }}
                   style={styles.input}
                   disabled={!canEditStructure}
-                />
+                >
+                  <option value={2}>2 peixes válidos</option>
+                  <option value={3}>3 peixes válidos</option>
+                  <option value={4}>4 peixes válidos</option>
+                  <option value={5}>5 peixes válidos</option>
+                </select>
               </Field>
 
               <Field label="Status operacional">
@@ -1618,6 +1738,61 @@ export default function TournamentForm({
               </Field>
             </div>
 
+            <div style={styles.professionalRulesBox}>
+              <div style={styles.professionalRulesHeader}>
+                <div>
+                  <p style={styles.professionalRulesTitle}>Regra profissional de ranking</p>
+                  <p style={styles.professionalRulesText}>
+                    O atleta registra capturas oficiais durante o torneio. O sistema
+                    calcula automaticamente os {safeValidFishCount} maiores peixes
+                    aprovados da equipe, sem escolha manual no final.
+                  </p>
+                </div>
+
+                <span style={styles.lockedRuleBadge}>Blindado</span>
+              </div>
+
+              <div style={styles.ruleGrid}>
+                <PreviewCard
+                  label="Critério"
+                  value={getRankingModeLabel(rankingMode)}
+                />
+                <PreviewCard
+                  label="Escolha manual"
+                  value={manualRankingSelectionAllowed ? "Permitida" : "Bloqueada"}
+                />
+                <PreviewCard
+                  label="Origem da captura"
+                  value={captureSource === "camera_live_only" ? "Câmera ao vivo" : "—"}
+                />
+                <PreviewCard
+                  label="Galeria"
+                  value={galleryUploadAllowed ? "Permitida" : "Bloqueada"}
+                />
+                <PreviewCard
+                  label="Sync após horário"
+                  value="Permitido se a foto foi feita dentro do horário"
+                />
+                <PreviewCard
+                  label="Fora do horário"
+                  value="Recusado automaticamente"
+                />
+              </div>
+
+              <input type="hidden" value={rankingMode} readOnly />
+              <input
+                type="hidden"
+                value={manualRankingSelectionAllowed ? "true" : "false"}
+                readOnly
+              />
+              <input type="hidden" value={captureSource} readOnly />
+              <input
+                type="hidden"
+                value={galleryUploadAllowed ? "true" : "false"}
+                readOnly
+              />
+            </div>
+
             <Field label="Regras principais (uma por linha) *">
               <textarea
                 value={rulesText}
@@ -1626,10 +1801,11 @@ export default function TournamentForm({
                   setRulesText(e.target.value);
                 }}
                 style={styles.textareaLarge}
-                placeholder={`Valem os 3 maiores peixes da equipe.
-Captura deve ser fotografada na régua oficial do torneio.
-Somente o capitão envia capturas.
-O ranking só atualiza após validação da organização.`}
+                placeholder={`Valem os ${safeValidFishCount} maiores peixes aprovados da equipe.
+Captura deve ser feita pela câmera ao vivo do app.
+Capturas feitas fora do horário oficial são recusadas.
+A sincronização depois do fim é aceita somente se a foto foi capturada dentro do horário.
+O atleta não escolhe manualmente quais peixes entram no ranking.`}
                 disabled={!canEditStructure}
               />
             </Field>
@@ -1923,7 +2099,19 @@ O ranking só atualiza após validação da organização.`}
               <PreviewCard label="Mínimo" value={`${minSizeCm || 0} cm`} />
               <PreviewCard
                 label="Peixes válidos"
-                value={String(validFishCount || 0)}
+                value={String(safeValidFishCount || 0)}
+              />
+              <PreviewCard
+                label="Ranking"
+                value={getRankingModeLabel(rankingMode)}
+              />
+              <PreviewCard
+                label="Escolha manual"
+                value={manualRankingSelectionAllowed ? "Permitida" : "Bloqueada"}
+              />
+              <PreviewCard
+                label="Captura"
+                value="Câmera ao vivo obrigatória"
               />
             </div>
 
@@ -2194,6 +2382,18 @@ O ranking só atualiza após validação da organização.`}
               <PreviewCard
                 label="URL inscrição"
                 value={previewUrls.registrationUrl || "—"}
+              />
+              <PreviewCard
+                label="Peixes válidos"
+                value={`${safeValidFishCount} maiores aprovados`}
+              />
+              <PreviewCard
+                label="Regra do ranking"
+                value={getRankingModeLabel(rankingMode)}
+              />
+              <PreviewCard
+                label="Captura"
+                value="Câmera ao vivo · sem galeria"
               />
             </div>
 
@@ -2617,6 +2817,57 @@ const styles: Record<string, CSSProperties> = {
     color: "#166534",
     lineHeight: 1.55,
     fontWeight: 700,
+  },
+
+  professionalRulesBox: {
+    marginTop: 16,
+    marginBottom: 16,
+    borderRadius: 18,
+    background: "#F0FDF4",
+    border: "1px solid #BBF7D0",
+    padding: 16,
+  },
+
+  professionalRulesHeader: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap",
+    marginBottom: 14,
+  },
+
+  professionalRulesTitle: {
+    margin: 0,
+    fontSize: 15,
+    fontWeight: 1000,
+    color: "#166534",
+  },
+
+  professionalRulesText: {
+    margin: "6px 0 0 0",
+    color: "#166534",
+    lineHeight: 1.55,
+    fontWeight: 700,
+  },
+
+  lockedRuleBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "8px 12px",
+    borderRadius: 999,
+    background: "#DCFCE7",
+    color: "#166534",
+    fontSize: 12,
+    fontWeight: 1000,
+    whiteSpace: "nowrap",
+  },
+
+  ruleGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+    gap: 12,
   },
 
   fieldsList: {
