@@ -7,6 +7,7 @@ import {
   deleteDoc,
   doc,
   getDocs,
+  limit,
   orderBy,
   query,
   serverTimestamp,
@@ -144,6 +145,9 @@ function splitDateTime(value: string) {
 }
 
 export default function FisherySessionsClient({ uid }: Props) {
+  const [fisheryId, setFisheryId] = useState<string | null>(null);
+  const [fisheryName, setFisheryName] = useState<string>("");
+
   const [areas, setAreas] = useState<FisheryArea[]>([]);
   const [sessions, setSessions] = useState<FishingSession[]>([]);
   const [form, setForm] = useState<FormState>(initialForm);
@@ -169,12 +173,43 @@ export default function FisherySessionsClient({ uid }: Props) {
     void loadPage();
   }, [uid]);
 
+  async function resolveFisheryId() {
+    const q = query(
+      collection(db, "pesqueiros"),
+      where("ownerId", "==", uid),
+      limit(1)
+    );
+
+    const snap = await getDocs(q);
+
+    if (!snap.empty) {
+      const docSnap = snap.docs[0];
+      const data = docSnap.data() as any;
+
+      setFisheryId(docSnap.id);
+      setFisheryName(data?.name ?? "Meu pesqueiro");
+
+      return docSnap.id;
+    }
+
+    const directFisheryId = uid;
+    setFisheryId(directFisheryId);
+    setFisheryName("Meu pesqueiro");
+
+    return directFisheryId;
+  }
+
   async function loadPage() {
     try {
       setLoading(true);
       setError(null);
 
-      await Promise.all([loadAreas(), loadSessions()]);
+      const resolvedFisheryId = await resolveFisheryId();
+
+      await Promise.all([
+        loadAreas(resolvedFisheryId),
+        loadSessions(resolvedFisheryId),
+      ]);
     } catch (e: any) {
       setError(e?.message || "Não foi possível carregar as sessões.");
     } finally {
@@ -182,7 +217,7 @@ export default function FisherySessionsClient({ uid }: Props) {
     }
   }
 
-  async function loadAreas() {
+  async function loadAreas(currentFisheryId = fisheryId) {
     const q = query(
       collection(db, "pesqueiroAreas"),
       where("ownerId", "==", uid),
@@ -209,7 +244,7 @@ export default function FisherySessionsClient({ uid }: Props) {
     setAreas(items);
   }
 
-  async function loadSessions() {
+  async function loadSessions(currentFisheryId = fisheryId) {
     const q = query(
       collection(db, "fishingSessions"),
       where("ownerId", "==", uid),
@@ -223,7 +258,7 @@ export default function FisherySessionsClient({ uid }: Props) {
 
       return {
         id: item.id,
-        pesqueiroId: data?.pesqueiroId ?? uid,
+        pesqueiroId: data?.pesqueiroId ?? currentFisheryId ?? uid,
         ownerId: data?.ownerId ?? uid,
         areaId: data?.areaId ?? "",
         areaName: data?.areaName ?? "Estrutura não informada",
@@ -286,7 +321,13 @@ export default function FisherySessionsClient({ uid }: Props) {
       setError(null);
       setMessage(null);
 
+      const currentFisheryId = fisheryId || (await resolveFisheryId());
+
       const area = areas.find((item) => item.id === form.areaId);
+
+      if (!currentFisheryId) {
+        throw new Error("Não foi possível identificar o pesqueiro.");
+      }
 
       if (!area) {
         throw new Error("Selecione uma estrutura ativa para esta sessão.");
@@ -321,7 +362,7 @@ export default function FisherySessionsClient({ uid }: Props) {
       }
 
       const payload = {
-        pesqueiroId: uid,
+        pesqueiroId: currentFisheryId,
         ownerId: uid,
         areaId: area.id,
         areaName: area.name,
@@ -352,7 +393,7 @@ export default function FisherySessionsClient({ uid }: Props) {
 
       setForm(initialForm);
       setEditingId(null);
-      await loadSessions();
+      await loadSessions(currentFisheryId);
     } catch (e: any) {
       setError(e?.message || "Não foi possível salvar a sessão.");
     } finally {
@@ -371,7 +412,7 @@ export default function FisherySessionsClient({ uid }: Props) {
       });
 
       setMessage(session.active ? "Sessão pausada." : "Sessão ativada.");
-      await loadSessions();
+      await loadSessions(fisheryId);
     } catch (e: any) {
       setError(e?.message || "Não foi possível alterar o status.");
     }
@@ -399,7 +440,7 @@ export default function FisherySessionsClient({ uid }: Props) {
       if (editingId === session.id) resetForm();
 
       setMessage("Sessão excluída com sucesso.");
-      await loadSessions();
+      await loadSessions(fisheryId);
     } catch (e: any) {
       setError(e?.message || "Não foi possível excluir a sessão.");
     }
@@ -424,6 +465,10 @@ export default function FisherySessionsClient({ uid }: Props) {
           <div style={styles.sub}>
             Crie horários, datas, vagas e preços para cada estrutura do seu
             pesqueiro.
+          </div>
+          <div style={styles.fisheryHint}>
+            Pesqueiro vinculado: {fisheryName || "Meu pesqueiro"} · ID:{" "}
+            {fisheryId || uid}
           </div>
         </div>
 
@@ -673,6 +718,10 @@ export default function FisherySessionsClient({ uid }: Props) {
                     />
                   </div>
 
+                  <div style={styles.sessionIdBox}>
+                    pesqueiroId salvo: {session.pesqueiroId || "—"}
+                  </div>
+
                   {session.rules ? (
                     <div style={styles.rulesBox}>
                       <strong>Regras:</strong> {session.rules}
@@ -812,6 +861,12 @@ const styles: Record<string, CSSProperties> = {
     color: "#475569",
     lineHeight: 1.5,
     maxWidth: 760,
+  },
+  fisheryHint: {
+    marginTop: 8,
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#0B3C5D",
   },
   statPill: {
     display: "inline-flex",
@@ -1050,6 +1105,14 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     fontWeight: 1000,
     color: "#0F172A",
+  },
+  sessionIdBox: {
+    padding: 10,
+    borderRadius: 12,
+    background: "rgba(11,60,93,0.06)",
+    color: "#0B3C5D",
+    fontSize: 12,
+    fontWeight: 800,
   },
   rulesBox: {
     padding: 12,
