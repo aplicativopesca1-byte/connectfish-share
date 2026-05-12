@@ -393,11 +393,17 @@ const responsiveCss = `
     box-sizing: border-box;
   }
 
-  html,
-  body {
-    max-width: 100%;
-    overflow-x: hidden;
-  }
+html,
+body,
+#__next {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+}
 
   .seller-sidebar-desktop {
     display: flex;
@@ -458,15 +464,17 @@ const responsiveCss = `
 `;
 
 const styles: Record<string, CSSProperties> = {
-  shell: {
-    minHeight: "100vh",
-    display: "grid",
-    gridTemplateColumns: "280px minmax(0, 1fr)",
-    background: "#F8FAFC",
-    color: "#0F172A",
-    fontFamily: "system-ui, sans-serif",
-    overflowX: "hidden",
-  },
+shell: {
+  width: "100%",
+  maxWidth: "100vw",
+  minHeight: "100vh",
+  display: "grid",
+  gridTemplateColumns: "280px minmax(0, 1fr)",
+  background: "#F8FAFC",
+  color: "#0F172A",
+  fontFamily: "system-ui, sans-serif",
+  overflowX: "hidden",
+},
 
   loadingWrap: {
     minHeight: "100vh",
@@ -693,13 +701,15 @@ const styles: Record<string, CSSProperties> = {
     cursor: "not-allowed",
   },
 
-  main: {
-    minWidth: 0,
-    width: "100%",
-    display: "flex",
-    flexDirection: "column",
-    overflowX: "hidden",
-  },
+main: {
+  width: "100%",
+  maxWidth: "100%",
+  minWidth: 0,
+  display: "flex",
+  flexDirection: "column",
+  overflowX: "hidden",
+  boxSizing: "border-box",
+},
 
   topbar: {
     display: "flex",
@@ -836,10 +846,12 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
   },
 
-  content: {
-    width: "100%",
-    minWidth: 0,
-    padding: "clamp(12px, 3vw, 20px)",
-    overflowX: "hidden",
-  },
+content: {
+  width: "100%",
+  maxWidth: "100%",
+  minWidth: 0,
+  padding: "clamp(12px, 3vw, 20px)",
+  overflowX: "hidden",
+  boxSizing: "border-box",
+},
 };

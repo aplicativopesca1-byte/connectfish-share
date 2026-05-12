@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
   addDoc,
@@ -93,7 +94,6 @@ export default function FisheryAreasClient({ uid }: Props) {
   const [areas, setAreas] = useState<FisheryArea[]>([]);
   const [form, setForm] = useState<FormState>(initialForm);
   const [editingId, setEditingId] = useState<string | null>(null);
-
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -108,45 +108,50 @@ export default function FisheryAreasClient({ uid }: Props) {
     void loadAreas();
   }, [uid]);
 
-  async function loadAreas() {
-    try {
-      setLoading(true);
-      setError(null);
+async function loadAreas() {
+  try {
+    setLoading(true);
+    setError(null);
 
-      const q = query(
-        collection(db, "pesqueiroAreas"),
-        where("ownerId", "==", uid),
-        orderBy("createdAt", "desc")
-      );
+    console.log("Carregando pesqueiroAreas para uid:", uid);
 
-      const snap = await getDocs(q);
+    const q = query(
+      collection(db, "pesqueiroAreas"),
+      where("ownerId", "==", uid)
+    );
 
-      const items: FisheryArea[] = snap.docs.map((item) => {
-        const data = item.data() as any;
+    const snap = await getDocs(q);
 
-        return {
-          id: item.id,
-          pesqueiroId: data?.pesqueiroId ?? uid,
-          ownerId: data?.ownerId ?? uid,
-          type: data?.type ?? "other",
-          customTypeLabel: data?.customTypeLabel ?? "",
-          name: data?.name ?? "Sem nome",
-          description: data?.description ?? "",
-          capacity: Number(data?.capacity ?? 0),
-          maxReservations: Number(data?.maxReservations ?? 0),
-          price: Number(data?.price ?? 0),
-          rules: data?.rules ?? "",
-          active: data?.active !== false,
-        };
-      });
+    console.log("pesqueiroAreas encontrados:", snap.size);
 
-      setAreas(items);
-    } catch (e: any) {
-      setError(e?.message || "Não foi possível carregar as estruturas.");
-    } finally {
-      setLoading(false);
-    }
+    const items: FisheryArea[] = snap.docs.map((item) => {
+      const data = item.data() as any;
+
+      return {
+        id: item.id,
+        pesqueiroId: data?.pesqueiroId ?? uid,
+        ownerId: data?.ownerId ?? uid,
+        type: data?.type ?? "other",
+        customTypeLabel: data?.customTypeLabel ?? "",
+        name: data?.name ?? "Sem nome",
+        description: data?.description ?? "",
+        capacity: Number(data?.capacity ?? 0),
+        maxReservations: Number(data?.maxReservations ?? 0),
+        price: Number(data?.price ?? 0),
+        rules: data?.rules ?? "",
+        active: data?.active !== false,
+      };
+    });
+
+    setAreas(items);
+  } catch (e: any) {
+    console.error("Erro ao carregar pesqueiroAreas:", e);
+    setError(e?.message || "Não foi possível carregar as estruturas.");
+  } finally {
+    console.log("Finalizando loading pesqueiroAreas");
+    setLoading(false);
   }
+}
 
   function updateField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -216,7 +221,7 @@ export default function FisheryAreasClient({ uid }: Props) {
           ...payload,
           createdAt: serverTimestamp(),
         });
-        setMessage("Estrutura criada com sucesso.");
+        setMessage("Estrutura salva com sucesso. Você pode cadastrar outra ou continuar.");
       }
 
       setForm(initialForm);
@@ -281,19 +286,20 @@ export default function FisheryAreasClient({ uid }: Props) {
 
   return (
     <div style={styles.wrap}>
-      <section style={styles.hero}>
-        <div>
+      <div style={styles.hero}>
+        <div style={styles.heroText}>
+          <div style={styles.stepLabel}>Etapa 2 de 4</div>
           <div style={styles.title}>Estruturas do pesqueiro</div>
           <div style={styles.sub}>
-            Cadastre lagos, quiosques, plataformas, decks, barcos ou qualquer
-            estrutura que possa ser reservada.
+            Cadastre os lagos, quiosques, plataformas, decks, chalés, barcos ou
+            qualquer estrutura que poderá ser usada em sessões e reservas.
           </div>
         </div>
 
-        <div style={styles.statPill}>
+        <div style={styles.statusChip}>
           {activeCount} ativas · {areas.length} cadastradas
         </div>
-      </section>
+      </div>
 
       <form onSubmit={handleSave} style={styles.formCard}>
         <div style={styles.sectionTitle}>
@@ -336,26 +342,22 @@ export default function FisheryAreasClient({ uid }: Props) {
         </div>
 
         {form.type === "other" ? (
-          <div style={styles.grid1}>
-            <Field
-              label="Nome da estrutura"
-              value={form.name}
-              onChange={(v) => updateField("name", v)}
-              placeholder="Ex: Rancho Família"
-            />
-          </div>
+          <Field
+            label="Nome da estrutura"
+            value={form.name}
+            onChange={(v) => updateField("name", v)}
+            placeholder="Ex: Rancho Família"
+          />
         ) : null}
 
-        <div style={styles.grid1}>
-          <TextAreaField
-            label="Descrição"
-            value={form.description}
-            onChange={(v) => updateField("description", v)}
-            placeholder="Descreva a estrutura, localização dentro do pesqueiro e diferenciais."
-          />
-        </div>
+        <TextAreaField
+          label="Descrição"
+          value={form.description}
+          onChange={(v) => updateField("description", v)}
+          placeholder="Descreva a estrutura, localização dentro do pesqueiro e diferenciais."
+        />
 
-        <div style={styles.grid3}>
+        <div style={styles.grid2}>
           <Field
             label="Capacidade de pessoas"
             value={form.capacity}
@@ -369,23 +371,21 @@ export default function FisheryAreasClient({ uid }: Props) {
             onChange={(v) => updateField("maxReservations", v)}
             placeholder="Ex: 1"
           />
-
-          <Field
-            label="Preço base"
-            value={form.price}
-            onChange={(v) => updateField("price", v)}
-            placeholder="Ex: 120"
-          />
         </div>
 
-        <div style={styles.grid1}>
-          <TextAreaField
-            label="Regras específicas"
-            value={form.rules}
-            onChange={(v) => updateField("rules", v)}
-            placeholder="Ex: permitido até 4 varas, proibido ceva externa, uso obrigatório de passaguá..."
-          />
-        </div>
+        <Field
+          label="Preço base"
+          value={form.price}
+          onChange={(v) => updateField("price", v)}
+          placeholder="Ex: 120"
+        />
+
+        <TextAreaField
+          label="Regras específicas"
+          value={form.rules}
+          onChange={(v) => updateField("rules", v)}
+          placeholder="Ex: permitido até 4 varas, proibido ceva externa, uso obrigatório de passaguá..."
+        />
 
         <label style={styles.checkItem}>
           <input
@@ -394,7 +394,9 @@ export default function FisheryAreasClient({ uid }: Props) {
             onChange={(e) => updateField("active", e.target.checked)}
             style={styles.checkbox}
           />
-          <span style={styles.checkLabel}>Estrutura ativa para futuras reservas</span>
+          <span style={styles.checkLabel}>
+            Estrutura ativa para futuras reservas
+          </span>
         </label>
 
         {message ? <div style={styles.success}>{message}</div> : null}
@@ -418,8 +420,8 @@ export default function FisheryAreasClient({ uid }: Props) {
             {saving
               ? "Salvando..."
               : editingId
-              ? "Salvar alterações"
-              : "Criar estrutura"}
+                ? "Salvar alterações"
+                : "Salvar estrutura"}
           </button>
         </div>
       </form>
@@ -429,23 +431,23 @@ export default function FisheryAreasClient({ uid }: Props) {
           <div>
             <div style={styles.sectionTitle}>Estruturas cadastradas</div>
             <div style={styles.sectionSub}>
-              Essas estruturas serão usadas depois para criar sessões, reservas
-              e fila digital.
+              Depois de cadastrar as estruturas, continue para criar as sessões
+              de pesca.
             </div>
           </div>
         </div>
 
         {areas.length === 0 ? (
           <div style={styles.emptyBox}>
-            Nenhuma estrutura cadastrada ainda. Crie o primeiro lago, quiosque,
-            plataforma ou área reservável.
+            Nenhuma estrutura cadastrada ainda. Cadastre pelo menos uma estrutura
+            antes de avançar para sessões.
           </div>
         ) : (
           <div style={styles.list}>
             {areas.map((area) => (
               <article key={area.id} style={styles.areaCard}>
                 <div style={styles.areaTop}>
-                  <div>
+                  <div style={styles.areaTitleBox}>
                     <div style={styles.areaTitle}>{area.name}</div>
                     <div style={styles.areaType}>
                       {getTypeLabel(area.type, area.customTypeLabel)}
@@ -454,7 +456,7 @@ export default function FisheryAreasClient({ uid }: Props) {
 
                   <span
                     style={{
-                      ...styles.statusChip,
+                      ...styles.areaStatusChip,
                       ...(area.active ? styles.statusActive : styles.statusPaused),
                     }}
                   >
@@ -511,6 +513,33 @@ export default function FisheryAreasClient({ uid }: Props) {
           </div>
         )}
       </section>
+
+      <section style={styles.footerCard}>
+        <div style={styles.footerText}>
+          <div style={styles.sectionTitle}>Próxima etapa</div>
+          <div style={styles.sectionSub}>
+            Cadastre todas as estruturas necessárias e avance para configurar
+            horários, vagas e preços das sessões.
+          </div>
+        </div>
+
+        <div style={styles.footerActions}>
+          <Link href="/seller/fishery/profile" style={styles.secondaryLink}>
+            Voltar ao cadastro
+          </Link>
+
+          <Link
+            href="/seller/fishery/sessions"
+            style={{
+              ...styles.primaryLink,
+              ...(areas.length === 0 ? styles.linkDisabled : {}),
+            }}
+            aria-disabled={areas.length === 0}
+          >
+            Continuar para sessões
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }
@@ -557,7 +586,7 @@ function TextAreaField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        rows={4}
+        rows={5}
         style={styles.textarea}
       />
     </label>
@@ -573,74 +602,137 @@ function Info({ label, value }: { label: string; value: string }) {
   );
 }
 
+const baseBox: CSSProperties = {
+  width: "100%",
+  maxWidth: "100%",
+  minWidth: 0,
+  boxSizing: "border-box",
+};
+
 const styles: Record<string, CSSProperties> = {
   wrap: {
+    ...baseBox,
     display: "grid",
     gap: 14,
+    overflowX: "hidden",
   },
+
   hero: {
+    ...baseBox,
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "flex-end",
+    justifyContent: "space-between",
     gap: 12,
     padding: 18,
     borderRadius: 18,
     background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.08)",
     boxShadow: "0 10px 24px rgba(15,23,42,0.06)",
+    flexWrap: "wrap",
+    overflow: "hidden",
   },
+
+  heroText: {
+    minWidth: 0,
+    flex: "1 1 280px",
+  },
+
   card: {
+    ...baseBox,
     padding: 18,
     borderRadius: 18,
     background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.08)",
     boxShadow: "0 10px 24px rgba(15,23,42,0.06)",
+    overflow: "hidden",
   },
-  formCard: {
+
+  footerCard: {
+    ...baseBox,
     padding: 18,
     borderRadius: 18,
     background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.08)",
     boxShadow: "0 10px 24px rgba(15,23,42,0.06)",
-    display: "grid",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
     gap: 14,
+    flexWrap: "wrap",
+    overflow: "hidden",
   },
+
+  footerText: {
+    minWidth: 0,
+    flex: "1 1 260px",
+  },
+
+  stepLabel: {
+    fontSize: 11,
+    fontWeight: 1000,
+    color: "#0B3C5D",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 1000,
     color: "#0F172A",
+    wordBreak: "break-word",
   },
+
   sub: {
     marginTop: 6,
     fontSize: 13,
     fontWeight: 700,
     color: "#475569",
     lineHeight: 1.5,
-    maxWidth: 760,
+    wordBreak: "break-word",
   },
-  statPill: {
+
+  statusChip: {
+    maxWidth: "100%",
     display: "inline-flex",
     alignItems: "center",
     padding: "8px 12px",
     borderRadius: 999,
-    background: "rgba(11,60,93,0.06)",
-    border: "1px solid rgba(11,60,93,0.10)",
-    color: "#0B3C5D",
+    background: "rgba(100,116,139,0.10)",
+    border: "1px solid rgba(100,116,139,0.18)",
+    color: "#334155",
     fontSize: 12,
     fontWeight: 1000,
-    whiteSpace: "nowrap",
   },
+
+  formCard: {
+    ...baseBox,
+    padding: 18,
+    borderRadius: 18,
+    background: "#FFFFFF",
+    border: "1px solid rgba(15,23,42,0.08)",
+    boxShadow: "0 10px 24px rgba(15,23,42,0.06)",
+    display: "grid",
+    gap: 14,
+    overflow: "hidden",
+  },
+
   sectionHeader: {
+    ...baseBox,
     display: "flex",
     justifyContent: "space-between",
     gap: 12,
     marginBottom: 14,
+    flexWrap: "wrap",
   },
+
   sectionTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: 1000,
     color: "#0F172A",
+    marginTop: 4,
   },
+
   sectionSub: {
     marginTop: 4,
     fontSize: 12,
@@ -648,31 +740,28 @@ const styles: Record<string, CSSProperties> = {
     color: "#64748B",
     lineHeight: 1.5,
   },
-  grid1: {
-    display: "grid",
-    gap: 12,
-  },
+
   grid2: {
+    ...baseBox,
     display: "grid",
     gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
     gap: 12,
   },
-  grid3: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: 12,
-  },
+
   labelWrap: {
+    ...baseBox,
     display: "grid",
     gap: 8,
   },
+
   label: {
     fontSize: 12,
     fontWeight: 900,
     color: "#334155",
   },
+
   input: {
-    width: "100%",
+    ...baseBox,
     height: 44,
     borderRadius: 12,
     border: "1px solid rgba(15,23,42,0.12)",
@@ -683,8 +772,9 @@ const styles: Record<string, CSSProperties> = {
     color: "#0F172A",
     outline: "none",
   },
+
   textarea: {
-    width: "100%",
+    ...baseBox,
     borderRadius: 12,
     border: "1px solid rgba(15,23,42,0.12)",
     background: "#FFFFFF",
@@ -694,10 +784,12 @@ const styles: Record<string, CSSProperties> = {
     color: "#0F172A",
     outline: "none",
     resize: "vertical",
-    minHeight: 100,
+    minHeight: 120,
     fontFamily: "system-ui, sans-serif",
   },
+
   checkItem: {
+    ...baseBox,
     minHeight: 44,
     display: "flex",
     alignItems: "center",
@@ -707,24 +799,39 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(15,23,42,0.10)",
     background: "rgba(248,250,252,0.9)",
     cursor: "pointer",
+    flexWrap: "wrap",
   },
+
   checkbox: {
     width: 16,
     height: 16,
     accentColor: "#0B3C5D",
     cursor: "pointer",
+    flexShrink: 0,
   },
+
   checkLabel: {
+    minWidth: 0,
     fontSize: 13,
     fontWeight: 900,
     color: "#334155",
   },
+
   actions: {
+    ...baseBox,
     display: "flex",
     justifyContent: "flex-end",
     gap: 10,
     flexWrap: "wrap",
+    marginTop: 4,
   },
+
+  footerActions: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+
   primaryBtn: {
     height: 44,
     padding: "0 18px",
@@ -736,6 +843,7 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 1000,
     cursor: "pointer",
   },
+
   secondaryBtn: {
     height: 40,
     padding: "0 14px",
@@ -747,6 +855,7 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 1000,
     cursor: "pointer",
   },
+
   dangerBtn: {
     height: 40,
     padding: "0 14px",
@@ -758,11 +867,50 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 1000,
     cursor: "pointer",
   },
+
+  primaryLink: {
+    height: 44,
+    padding: "0 18px",
+    borderRadius: 12,
+    border: "1px solid rgba(15,23,42,0.10)",
+    background: "#0B3C5D",
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: 1000,
+    textDecoration: "none",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  secondaryLink: {
+    height: 44,
+    padding: "0 18px",
+    borderRadius: 12,
+    border: "1px solid rgba(15,23,42,0.10)",
+    background: "#FFFFFF",
+    color: "#0F172A",
+    fontSize: 13,
+    fontWeight: 1000,
+    textDecoration: "none",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  linkDisabled: {
+    opacity: 0.45,
+    pointerEvents: "none",
+    cursor: "not-allowed",
+  },
+
   btnDisabled: {
     opacity: 0.7,
     cursor: "not-allowed",
   },
+
   success: {
+    ...baseBox,
     padding: 12,
     borderRadius: 12,
     background: "rgba(46,139,87,0.10)",
@@ -771,16 +919,27 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     fontWeight: 900,
   },
-  error: {
-    padding: 12,
-    borderRadius: 12,
-    background: "rgba(229,57,53,0.10)",
-    border: "1px solid rgba(229,57,53,0.20)",
-    color: "#B91C1C",
-    fontSize: 12,
-    fontWeight: 900,
-  },
+
+error: {
+  width: "100%",
+  maxWidth: "100%",
+  minWidth: 0,
+  padding: 12,
+  borderRadius: 12,
+  background: "rgba(229,57,53,0.10)",
+  border: "1px solid rgba(229,57,53,0.20)",
+  color: "#B91C1C",
+  fontSize: 12,
+  fontWeight: 900,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+  whiteSpace: "pre-wrap",
+  lineHeight: 1.5,
+  boxSizing: "border-box",
+},
+
   emptyBox: {
+    ...baseBox,
     padding: 16,
     borderRadius: 14,
     border: "1px dashed rgba(15,23,42,0.18)",
@@ -790,11 +949,15 @@ const styles: Record<string, CSSProperties> = {
     color: "#475569",
     lineHeight: 1.5,
   },
+
   list: {
+    ...baseBox,
     display: "grid",
     gap: 12,
   },
+
   areaCard: {
+    ...baseBox,
     display: "grid",
     gap: 12,
     padding: 14,
@@ -802,71 +965,96 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(15,23,42,0.08)",
     background: "#FFFFFF",
   },
+
   areaTop: {
+    ...baseBox,
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 12,
+    flexWrap: "wrap",
   },
+
+  areaTitleBox: {
+    minWidth: 0,
+    flex: "1 1 220px",
+  },
+
   areaTitle: {
     fontSize: 17,
     fontWeight: 1000,
     color: "#0F172A",
+    wordBreak: "break-word",
   },
+
   areaType: {
     marginTop: 4,
     fontSize: 12,
     fontWeight: 800,
     color: "#64748B",
   },
-  statusChip: {
+
+  areaStatusChip: {
     display: "inline-flex",
     alignItems: "center",
     padding: "7px 10px",
     borderRadius: 999,
     fontSize: 12,
     fontWeight: 1000,
-    whiteSpace: "nowrap",
+    flexShrink: 0,
   },
+
   statusActive: {
     background: "rgba(46,139,87,0.10)",
     border: "1px solid rgba(46,139,87,0.20)",
     color: "#14532D",
   },
+
   statusPaused: {
     background: "rgba(100,116,139,0.10)",
     border: "1px solid rgba(100,116,139,0.18)",
     color: "#334155",
   },
+
   description: {
     fontSize: 13,
     fontWeight: 700,
     color: "#475569",
     lineHeight: 1.6,
+    wordBreak: "break-word",
   },
+
   infoGrid: {
+    ...baseBox,
     display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
     gap: 10,
   },
+
   infoCard: {
+    ...baseBox,
     padding: 12,
     borderRadius: 12,
     background: "#F8FAFC",
     border: "1px solid rgba(15,23,42,0.06)",
   },
+
   infoLabel: {
     fontSize: 11,
     fontWeight: 900,
     color: "#64748B",
   },
+
   infoValue: {
     marginTop: 4,
     fontSize: 13,
     fontWeight: 1000,
     color: "#0F172A",
+    wordBreak: "break-word",
   },
+
   rulesBox: {
+    ...baseBox,
     padding: 12,
     borderRadius: 12,
     background: "rgba(11,60,93,0.06)",
@@ -875,8 +1063,11 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     fontWeight: 800,
     lineHeight: 1.5,
+    wordBreak: "break-word",
   },
+
   cardActions: {
+    ...baseBox,
     display: "flex",
     gap: 10,
     flexWrap: "wrap",

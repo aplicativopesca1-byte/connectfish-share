@@ -8,7 +8,6 @@ import {
   doc,
   getDocs,
   limit,
-  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -146,7 +145,7 @@ function splitDateTime(value: string) {
 
 export default function FisherySessionsClient({ uid }: Props) {
   const [fisheryId, setFisheryId] = useState<string | null>(null);
-  const [fisheryName, setFisheryName] = useState<string>("");
+  const [fisheryName, setFisheryName] = useState<string>("Meu pesqueiro");
 
   const [areas, setAreas] = useState<FisheryArea[]>([]);
   const [sessions, setSessions] = useState<FishingSession[]>([]);
@@ -192,11 +191,10 @@ export default function FisherySessionsClient({ uid }: Props) {
       return docSnap.id;
     }
 
-    const directFisheryId = uid;
-    setFisheryId(directFisheryId);
+    setFisheryId(uid);
     setFisheryName("Meu pesqueiro");
 
-    return directFisheryId;
+    return uid;
   }
 
   async function loadPage() {
@@ -211,7 +209,8 @@ export default function FisherySessionsClient({ uid }: Props) {
         loadSessions(resolvedFisheryId),
       ]);
     } catch (e: any) {
-      setError(e?.message || "Não foi possível carregar as sessões.");
+      console.error("Erro ao carregar sessões:", e);
+      setError("Não foi possível carregar as sessões.");
     } finally {
       setLoading(false);
     }
@@ -221,8 +220,7 @@ export default function FisherySessionsClient({ uid }: Props) {
     const q = query(
       collection(db, "pesqueiroAreas"),
       where("ownerId", "==", uid),
-      where("active", "==", true),
-      orderBy("createdAt", "desc")
+      where("active", "==", true)
     );
 
     const snap = await getDocs(q);
@@ -247,8 +245,7 @@ export default function FisherySessionsClient({ uid }: Props) {
   async function loadSessions(currentFisheryId = fisheryId) {
     const q = query(
       collection(db, "fishingSessions"),
-      where("ownerId", "==", uid),
-      orderBy("startAt", "desc")
+      where("ownerId", "==", uid)
     );
 
     const snap = await getDocs(q);
@@ -274,6 +271,12 @@ export default function FisherySessionsClient({ uid }: Props) {
         status: data?.status ?? "scheduled",
         rules: data?.rules ?? "",
       };
+    });
+
+    items.sort((a, b) => {
+      const aMs = new Date(a.startAt).getTime();
+      const bMs = new Date(b.startAt).getTime();
+      return (Number.isFinite(bMs) ? bMs : 0) - (Number.isFinite(aMs) ? aMs : 0);
     });
 
     setSessions(items);
@@ -322,7 +325,6 @@ export default function FisherySessionsClient({ uid }: Props) {
       setMessage(null);
 
       const currentFisheryId = fisheryId || (await resolveFisheryId());
-
       const area = areas.find((item) => item.id === form.areaId);
 
       if (!currentFisheryId) {
@@ -395,6 +397,7 @@ export default function FisherySessionsClient({ uid }: Props) {
       setEditingId(null);
       await loadSessions(currentFisheryId);
     } catch (e: any) {
+      console.error("Erro ao salvar sessão:", e);
       setError(e?.message || "Não foi possível salvar a sessão.");
     } finally {
       setSaving(false);
@@ -414,7 +417,8 @@ export default function FisherySessionsClient({ uid }: Props) {
       setMessage(session.active ? "Sessão pausada." : "Sessão ativada.");
       await loadSessions(fisheryId);
     } catch (e: any) {
-      setError(e?.message || "Não foi possível alterar o status.");
+      console.error("Erro ao alterar sessão:", e);
+      setError("Não foi possível alterar o status.");
     }
   }
 
@@ -442,6 +446,7 @@ export default function FisherySessionsClient({ uid }: Props) {
       setMessage("Sessão excluída com sucesso.");
       await loadSessions(fisheryId);
     } catch (e: any) {
+      console.error("Erro ao excluir sessão:", e);
       setError(e?.message || "Não foi possível excluir a sessão.");
     }
   }
@@ -460,15 +465,15 @@ export default function FisherySessionsClient({ uid }: Props) {
   return (
     <div style={styles.wrap}>
       <section style={styles.hero}>
-        <div>
+        <div style={styles.heroText}>
+          <div style={styles.stepLabel}>Etapa 3 de 4</div>
           <div style={styles.title}>Sessões de pesca</div>
           <div style={styles.sub}>
             Crie horários, datas, vagas e preços para cada estrutura do seu
             pesqueiro.
           </div>
           <div style={styles.fisheryHint}>
-            Pesqueiro vinculado: {fisheryName || "Meu pesqueiro"} · ID:{" "}
-            {fisheryId || uid}
+            Pesqueiro vinculado: {fisheryName || "Meu pesqueiro"}
           </div>
         </div>
 
@@ -532,7 +537,7 @@ export default function FisherySessionsClient({ uid }: Props) {
           </div>
         ) : null}
 
-        <div style={styles.grid3}>
+        <div style={styles.grid2}>
           <label style={styles.labelWrap}>
             <span style={styles.label}>Tipo de sessão</span>
             <select
@@ -557,16 +562,16 @@ export default function FisherySessionsClient({ uid }: Props) {
             onChange={(v) => updateField("capacity", v)}
             placeholder="Ex: 40"
           />
-
-          <Field
-            label="Preço por vaga"
-            value={form.price}
-            onChange={(v) => updateField("price", v)}
-            placeholder="Ex: 120"
-          />
         </div>
 
-        <div style={styles.grid4}>
+        <Field
+          label="Preço por vaga"
+          value={form.price}
+          onChange={(v) => updateField("price", v)}
+          placeholder="Ex: 120"
+        />
+
+        <div style={styles.grid2}>
           <Field
             label="Data início"
             value={form.startDate}
@@ -580,7 +585,9 @@ export default function FisherySessionsClient({ uid }: Props) {
             onChange={(v) => updateField("startTime", v)}
             type="time"
           />
+        </div>
 
+        <div style={styles.grid2}>
           <Field
             label="Data fim"
             value={form.endDate}
@@ -596,14 +603,12 @@ export default function FisherySessionsClient({ uid }: Props) {
           />
         </div>
 
-        <div style={styles.grid1}>
-          <TextAreaField
-            label="Regras específicas da sessão"
-            value={form.rules}
-            onChange={(v) => updateField("rules", v)}
-            placeholder="Ex: chegada com 30 minutos de antecedência, limite de acompanhantes, regras da noturna..."
-          />
-        </div>
+        <TextAreaField
+          label="Regras específicas da sessão"
+          value={form.rules}
+          onChange={(v) => updateField("rules", v)}
+          placeholder="Ex: chegada com 30 minutos de antecedência, limite de acompanhantes, regras da noturna..."
+        />
 
         <div style={styles.checkGrid}>
           <label style={styles.checkItem}>
@@ -648,8 +653,8 @@ export default function FisherySessionsClient({ uid }: Props) {
             {saving
               ? "Salvando..."
               : editingId
-              ? "Salvar alterações"
-              : "Criar sessão"}
+                ? "Salvar alterações"
+                : "Criar sessão"}
           </button>
         </div>
       </form>
@@ -680,7 +685,7 @@ export default function FisherySessionsClient({ uid }: Props) {
               return (
                 <article key={session.id} style={styles.sessionCard}>
                   <div style={styles.sessionTop}>
-                    <div>
+                    <div style={styles.sessionTitleBox}>
                       <div style={styles.sessionTitle}>{session.title}</div>
                       <div style={styles.sessionSub}>
                         {session.areaName} ·{" "}
@@ -716,10 +721,6 @@ export default function FisherySessionsClient({ uid }: Props) {
                       label="Fila"
                       value={session.waitlistEnabled ? "Ativa" : "Desativada"}
                     />
-                  </div>
-
-                  <div style={styles.sessionIdBox}>
-                    pesqueiroId salvo: {session.pesqueiroId || "—"}
                   </div>
 
                   {session.rules ? (
@@ -808,7 +809,7 @@ function TextAreaField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        rows={4}
+        rows={5}
         style={styles.textarea}
       />
     </label>
@@ -824,9 +825,23 @@ function Info({ label, value }: { label: string; value: string }) {
   );
 }
 
+const baseBox: CSSProperties = {
+  width: "100%",
+  maxWidth: "100%",
+  minWidth: 0,
+  boxSizing: "border-box",
+};
+
 const styles: Record<string, CSSProperties> = {
-  wrap: { display: "grid", gap: 14 },
+  wrap: {
+    ...baseBox,
+    display: "grid",
+    gap: 14,
+    overflowX: "hidden",
+  },
+
   hero: {
+    ...baseBox,
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-end",
@@ -836,15 +851,27 @@ const styles: Record<string, CSSProperties> = {
     background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.08)",
     boxShadow: "0 10px 24px rgba(15,23,42,0.06)",
+    flexWrap: "wrap",
+    overflow: "hidden",
   },
+
+  heroText: {
+    minWidth: 0,
+    flex: "1 1 280px",
+  },
+
   card: {
+    ...baseBox,
     padding: 18,
     borderRadius: 18,
     background: "#FFFFFF",
     border: "1px solid rgba(15,23,42,0.08)",
     boxShadow: "0 10px 24px rgba(15,23,42,0.06)",
+    overflow: "hidden",
   },
+
   formCard: {
+    ...baseBox,
     padding: 18,
     borderRadius: 18,
     background: "#FFFFFF",
@@ -852,8 +879,25 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: "0 10px 24px rgba(15,23,42,0.06)",
     display: "grid",
     gap: 14,
+    overflow: "hidden",
   },
-  title: { fontSize: 24, fontWeight: 1000, color: "#0F172A" },
+
+  stepLabel: {
+    fontSize: 11,
+    fontWeight: 1000,
+    color: "#0B3C5D",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+
+  title: {
+    fontSize: 24,
+    fontWeight: 1000,
+    color: "#0F172A",
+    wordBreak: "break-word",
+  },
+
   sub: {
     marginTop: 6,
     fontSize: 13,
@@ -861,14 +905,19 @@ const styles: Record<string, CSSProperties> = {
     color: "#475569",
     lineHeight: 1.5,
     maxWidth: 760,
+    wordBreak: "break-word",
   },
+
   fisheryHint: {
     marginTop: 8,
     fontSize: 12,
     fontWeight: 800,
     color: "#0B3C5D",
+    wordBreak: "break-word",
   },
+
   statPill: {
+    maxWidth: "100%",
     display: "inline-flex",
     alignItems: "center",
     padding: "8px 12px",
@@ -878,15 +927,23 @@ const styles: Record<string, CSSProperties> = {
     color: "#0B3C5D",
     fontSize: 12,
     fontWeight: 1000,
-    whiteSpace: "nowrap",
   },
+
   sectionHeader: {
+    ...baseBox,
     display: "flex",
     justifyContent: "space-between",
     gap: 12,
     marginBottom: 14,
+    flexWrap: "wrap",
   },
-  sectionTitle: { fontSize: 15, fontWeight: 1000, color: "#0F172A" },
+
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: 1000,
+    color: "#0F172A",
+  },
+
   sectionSub: {
     marginTop: 4,
     fontSize: 12,
@@ -894,31 +951,35 @@ const styles: Record<string, CSSProperties> = {
     color: "#64748B",
     lineHeight: 1.5,
   },
-  grid1: { display: "grid", gap: 12 },
+
   grid2: {
+    ...baseBox,
     display: "grid",
     gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
     gap: 12,
   },
-  grid3: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: 12,
-  },
-  grid4: {
-    display: "grid",
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-    gap: 12,
-  },
+
   checkGrid: {
+    ...baseBox,
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: 10,
   },
-  labelWrap: { display: "grid", gap: 8 },
-  label: { fontSize: 12, fontWeight: 900, color: "#334155" },
+
+  labelWrap: {
+    ...baseBox,
+    display: "grid",
+    gap: 8,
+  },
+
+  label: {
+    fontSize: 12,
+    fontWeight: 900,
+    color: "#334155",
+  },
+
   input: {
-    width: "100%",
+    ...baseBox,
     height: 44,
     borderRadius: 12,
     border: "1px solid rgba(15,23,42,0.12)",
@@ -929,8 +990,9 @@ const styles: Record<string, CSSProperties> = {
     color: "#0F172A",
     outline: "none",
   },
+
   textarea: {
-    width: "100%",
+    ...baseBox,
     borderRadius: 12,
     border: "1px solid rgba(15,23,42,0.12)",
     background: "#FFFFFF",
@@ -940,10 +1002,12 @@ const styles: Record<string, CSSProperties> = {
     color: "#0F172A",
     outline: "none",
     resize: "vertical",
-    minHeight: 100,
+    minHeight: 120,
     fontFamily: "system-ui, sans-serif",
   },
+
   checkItem: {
+    ...baseBox,
     minHeight: 44,
     display: "flex",
     alignItems: "center",
@@ -953,20 +1017,32 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(15,23,42,0.10)",
     background: "rgba(248,250,252,0.9)",
     cursor: "pointer",
+    flexWrap: "wrap",
   },
+
   checkbox: {
     width: 16,
     height: 16,
     accentColor: "#0B3C5D",
     cursor: "pointer",
+    flexShrink: 0,
   },
-  checkLabel: { fontSize: 13, fontWeight: 900, color: "#334155" },
+
+  checkLabel: {
+    minWidth: 0,
+    fontSize: 13,
+    fontWeight: 900,
+    color: "#334155",
+  },
+
   actions: {
+    ...baseBox,
     display: "flex",
     justifyContent: "flex-end",
     gap: 10,
     flexWrap: "wrap",
   },
+
   primaryBtn: {
     height: 44,
     padding: "0 18px",
@@ -978,6 +1054,7 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 1000,
     cursor: "pointer",
   },
+
   secondaryBtn: {
     height: 40,
     padding: "0 14px",
@@ -989,6 +1066,7 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 1000,
     cursor: "pointer",
   },
+
   dangerBtn: {
     height: 40,
     padding: "0 14px",
@@ -1000,8 +1078,14 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 1000,
     cursor: "pointer",
   },
-  btnDisabled: { opacity: 0.7, cursor: "not-allowed" },
+
+  btnDisabled: {
+    opacity: 0.7,
+    cursor: "not-allowed",
+  },
+
   success: {
+    ...baseBox,
     padding: 12,
     borderRadius: 12,
     background: "rgba(46,139,87,0.10)",
@@ -1010,7 +1094,9 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     fontWeight: 900,
   },
+
   error: {
+    ...baseBox,
     padding: 12,
     borderRadius: 12,
     background: "rgba(229,57,53,0.10)",
@@ -1018,8 +1104,14 @@ const styles: Record<string, CSSProperties> = {
     color: "#B91C1C",
     fontSize: 12,
     fontWeight: 900,
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+    whiteSpace: "pre-wrap",
+    lineHeight: 1.5,
   },
+
   warning: {
+    ...baseBox,
     padding: 12,
     borderRadius: 12,
     background: "rgba(245,158,11,0.10)",
@@ -1028,7 +1120,9 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     fontWeight: 900,
   },
+
   hint: {
+    ...baseBox,
     padding: 10,
     borderRadius: 12,
     background: "rgba(11,60,93,0.06)",
@@ -1036,8 +1130,11 @@ const styles: Record<string, CSSProperties> = {
     color: "#0B3C5D",
     fontSize: 12,
     fontWeight: 800,
+    wordBreak: "break-word",
   },
+
   emptyBox: {
+    ...baseBox,
     padding: 16,
     borderRadius: 14,
     border: "1px dashed rgba(15,23,42,0.18)",
@@ -1047,8 +1144,15 @@ const styles: Record<string, CSSProperties> = {
     color: "#475569",
     lineHeight: 1.5,
   },
-  list: { display: "grid", gap: 12 },
+
+  list: {
+    ...baseBox,
+    display: "grid",
+    gap: 12,
+  },
+
   sessionCard: {
+    ...baseBox,
     display: "grid",
     gap: 12,
     padding: 14,
@@ -1056,19 +1160,36 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(15,23,42,0.08)",
     background: "#FFFFFF",
   },
+
   sessionTop: {
+    ...baseBox,
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 12,
+    flexWrap: "wrap",
   },
-  sessionTitle: { fontSize: 17, fontWeight: 1000, color: "#0F172A" },
+
+  sessionTitleBox: {
+    minWidth: 0,
+    flex: "1 1 220px",
+  },
+
+  sessionTitle: {
+    fontSize: 17,
+    fontWeight: 1000,
+    color: "#0F172A",
+    wordBreak: "break-word",
+  },
+
   sessionSub: {
     marginTop: 4,
     fontSize: 12,
     fontWeight: 800,
     color: "#64748B",
+    wordBreak: "break-word",
   },
+
   statusChip: {
     display: "inline-flex",
     alignItems: "center",
@@ -1076,45 +1197,52 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 999,
     fontSize: 12,
     fontWeight: 1000,
-    whiteSpace: "nowrap",
+    flexShrink: 0,
   },
+
   statusActive: {
     background: "rgba(46,139,87,0.10)",
     border: "1px solid rgba(46,139,87,0.20)",
     color: "#14532D",
   },
+
   statusPaused: {
     background: "rgba(100,116,139,0.10)",
     border: "1px solid rgba(100,116,139,0.18)",
     color: "#334155",
   },
+
   infoGrid: {
+    ...baseBox,
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
     gap: 10,
   },
+
   infoCard: {
+    ...baseBox,
     padding: 12,
     borderRadius: 12,
     background: "#F8FAFC",
     border: "1px solid rgba(15,23,42,0.06)",
   },
-  infoLabel: { fontSize: 11, fontWeight: 900, color: "#64748B" },
+
+  infoLabel: {
+    fontSize: 11,
+    fontWeight: 900,
+    color: "#64748B",
+  },
+
   infoValue: {
     marginTop: 4,
     fontSize: 13,
     fontWeight: 1000,
     color: "#0F172A",
+    wordBreak: "break-word",
   },
-  sessionIdBox: {
-    padding: 10,
-    borderRadius: 12,
-    background: "rgba(11,60,93,0.06)",
-    color: "#0B3C5D",
-    fontSize: 12,
-    fontWeight: 800,
-  },
+
   rulesBox: {
+    ...baseBox,
     padding: 12,
     borderRadius: 12,
     background: "rgba(11,60,93,0.06)",
@@ -1123,6 +1251,13 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     fontWeight: 800,
     lineHeight: 1.5,
+    wordBreak: "break-word",
   },
-  cardActions: { display: "flex", gap: 10, flexWrap: "wrap" },
+
+  cardActions: {
+    ...baseBox,
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+  },
 };
