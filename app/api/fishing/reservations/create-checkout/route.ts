@@ -384,6 +384,39 @@ export async function POST(request: NextRequest) {
     const providerPaymentId = extractAsaasPaymentId(
       asaasCharge as unknown as Record<string, unknown>
     );
+    let pixQrCode: string | null = null;
+let pixCopyPaste: string | null = null;
+
+try {
+  const pixResponse = await fetch(
+    `https://sandbox.asaas.com/api/v3/payments/${providerPaymentId}/pixQrCode`,
+    {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        access_token: process.env.ASAAS_API_KEY || "",
+      },
+    }
+  );
+
+  if (pixResponse.ok) {
+    const pixData = await pixResponse.json();
+
+    pixQrCode =
+      safeTrim(pixData?.encodedImage) ||
+      safeTrim(pixData?.pixQrCode) ||
+      null;
+
+    pixCopyPaste =
+      safeTrim(pixData?.payload) ||
+      safeTrim(pixData?.copyPasteKey) ||
+      null;
+
+    console.log("PIX DATA:", pixData);
+  }
+} catch (pixError) {
+  console.error("Erro ao buscar PIX:", pixError);
+}
 
     if (!providerPaymentId) {
       throw new Error("O Asaas não retornou um providerPaymentId válido.");
@@ -391,14 +424,6 @@ export async function POST(request: NextRequest) {
 
     const invoiceUrl =
       extractAsaasInvoiceUrl(asaasCharge as unknown as Record<string, unknown>) ||
-      null;
-
-    const pixQrCode =
-      extractAsaasPixQrCode(asaasCharge as unknown as Record<string, unknown>) ||
-      null;
-
-    const pixCopyPaste =
-      extractAsaasPixCopyPaste(asaasCharge as unknown as Record<string, unknown>) ||
       null;
 
     await reservationRef.update({
