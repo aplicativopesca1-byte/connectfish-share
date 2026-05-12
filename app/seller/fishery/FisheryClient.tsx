@@ -29,6 +29,24 @@ type FormState = {
   address: string;
   latitude: string;
   longitude: string;
+
+  rules: string;
+  cancellationPolicy: string;
+
+  restaurant: boolean;
+  parking: boolean;
+  bathroom: boolean;
+  fishCleaningArea: boolean;
+  baitShop: boolean;
+  boatRental: boolean;
+  accessibility: boolean;
+
+  lakesCount: string;
+  kiosksCount: string;
+  platformsCount: string;
+  decksCount: string;
+  cabinsCount: string;
+  boatsAvailable: string;
 };
 
 type ExistingImage = {
@@ -50,6 +68,24 @@ const initialForm: FormState = {
   address: "",
   latitude: "",
   longitude: "",
+
+  rules: "",
+  cancellationPolicy: "",
+
+  restaurant: false,
+  parking: false,
+  bathroom: false,
+  fishCleaningArea: false,
+  baitShop: false,
+  boatRental: false,
+  accessibility: false,
+
+  lakesCount: "",
+  kiosksCount: "",
+  platformsCount: "",
+  decksCount: "",
+  cabinsCount: "",
+  boatsAvailable: "",
 };
 
 function parseFishTypes(input: string) {
@@ -66,6 +102,11 @@ function slugifyFileName(name: string) {
     .replace(/\s+/g, "-")
     .replace(/[^a-zA-Z0-9._-]/g, "")
     .toLowerCase();
+}
+
+function toNumber(value: string) {
+  const normalized = Number(value || 0);
+  return Number.isFinite(normalized) ? normalized : 0;
 }
 
 function buildLocationQuery(form: FormState) {
@@ -141,6 +182,42 @@ export default function FisheryClient({ uid }: FisheryClientProps) {
             data?.location?.longitude !== null &&
             data?.location?.longitude !== undefined
               ? String(data.location.longitude)
+              : "",
+
+          rules: data?.rules ?? "",
+          cancellationPolicy: data?.cancellationPolicy ?? "",
+
+          restaurant: Boolean(data?.amenities?.restaurant),
+          parking: Boolean(data?.amenities?.parking),
+          bathroom: Boolean(data?.amenities?.bathroom),
+          fishCleaningArea: Boolean(data?.amenities?.fishCleaningArea),
+          baitShop: Boolean(data?.amenities?.baitShop),
+          boatRental: Boolean(data?.amenities?.boatRental),
+          accessibility: Boolean(data?.amenities?.accessibility),
+
+          lakesCount:
+            data?.structureSummary?.lakesCount !== undefined
+              ? String(data.structureSummary.lakesCount)
+              : "",
+          kiosksCount:
+            data?.structureSummary?.kiosksCount !== undefined
+              ? String(data.structureSummary.kiosksCount)
+              : "",
+          platformsCount:
+            data?.structureSummary?.platformsCount !== undefined
+              ? String(data.structureSummary.platformsCount)
+              : "",
+          decksCount:
+            data?.structureSummary?.decksCount !== undefined
+              ? String(data.structureSummary.decksCount)
+              : "",
+          cabinsCount:
+            data?.structureSummary?.cabinsCount !== undefined
+              ? String(data.structureSummary.cabinsCount)
+              : "",
+          boatsAvailable:
+            data?.structureSummary?.boatsAvailable !== undefined
+              ? String(data.structureSummary.boatsAvailable)
               : "",
         });
 
@@ -362,6 +439,29 @@ export default function FisheryClient({ uid }: FisheryClientProps) {
           latitude: form.latitude ? Number(form.latitude) : null,
           longitude: form.longitude ? Number(form.longitude) : null,
         },
+
+        rules: form.rules.trim(),
+        cancellationPolicy: form.cancellationPolicy.trim(),
+
+        amenities: {
+          restaurant: form.restaurant,
+          parking: form.parking,
+          bathroom: form.bathroom,
+          fishCleaningArea: form.fishCleaningArea,
+          baitShop: form.baitShop,
+          boatRental: form.boatRental,
+          accessibility: form.accessibility,
+        },
+
+        structureSummary: {
+          lakesCount: toNumber(form.lakesCount),
+          kiosksCount: toNumber(form.kiosksCount),
+          platformsCount: toNumber(form.platformsCount),
+          decksCount: toNumber(form.decksCount),
+          cabinsCount: toNumber(form.cabinsCount),
+          boatsAvailable: toNumber(form.boatsAvailable),
+        },
+
         images,
         coverImage: coverImage || images[0]?.url || "",
         status: "pending_review",
@@ -406,7 +506,7 @@ export default function FisheryClient({ uid }: FisheryClientProps) {
         <div>
           <div style={styles.title}>Meu pesqueiro</div>
           <div style={styles.sub}>
-            Cadastre, adicione fotos e configure a localização do seu estabelecimento.
+            Cadastre, adicione fotos e configure a operação do seu estabelecimento.
           </div>
         </div>
 
@@ -568,6 +668,122 @@ export default function FisheryClient({ uid }: FisheryClientProps) {
           Primeiro tente buscar a localização pelo endereço. Se necessário, você ainda pode ajustar as coordenadas manualmente.
         </div>
 
+        <div style={styles.sectionTitle}>Estrutura do pesqueiro</div>
+
+        <div style={styles.grid2}>
+          <Field
+            label="Quantidade de lagos / tanques"
+            value={form.lakesCount}
+            onChange={(v) => updateField("lakesCount", v)}
+            placeholder="Ex: 4"
+          />
+
+          <Field
+            label="Quantidade de quiosques"
+            value={form.kiosksCount}
+            onChange={(v) => updateField("kiosksCount", v)}
+            placeholder="Ex: 12"
+          />
+        </div>
+
+        <div style={styles.grid2}>
+          <Field
+            label="Plataformas"
+            value={form.platformsCount}
+            onChange={(v) => updateField("platformsCount", v)}
+            placeholder="Ex: 20"
+          />
+
+          <Field
+            label="Decks"
+            value={form.decksCount}
+            onChange={(v) => updateField("decksCount", v)}
+            placeholder="Ex: 5"
+          />
+        </div>
+
+        <div style={styles.grid2}>
+          <Field
+            label="Chalés / ranchos"
+            value={form.cabinsCount}
+            onChange={(v) => updateField("cabinsCount", v)}
+            placeholder="Ex: 3"
+          />
+
+          <Field
+            label="Barcos disponíveis"
+            value={form.boatsAvailable}
+            onChange={(v) => updateField("boatsAvailable", v)}
+            placeholder="Ex: 8"
+          />
+        </div>
+
+        <div style={styles.sectionTitle}>Comodidades</div>
+
+        <div style={styles.checkGrid}>
+          <CheckField
+            label="Restaurante"
+            checked={form.restaurant}
+            onChange={(v) => updateField("restaurant", v)}
+          />
+
+          <CheckField
+            label="Estacionamento"
+            checked={form.parking}
+            onChange={(v) => updateField("parking", v)}
+          />
+
+          <CheckField
+            label="Banheiro"
+            checked={form.bathroom}
+            onChange={(v) => updateField("bathroom", v)}
+          />
+
+          <CheckField
+            label="Limpeza de peixe"
+            checked={form.fishCleaningArea}
+            onChange={(v) => updateField("fishCleaningArea", v)}
+          />
+
+          <CheckField
+            label="Venda de iscas"
+            checked={form.baitShop}
+            onChange={(v) => updateField("baitShop", v)}
+          />
+
+          <CheckField
+            label="Aluguel de barco"
+            checked={form.boatRental}
+            onChange={(v) => updateField("boatRental", v)}
+          />
+
+          <CheckField
+            label="Acessibilidade"
+            checked={form.accessibility}
+            onChange={(v) => updateField("accessibility", v)}
+          />
+        </div>
+
+        <div style={styles.sectionTitle}>Regras e política</div>
+
+        <div style={styles.grid1}>
+          <TextAreaField
+            label="Regras do pesqueiro"
+            value={form.rules}
+            onChange={(v) => updateField("rules", v)}
+            placeholder="Ex: Proibido ceva externa, obrigatório uso de passaguá, pesca esportiva com soltura..."
+          />
+        </div>
+
+        <div style={styles.grid1}>
+          <TextAreaField
+            label="Política de cancelamento"
+            value={form.cancellationPolicy}
+            onChange={(v) => updateField("cancellationPolicy", v)}
+            placeholder="Ex: Cancelamento com até 24h de antecedência permite reagendamento..."
+          />
+        </div>
+
         <div style={styles.sectionTitle}>Fotos do pesqueiro</div>
 
         <div style={styles.imageUploadBox}>
@@ -708,6 +924,28 @@ function TextAreaField({
   );
 }
 
+function CheckField({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label style={styles.checkItem}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={styles.checkbox}
+      />
+      <span style={styles.checkLabel}>{label}</span>
+    </label>
+  );
+}
+
 const styles: Record<string, CSSProperties> = {
   wrap: {
     display: "grid",
@@ -831,6 +1069,37 @@ const styles: Record<string, CSSProperties> = {
     resize: "vertical",
     minHeight: 120,
     fontFamily: "system-ui, sans-serif",
+  },
+
+  checkGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 10,
+  },
+
+  checkItem: {
+    minHeight: 44,
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(15,23,42,0.10)",
+    background: "rgba(248,250,252,0.9)",
+    cursor: "pointer",
+  },
+
+  checkbox: {
+    width: 16,
+    height: 16,
+    accentColor: "#0B3C5D",
+    cursor: "pointer",
+  },
+
+  checkLabel: {
+    fontSize: 13,
+    fontWeight: 900,
+    color: "#334155",
   },
 
   locationActionRow: {
