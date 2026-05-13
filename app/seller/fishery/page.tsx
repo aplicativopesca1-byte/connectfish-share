@@ -45,13 +45,12 @@ export default async function SellerFisheryPage() {
           emoji="🎟️"
         />
 
-        <DashboardCard
-          title="Reservas"
-          text="Em breve: acompanhe reservas, pagamentos, check-in e fila."
-          href="/seller/fishery/reservations"
-          emoji="📋"
-          disabled
-        />
+<DashboardCard
+  title="Reservas"
+  text="Acompanhe reservas, pagamentos, check-ins, clientes e operação do dia a dia."
+  href="/seller/reservations"
+  emoji="📋"
+/>
       </section>
     </main>
   );

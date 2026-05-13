@@ -3,6 +3,13 @@ import { FieldValue } from "firebase-admin/firestore";
 
 import { adminDb } from "../../..//src/lib/firebaseAdmin";
 
+export type OrganizerWalletSourceType =
+  | "tournament"
+  | "reservation"
+  | "payout"
+  | "refund"
+  | "manual";
+
 export type OrganizerWalletTransactionType =
   | "payment_created"
   | "payment_received"
@@ -21,8 +28,18 @@ export type OrganizerWalletTransactionStatus =
 export type OrganizerWalletTransaction = {
   id: string;
   organizerUserId: string;
+  ownerId: string;
+
+  sourceType: OrganizerWalletSourceType;
+  sourceId: string | null;
+
   tournamentId: string | null;
+  reservationId: string | null;
+  pesqueiroId: string | null;
   paymentId: string | null;
+
+  title: string | null;
+  subtitle: string | null;
 
   type: OrganizerWalletTransactionType;
   status: OrganizerWalletTransactionStatus;
@@ -53,6 +70,10 @@ export type OrganizerWalletSummary = {
   refundedAmount: number;
   chargebackAmount: number;
   updatedAt: number | null;
+
+  reservationsAmount: number;
+  tournamentsAmount: number;
+  totalTransactions: number;
 };
 
 export type WalletTournamentRow = {
@@ -114,9 +135,11 @@ export type OrganizerWalletDashboardResponse = {
   walletSummary: OrganizerWalletSummary;
   stats: {
     tournamentsCount: number;
+    reservationsCount: number;
     paymentsCount: number;
     releasesCount: number;
     payoutsCount: number;
+    refundsCount: number;
   };
 };
 
@@ -138,9 +161,7 @@ function normalizeMoney(value: unknown) {
 function toMillis(value: unknown): number | null {
   if (!value) return null;
 
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
+  if (typeof value === "number" && Number.isFinite(value)) return value;
 
   if (typeof value === "string") {
     const date = new Date(value);
@@ -172,6 +193,17 @@ function toMillis(value: unknown): number | null {
 function normalizeCurrency(value: unknown): "BRL" {
   const currency = safeTrim(value).toUpperCase();
   return currency === "BRL" ? "BRL" : "BRL";
+}
+
+function normalizeSourceType(value: unknown): OrganizerWalletSourceType {
+  const raw = safeTrim(value).toLowerCase();
+
+  if (raw === "reservation") return "reservation";
+  if (raw === "payout") return "payout";
+  if (raw === "refund") return "refund";
+  if (raw === "manual") return "manual";
+
+  return "tournament";
 }
 
 function normalizeTransactionType(value: unknown): OrganizerWalletTransactionType {
@@ -259,14 +291,30 @@ async function listWalletTransactions(
     .where("organizerUserId", "==", uid)
     .get();
 
-  const rows = snap.docs.map((docSnap) => {
+  return snap.docs.map((docSnap) => {
     const raw = docSnap.data() as Record<string, unknown>;
+    const tournamentId = nullableString(raw.tournamentId);
+    const sourceType = normalizeSourceType(raw.sourceType || "tournament");
 
     return {
       id: docSnap.id,
-      organizerUserId: safeTrim(raw.organizerUserId),
-      tournamentId: nullableString(raw.tournamentId),
+      organizerUserId: safeTrim(raw.organizerUserId) || uid,
+      ownerId: safeTrim(raw.ownerId) || safeTrim(raw.organizerUserId) || uid,
+
+      sourceType,
+      sourceId:
+        nullableString(raw.sourceId) ||
+        nullableString(raw.reservationId) ||
+        tournamentId ||
+        null,
+
+      tournamentId,
+      reservationId: nullableString(raw.reservationId),
+      pesqueiroId: nullableString(raw.pesqueiroId),
       paymentId: nullableString(raw.paymentId),
+
+      title: nullableString(raw.title),
+      subtitle: nullableString(raw.subtitle),
 
       type: normalizeTransactionType(raw.type),
       status: normalizeTransactionStatus(raw.status),
@@ -284,10 +332,104 @@ async function listWalletTransactions(
       paidOutAt: toMillis(raw.paidOutAt),
       reversedAt: toMillis(raw.reversedAt),
       updatedAt: toMillis(raw.updatedAt),
-    } satisfies OrganizerWalletTransaction;
+    };
+  });
+}
+
+async function listReservationTransactions(
+  ownerId: string
+): Promise<OrganizerWalletTransaction[]> {
+  const db = adminDb();
+  const uid = safeTrim(ownerId);
+  if (!uid) return [];
+
+  const snap = await db
+    .collection("fishingReservations")
+    .where("ownerId", "==", uid)
+    .get();
+
+  const rows: OrganizerWalletTransaction[] = [];
+
+  snap.docs.forEach((docSnap) => {
+    const raw = docSnap.data() as Record<string, unknown>;
+
+    const reservationStatus = safeTrim(raw.status).toLowerCase();
+    const paymentStatus = safeTrim(raw.paymentStatus).toLowerCase();
+
+    const totalPrice = normalizeMoney(raw.totalPrice);
+    if (totalPrice <= 0) return;
+
+    let type: OrganizerWalletTransactionType = "payment_created";
+    let status: OrganizerWalletTransactionStatus = "pending";
+    let reversedAt: number | null = null;
+
+    if (paymentStatus === "paid" || paymentStatus === "received" || paymentStatus === "confirmed") {
+      type = "payment_received";
+      status = "pending";
+    }
+
+    if (paymentStatus === "refunded" || reservationStatus === "cancelled") {
+      type = "refund";
+      status = "reversed";
+      reversedAt = toMillis(raw.cancelledAt) || toMillis(raw.updatedAt);
+    }
+
+    if (paymentStatus === "chargeback") {
+      type = "chargeback";
+      status = "reversed";
+      reversedAt = toMillis(raw.updatedAt);
+    }
+
+    rows.push({
+      id: `reservation_${docSnap.id}`,
+      organizerUserId: uid,
+      ownerId: uid,
+
+      sourceType:
+        type === "refund" || type === "chargeback" ? "refund" : "reservation",
+      sourceId: docSnap.id,
+
+      tournamentId: null,
+      reservationId: docSnap.id,
+      pesqueiroId: nullableString(raw.pesqueiroId) || uid,
+      paymentId: nullableString(raw.providerPaymentId),
+
+      title: `Reserva · ${safeTrim(raw.sessionTitle) || "Sessão de pesca"}`,
+      subtitle:
+        [
+          safeTrim(raw.areaName),
+          safeTrim(raw.userName),
+          safeTrim(raw.userEmail),
+        ]
+          .filter(Boolean)
+          .join(" · ") || null,
+
+      type,
+      status,
+
+      grossAmount: totalPrice,
+      feeAmount: 0,
+      netAmount: totalPrice,
+      currency: "BRL",
+
+      externalReference: nullableString(raw.externalReference),
+      providerPaymentId: nullableString(raw.providerPaymentId),
+
+      createdAt: toMillis(raw.checkoutCreatedAt) || toMillis(raw.createdAt),
+      releasedAt: null,
+      paidOutAt: null,
+      reversedAt,
+      updatedAt: toMillis(raw.updatedAt),
+    });
   });
 
-  rows.sort((a, b) => {
+  return rows;
+}
+
+function sortTransactionsDesc(
+  transactions: OrganizerWalletTransaction[]
+): OrganizerWalletTransaction[] {
+  return [...transactions].sort((a, b) => {
     const aTime =
       a.createdAt ?? a.releasedAt ?? a.paidOutAt ?? a.reversedAt ?? a.updatedAt ?? 0;
     const bTime =
@@ -295,11 +437,9 @@ async function listWalletTransactions(
 
     return bTime - aTime;
   });
-
-  return rows;
 }
 
-async function getWalletSummary(
+async function getWalletSummaryBase(
   organizerUserId: string
 ): Promise<OrganizerWalletSummary> {
   const db = adminDb();
@@ -320,6 +460,9 @@ async function getWalletSummary(
       refundedAmount: 0,
       chargebackAmount: 0,
       updatedAt: null,
+      reservationsAmount: 0,
+      tournamentsAmount: 0,
+      totalTransactions: 0,
     };
   }
 
@@ -336,6 +479,70 @@ async function getWalletSummary(
     refundedAmount: normalizeMoney(raw.refundedAmount),
     chargebackAmount: normalizeMoney(raw.chargebackAmount),
     updatedAt: toMillis(raw.updatedAt),
+    reservationsAmount: 0,
+    tournamentsAmount: normalizeMoney(raw.grossAmount),
+    totalTransactions: 0,
+  };
+}
+
+function buildCombinedSummary(params: {
+  baseSummary: OrganizerWalletSummary;
+  transactions: OrganizerWalletTransaction[];
+}): OrganizerWalletSummary {
+  const { baseSummary, transactions } = params;
+
+  const reservationRevenue = transactions
+    .filter(
+      (item) =>
+        item.sourceType === "reservation" &&
+        item.type === "payment_received"
+    )
+    .reduce((sum, item) => sum + normalizeMoney(item.netAmount), 0);
+
+  const reservationPending = transactions
+    .filter(
+      (item) =>
+        item.sourceType === "reservation" &&
+        item.type === "payment_created"
+    )
+    .reduce((sum, item) => sum + normalizeMoney(item.netAmount), 0);
+
+  const reservationRefunded = transactions
+    .filter(
+      (item) =>
+        item.sourceType === "refund" &&
+        item.reservationId &&
+        item.type === "refund"
+    )
+    .reduce((sum, item) => sum + normalizeMoney(item.netAmount), 0);
+
+  const reservationChargeback = transactions
+    .filter(
+      (item) =>
+        item.sourceType === "refund" &&
+        item.reservationId &&
+        item.type === "chargeback"
+    )
+    .reduce((sum, item) => sum + normalizeMoney(item.netAmount), 0);
+
+  const tournamentRevenue = transactions
+    .filter(
+      (item) =>
+        item.sourceType === "tournament" &&
+        item.type === "payment_received"
+    )
+    .reduce((sum, item) => sum + normalizeMoney(item.netAmount), 0);
+
+  return {
+    ...baseSummary,
+    grossAmount: normalizeMoney(baseSummary.grossAmount + reservationRevenue + reservationPending),
+    netAmount: normalizeMoney(baseSummary.netAmount + reservationRevenue),
+    pendingAmount: normalizeMoney(baseSummary.pendingAmount + reservationRevenue + reservationPending),
+    refundedAmount: normalizeMoney(baseSummary.refundedAmount + reservationRefunded),
+    chargebackAmount: normalizeMoney(baseSummary.chargebackAmount + reservationChargeback),
+    reservationsAmount: normalizeMoney(reservationRevenue),
+    tournamentsAmount: normalizeMoney(tournamentRevenue || baseSummary.grossAmount),
+    totalTransactions: transactions.length,
   };
 }
 
@@ -350,7 +557,7 @@ async function buildTournamentRows(
 
   for (const tx of transactions) {
     const tournamentId = safeTrim(tx.tournamentId);
-    if (!tournamentId) continue;
+    if (!tournamentId || tx.sourceType !== "tournament") continue;
 
     if (!map.has(tournamentId)) {
       map.set(tournamentId, {
@@ -544,30 +751,47 @@ export async function getOrganizerWalletDashboardServer(
   organizerUserId: string
 ): Promise<OrganizerWalletDashboardResponse> {
   const uid = safeTrim(organizerUserId);
-  const [summary, transactions] = await Promise.all([
-    getWalletSummary(uid),
-    listWalletTransactions(uid),
+
+  const [baseSummary, tournamentTransactions, reservationTransactions] =
+    await Promise.all([
+      getWalletSummaryBase(uid),
+      listWalletTransactions(uid),
+      listReservationTransactions(uid),
+    ]);
+
+  const transactions = sortTransactionsDesc([
+    ...tournamentTransactions,
+    ...reservationTransactions,
   ]);
 
   const tournamentRows = await buildTournamentRows(uid, transactions);
 
+  const walletSummary = buildCombinedSummary({
+    baseSummary,
+    transactions,
+  });
+
   return {
     wallet: {
-      ...summary,
+      ...walletSummary,
       currency: "BRL",
     },
     transactions,
     tournamentRows,
     currency: "BRL",
-    walletSummary: summary,
+    walletSummary,
     stats: {
       tournamentsCount: tournamentRows.length,
+      reservationsCount: reservationTransactions.length,
       paymentsCount: transactions.filter((item) => item.type === "payment_received")
         .length,
       releasesCount: transactions.filter(
         (item) => item.type === "release_to_available"
       ).length,
       payoutsCount: transactions.filter((item) => item.type === "payout_sent").length,
+      refundsCount: transactions.filter(
+        (item) => item.type === "refund" || item.type === "chargeback"
+      ).length,
     },
   };
 }
@@ -576,7 +800,7 @@ export async function getOrganizerWalletPayoutStatusServer(organizerUserId: stri
   const uid = safeTrim(organizerUserId);
 
   const [walletSummary, latestPayoutRequest, payoutOpen] = await Promise.all([
-    getWalletSummary(uid),
+    getWalletSummaryBase(uid),
     getLatestPayoutRequest(uid),
     hasOpenPayoutRequest(uid),
   ]);
@@ -599,7 +823,7 @@ export async function createOrganizerWalletPayoutRequestServer(params: {
   }
 
   const [walletSummary, payoutOpen] = await Promise.all([
-    getWalletSummary(organizerUserId),
+    getWalletSummaryBase(organizerUserId),
     hasOpenPayoutRequest(organizerUserId),
   ]);
 

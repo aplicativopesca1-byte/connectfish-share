@@ -92,6 +92,21 @@ export type ParsedAsaasWebhookResult = {
   message: string;
 };
 
+type ReservationPayment = {
+  id: string;
+  ownerId: string;
+  pesqueiroId: string | null;
+  providerPaymentId: string | null;
+  externalReference: string | null;
+  totalPrice: number;
+  paymentStatus: string | null;
+  sessionTitle: string | null;
+  areaName: string | null;
+  userName: string | null;
+  userEmail: string | null;
+  currency: "BRL";
+};
+
 type TeamMemberPaymentStatus =
   | "pending"
   | "approved"
@@ -138,18 +153,10 @@ function normalizeEventType(value: unknown): AsaasWebhookEventType {
   if (event === "PAYMENT_DELETED") return "PAYMENT_DELETED";
   if (event === "PAYMENT_RESTORED") return "PAYMENT_RESTORED";
   if (event === "PAYMENT_REFUNDED") return "PAYMENT_REFUNDED";
-  if (event === "PAYMENT_RECEIVED_IN_CASH_UNDONE") {
-    return "PAYMENT_RECEIVED_IN_CASH_UNDONE";
-  }
-  if (event === "PAYMENT_CHARGEBACK_REQUESTED") {
-    return "PAYMENT_CHARGEBACK_REQUESTED";
-  }
-  if (event === "PAYMENT_CHARGEBACK_DISPUTE") {
-    return "PAYMENT_CHARGEBACK_DISPUTE";
-  }
-  if (event === "PAYMENT_AWAITING_CHARGEBACK_REVERSAL") {
-    return "PAYMENT_AWAITING_CHARGEBACK_REVERSAL";
-  }
+  if (event === "PAYMENT_RECEIVED_IN_CASH_UNDONE") return "PAYMENT_RECEIVED_IN_CASH_UNDONE";
+  if (event === "PAYMENT_CHARGEBACK_REQUESTED") return "PAYMENT_CHARGEBACK_REQUESTED";
+  if (event === "PAYMENT_CHARGEBACK_DISPUTE") return "PAYMENT_CHARGEBACK_DISPUTE";
+  if (event === "PAYMENT_AWAITING_CHARGEBACK_REVERSAL") return "PAYMENT_AWAITING_CHARGEBACK_REVERSAL";
   if (event === "PAYMENT_DUNNING_RECEIVED") return "PAYMENT_DUNNING_RECEIVED";
   if (event === "PAYMENT_DUNNING_REQUESTED") return "PAYMENT_DUNNING_REQUESTED";
   if (event === "PAYMENT_BANK_SLIP_VIEWED") return "PAYMENT_BANK_SLIP_VIEWED";
@@ -178,9 +185,7 @@ function normalizeInviteStatus(value: unknown) {
   return "pending";
 }
 
-function normalizeRegistrationStatus(
-  value: unknown
-): TeamMemberRegistrationStatus {
+function normalizeRegistrationStatus(value: unknown): TeamMemberRegistrationStatus {
   const raw = safeTrim(value).toLowerCase();
 
   if (
@@ -198,9 +203,7 @@ function normalizeRegistrationStatus(
   return "invited";
 }
 
-function normalizeMemberPaymentStatus(
-  value: unknown
-): TeamMemberPaymentStatus {
+function normalizeMemberPaymentStatus(value: unknown): TeamMemberPaymentStatus {
   const raw = safeTrim(value).toLowerCase();
 
   if (
@@ -237,9 +240,7 @@ function mapAsaasStatusToInternalPaymentStatus(
   if (status === "CONFIRMED") return "confirmed";
   if (status === "OVERDUE") return "overdue";
   if (status === "REFUNDED") return "refunded";
-  if (status === "RECEIVED_IN_CASH" || status === "RECEIVED_IN_CASH_UNDONE") {
-    return "received";
-  }
+  if (status === "RECEIVED_IN_CASH" || status === "RECEIVED_IN_CASH_UNDONE") return "received";
   if (status === "CHARGEBACK_REQUESTED") return "chargeback";
   if (status === "CHARGEBACK_DISPUTE") return "chargeback";
   if (status === "AWAITING_CHARGEBACK_REVERSAL") return "chargeback";
@@ -275,6 +276,45 @@ async function resolveInternalPaymentFromWebhook(
   return getTournamentPaymentByProviderPaymentId(providerPaymentId);
 }
 
+async function resolveReservationPaymentFromWebhook(
+  payload: AsaasWebhookPayload
+): Promise<ReservationPayment | null> {
+  const providerPaymentId = nullableString(payload.payment?.id);
+  if (!providerPaymentId) return null;
+
+  const db = adminDb();
+
+  const snap = await db
+    .collection("fishingReservations")
+    .where("providerPaymentId", "==", providerPaymentId)
+    .limit(1)
+    .get();
+
+  if (snap.empty) return null;
+
+  const docSnap = snap.docs[0];
+  const raw = docSnap.data() as Record<string, unknown>;
+
+  const ownerId = safeTrim(raw.ownerId);
+
+  if (!ownerId) return null;
+
+  return {
+    id: docSnap.id,
+    ownerId,
+    pesqueiroId: nullableString(raw.pesqueiroId),
+    providerPaymentId,
+    externalReference: nullableString(raw.externalReference),
+    totalPrice: normalizeMoney(raw.totalPrice),
+    paymentStatus: nullableString(raw.paymentStatus),
+    sessionTitle: nullableString(raw.sessionTitle),
+    areaName: nullableString(raw.areaName),
+    userName: nullableString(raw.userName),
+    userEmail: nullableString(raw.userEmail),
+    currency: "BRL",
+  };
+}
+
 async function logIgnoredWebhook(params: {
   eventId: string;
   eventType: AsaasWebhookEventType;
@@ -299,7 +339,6 @@ async function updateTournamentFinancialSummary(params: {
   releasedAmountDelta?: number;
 }) {
   const tournamentId = safeTrim(params.tournamentId);
-
   if (!tournamentId) return;
 
   const db = adminDb();
@@ -308,20 +347,138 @@ async function updateTournamentFinancialSummary(params: {
   await ref.set(
     {
       financialSummary: {
-        totalCollected: FieldValue.increment(
-          normalizeMoney(params.collectedAmount)
-        ),
-        totalPending: FieldValue.increment(
-          normalizeMoney(params.pendingAmountDelta)
-        ),
-        totalReleased: FieldValue.increment(
-          normalizeMoney(params.releasedAmountDelta)
-        ),
+        totalCollected: FieldValue.increment(normalizeMoney(params.collectedAmount)),
+        totalPending: FieldValue.increment(normalizeMoney(params.pendingAmountDelta)),
+        totalReleased: FieldValue.increment(normalizeMoney(params.releasedAmountDelta)),
       },
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true }
   );
+}
+
+async function upsertReservationWalletTransaction(params: {
+  transactionId: string;
+  ownerId: string;
+  reservationId: string;
+  pesqueiroId: string | null;
+  providerPaymentId: string | null;
+  externalReference: string | null;
+  type: "payment_received" | "release_to_available" | "refund" | "chargeback";
+  status: "pending" | "available" | "reversed";
+  grossAmount: number;
+  feeAmount: number;
+  netAmount: number;
+  title: string;
+  subtitle: string | null;
+}) {
+  const db = adminDb();
+  const txRef = db.collection("organizerWalletTransactions").doc(params.transactionId);
+  const summaryRef = db.collection("organizerWalletSummaries").doc(params.ownerId);
+
+  await db.runTransaction(async (transaction) => {
+    const existing = await transaction.get(txRef);
+
+    if (existing.exists) {
+      return;
+    }
+
+    const now = Date.now();
+
+    transaction.set(txRef, {
+      organizerUserId: params.ownerId,
+      ownerId: params.ownerId,
+
+      sourceType: params.type === "refund" || params.type === "chargeback" ? "refund" : "reservation",
+      sourceId: params.reservationId,
+
+      tournamentId: null,
+      reservationId: params.reservationId,
+      pesqueiroId: params.pesqueiroId,
+      paymentId: params.providerPaymentId,
+
+      title: params.title,
+      subtitle: params.subtitle,
+
+      type: params.type,
+      status: params.status,
+
+      grossAmount: normalizeMoney(params.grossAmount),
+      feeAmount: normalizeMoney(params.feeAmount),
+      netAmount: normalizeMoney(params.netAmount),
+      currency: "BRL",
+
+      externalReference: params.externalReference,
+      providerPaymentId: params.providerPaymentId,
+
+      createdAt: now,
+      releasedAt: params.type === "release_to_available" ? now : null,
+      paidOutAt: null,
+      reversedAt:
+        params.type === "refund" || params.type === "chargeback" ? now : null,
+      updatedAt: now,
+
+      serverCreatedAt: FieldValue.serverTimestamp(),
+      serverUpdatedAt: FieldValue.serverTimestamp(),
+    });
+
+    const baseSummaryPayload = {
+      organizerUserId: params.ownerId,
+      currency: "BRL",
+      updatedAt: now,
+      serverUpdatedAt: FieldValue.serverTimestamp(),
+    };
+
+    if (params.type === "payment_received") {
+      transaction.set(
+        summaryRef,
+        {
+          ...baseSummaryPayload,
+          grossAmount: FieldValue.increment(normalizeMoney(params.grossAmount)),
+          netAmount: FieldValue.increment(normalizeMoney(params.netAmount)),
+          pendingAmount: FieldValue.increment(normalizeMoney(params.netAmount)),
+          reservationsAmount: FieldValue.increment(normalizeMoney(params.netAmount)),
+        },
+        { merge: true }
+      );
+    }
+
+    if (params.type === "release_to_available") {
+      transaction.set(
+        summaryRef,
+        {
+          ...baseSummaryPayload,
+          pendingAmount: FieldValue.increment(-normalizeMoney(params.netAmount)),
+          availableAmount: FieldValue.increment(normalizeMoney(params.netAmount)),
+        },
+        { merge: true }
+      );
+    }
+
+    if (params.type === "refund") {
+      transaction.set(
+        summaryRef,
+        {
+          ...baseSummaryPayload,
+          refundedAmount: FieldValue.increment(normalizeMoney(params.netAmount)),
+          availableAmount: FieldValue.increment(-normalizeMoney(params.netAmount)),
+        },
+        { merge: true }
+      );
+    }
+
+    if (params.type === "chargeback") {
+      transaction.set(
+        summaryRef,
+        {
+          ...baseSummaryPayload,
+          chargebackAmount: FieldValue.increment(normalizeMoney(params.netAmount)),
+          availableAmount: FieldValue.increment(-normalizeMoney(params.netAmount)),
+        },
+        { merge: true }
+      );
+    }
+  });
 }
 
 async function syncTeamMemberPaymentStatus(params: {
@@ -518,6 +675,188 @@ async function processReceivedOrConfirmedEvent(params: {
   });
 }
 
+async function processReservationReceivedOrConfirmedEvent(params: {
+  reservation: ReservationPayment;
+  payload: AsaasWebhookPayload;
+  eventType: AsaasWebhookEventType;
+}) {
+  const { reservation, payload } = params;
+
+  const db = adminDb();
+
+  const providerPaymentId = nullableString(payload.payment?.id);
+  const externalReference =
+    nullableString(payload.payment?.externalReference) ||
+    reservation.externalReference;
+
+  const paidAt =
+    toTimestampSafe(payload.payment?.paymentDate) ||
+    toTimestampSafe(payload.payment?.clientPaymentDate) ||
+    Date.now();
+
+  const title = `Reserva · ${reservation.sessionTitle || "Sessão de pesca"}`;
+  const subtitle =
+    [
+      reservation.areaName,
+      reservation.userName,
+      reservation.userEmail,
+    ]
+      .filter(Boolean)
+      .join(" · ") || null;
+
+  await db.collection("fishingReservations").doc(reservation.id).set(
+    {
+      paymentStatus: "paid",
+      paymentStatusDetail: "payment_received",
+      status: "confirmed",
+      paidAt: new Date(paidAt),
+      paidAtMs: paidAt,
+      providerPaymentId,
+      externalReference,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  await upsertReservationWalletTransaction({
+    transactionId: `reservation_payment_received_${reservation.id}`,
+    ownerId: reservation.ownerId,
+    reservationId: reservation.id,
+    pesqueiroId: reservation.pesqueiroId,
+    providerPaymentId,
+    externalReference,
+    type: "payment_received",
+    status: "pending",
+    grossAmount: reservation.totalPrice,
+    feeAmount: 0,
+    netAmount: reservation.totalPrice,
+    title,
+    subtitle,
+  });
+
+  await upsertReservationWalletTransaction({
+    transactionId: `reservation_release_to_available_${reservation.id}`,
+    ownerId: reservation.ownerId,
+    reservationId: reservation.id,
+    pesqueiroId: reservation.pesqueiroId,
+    providerPaymentId,
+    externalReference,
+    type: "release_to_available",
+    status: "available",
+    grossAmount: reservation.totalPrice,
+    feeAmount: 0,
+    netAmount: reservation.totalPrice,
+    title,
+    subtitle,
+  });
+}
+
+async function processReservationRefundEvent(params: {
+  reservation: ReservationPayment;
+  payload: AsaasWebhookPayload;
+}) {
+  const { reservation, payload } = params;
+
+  const db = adminDb();
+
+  const providerPaymentId = nullableString(payload.payment?.id);
+  const externalReference =
+    nullableString(payload.payment?.externalReference) ||
+    reservation.externalReference;
+
+  const title = `Reserva · ${reservation.sessionTitle || "Sessão de pesca"}`;
+  const subtitle =
+    [
+      reservation.areaName,
+      reservation.userName,
+      reservation.userEmail,
+    ]
+      .filter(Boolean)
+      .join(" · ") || null;
+
+  await db.collection("fishingReservations").doc(reservation.id).set(
+    {
+      paymentStatus: "refunded",
+      paymentStatusDetail: "payment_refunded",
+      status: "cancelled",
+      refundedAt: FieldValue.serverTimestamp(),
+      providerPaymentId,
+      externalReference,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  await upsertReservationWalletTransaction({
+    transactionId: `reservation_refund_${reservation.id}`,
+    ownerId: reservation.ownerId,
+    reservationId: reservation.id,
+    pesqueiroId: reservation.pesqueiroId,
+    providerPaymentId,
+    externalReference,
+    type: "refund",
+    status: "reversed",
+    grossAmount: reservation.totalPrice,
+    feeAmount: 0,
+    netAmount: reservation.totalPrice,
+    title,
+    subtitle,
+  });
+}
+
+async function processReservationChargebackEvent(params: {
+  reservation: ReservationPayment;
+  payload: AsaasWebhookPayload;
+}) {
+  const { reservation, payload } = params;
+
+  const db = adminDb();
+
+  const providerPaymentId = nullableString(payload.payment?.id);
+  const externalReference =
+    nullableString(payload.payment?.externalReference) ||
+    reservation.externalReference;
+
+  const title = `Reserva · ${reservation.sessionTitle || "Sessão de pesca"}`;
+  const subtitle =
+    [
+      reservation.areaName,
+      reservation.userName,
+      reservation.userEmail,
+    ]
+      .filter(Boolean)
+      .join(" · ") || null;
+
+  await db.collection("fishingReservations").doc(reservation.id).set(
+    {
+      paymentStatus: "chargeback",
+      paymentStatusDetail: "payment_chargeback",
+      status: "cancelled",
+      chargebackAt: FieldValue.serverTimestamp(),
+      providerPaymentId,
+      externalReference,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  await upsertReservationWalletTransaction({
+    transactionId: `reservation_chargeback_${reservation.id}`,
+    ownerId: reservation.ownerId,
+    reservationId: reservation.id,
+    pesqueiroId: reservation.pesqueiroId,
+    providerPaymentId,
+    externalReference,
+    type: "chargeback",
+    status: "reversed",
+    grossAmount: reservation.totalPrice,
+    feeAmount: 0,
+    netAmount: reservation.totalPrice,
+    title,
+    subtitle,
+  });
+}
+
 async function processRefundEvent(params: {
   internalPayment: TournamentPayment;
   payload: AsaasWebhookPayload;
@@ -605,9 +944,7 @@ async function processSimpleStatusUpdate(params: {
   const providerPaymentId = nullableString(payload.payment?.id);
   const externalReference = nullableString(payload.payment?.externalReference);
   const billingType = nullableString(payload.payment?.billingType);
-  const mappedStatus = mapAsaasStatusToInternalPaymentStatus(
-    payload.payment?.status
-  );
+  const mappedStatus = mapAsaasStatusToInternalPaymentStatus(payload.payment?.status);
 
   await updateTournamentPaymentStatus({
     paymentId: internalPayment.id,
@@ -617,8 +954,7 @@ async function processSimpleStatusUpdate(params: {
     externalReference,
   });
 
-  const mappedMemberStatus =
-    mapInternalPaymentToTeamMemberPaymentStatus(mappedStatus);
+  const mappedMemberStatus = mapInternalPaymentToTeamMemberPaymentStatus(mappedStatus);
 
   let registrationStatus: TeamMemberRegistrationStatus | undefined;
 
@@ -647,6 +983,53 @@ async function processSimpleStatusUpdate(params: {
   await recalculateTeamStatusByPaymentId(internalPayment.id);
 }
 
+async function processReservationSimpleStatusUpdate(params: {
+  reservation: ReservationPayment;
+  payload: AsaasWebhookPayload;
+}) {
+  const { reservation, payload } = params;
+
+  const db = adminDb();
+
+  const providerPaymentId = nullableString(payload.payment?.id);
+  const externalReference =
+    nullableString(payload.payment?.externalReference) ||
+    reservation.externalReference;
+
+  const asaasStatus = normalizeAsaasStatus(payload.payment?.status);
+
+  let paymentStatus = reservation.paymentStatus || "pending";
+  let paymentStatusDetail = "payment_updated";
+  let status: string | undefined;
+
+  if (asaasStatus === "PENDING") {
+    paymentStatus = "pending";
+    paymentStatusDetail = "payment_pending";
+  } else if (asaasStatus === "OVERDUE") {
+    paymentStatus = "overdue";
+    paymentStatusDetail = "payment_overdue";
+  } else if (asaasStatus === "DELETED") {
+    paymentStatus = "cancelled";
+    paymentStatusDetail = "payment_deleted";
+    status = "cancelled";
+  } else if (asaasStatus === "RESTORED") {
+    paymentStatus = "pending";
+    paymentStatusDetail = "payment_restored";
+  }
+
+  await db.collection("fishingReservations").doc(reservation.id).set(
+    {
+      paymentStatus,
+      paymentStatusDetail,
+      ...(status ? { status } : {}),
+      providerPaymentId,
+      externalReference,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
 export async function processAsaasWebhook(
   payload: AsaasWebhookPayload
 ): Promise<ParsedAsaasWebhookResult> {
@@ -654,9 +1037,9 @@ export async function processAsaasWebhook(
   const providerPaymentId = nullableString(payload.payment?.id);
   const eventId =
     nullableString(payload.id) ||
-    `${eventType}__${providerPaymentId || "no_payment"}__${safeTrim(
-      payload.dateCreated
-    ) || Date.now()}`;
+    `${eventType}__${providerPaymentId || "no_payment"}__${
+      safeTrim(payload.dateCreated) || Date.now()
+    }`;
 
   if (!providerPaymentId) {
     await logIgnoredWebhook({
@@ -680,9 +1063,12 @@ export async function processAsaasWebhook(
     };
   }
 
-  const internalPayment = await resolveInternalPaymentFromWebhook(payload);
+  const [internalPayment, reservationPayment] = await Promise.all([
+    resolveInternalPaymentFromWebhook(payload),
+    resolveReservationPaymentFromWebhook(payload),
+  ]);
 
-  if (!internalPayment) {
+  if (!internalPayment && !reservationPayment) {
     await logIgnoredWebhook({
       eventId,
       eventType,
@@ -709,9 +1095,10 @@ export async function processAsaasWebhook(
     eventId,
     eventType,
     level: "info",
-    organizerUserId: internalPayment.organizerUserId,
-    tournamentId: internalPayment.tournamentId,
-    paymentId: internalPayment.id,
+    organizerUserId:
+      internalPayment?.organizerUserId || reservationPayment?.ownerId || null,
+    tournamentId: internalPayment?.tournamentId || null,
+    paymentId: internalPayment?.id || reservationPayment?.id || null,
     providerPaymentId,
     externalReference: nullableString(payload.payment?.externalReference),
     message: `Webhook ${eventType} recebido para pagamento ${providerPaymentId}.`,
@@ -725,14 +1112,82 @@ export async function processAsaasWebhook(
       eventId,
       eventType,
       providerPaymentId,
-      internalPaymentId: internalPayment.id,
-      organizerUserId: internalPayment.organizerUserId,
-      tournamentId: internalPayment.tournamentId,
+      internalPaymentId: internalPayment?.id || reservationPayment?.id || null,
+      organizerUserId:
+        internalPayment?.organizerUserId || reservationPayment?.ownerId || null,
+      tournamentId: internalPayment?.tournamentId || null,
       message: "Evento duplicado ignorado com segurança.",
     };
   }
 
   try {
+    if (reservationPayment) {
+      if (
+        eventType === "PAYMENT_RECEIVED" ||
+        eventType === "PAYMENT_CONFIRMED"
+      ) {
+        await processReservationReceivedOrConfirmedEvent({
+          reservation: reservationPayment,
+          payload,
+          eventType,
+        });
+      } else if (eventType === "PAYMENT_REFUNDED") {
+        await processReservationRefundEvent({
+          reservation: reservationPayment,
+          payload,
+        });
+      } else if (
+        eventType === "PAYMENT_CHARGEBACK_REQUESTED" ||
+        eventType === "PAYMENT_CHARGEBACK_DISPUTE" ||
+        eventType === "PAYMENT_AWAITING_CHARGEBACK_REVERSAL"
+      ) {
+        await processReservationChargebackEvent({
+          reservation: reservationPayment,
+          payload,
+        });
+      } else {
+        await processReservationSimpleStatusUpdate({
+          reservation: reservationPayment,
+          payload,
+        });
+      }
+
+      await createFinancialAuditLog({
+        source: "asaas_webhook",
+        eventType: `${eventType}_reservation_processed`,
+        level: "info",
+        organizerUserId: reservationPayment.ownerId,
+        tournamentId: null,
+        paymentId: reservationPayment.id,
+        providerPaymentId,
+        externalReference: nullableString(payload.payment?.externalReference),
+        message: `Webhook ${eventType} de reserva processado com sucesso.`,
+        payload: {
+          reservationId: reservationPayment.id,
+          pesqueiroId: reservationPayment.pesqueiroId,
+          paymentStatus: nullableString(payload.payment?.status),
+          billingType: nullableString(payload.payment?.billingType),
+          value: normalizeMoney(payload.payment?.value),
+          netValue: normalizeMoney(payload.payment?.netValue),
+        },
+      });
+
+      return {
+        ok: true,
+        eventId,
+        eventType,
+        providerPaymentId,
+        internalPaymentId: reservationPayment.id,
+        organizerUserId: reservationPayment.ownerId,
+        tournamentId: null,
+        message: "Webhook de reserva processado com sucesso.",
+      };
+    }
+
+    if (!internalPayment) {
+      throw new Error("Pagamento interno de torneio não encontrado.");
+    }
+
     if (
       eventType === "PAYMENT_RECEIVED" ||
       eventType === "PAYMENT_CONFIRMED"
@@ -801,9 +1256,10 @@ export async function processAsaasWebhook(
       source: "asaas_webhook",
       eventType: `${eventType}_failed`,
       level: "error",
-      organizerUserId: internalPayment.organizerUserId,
-      tournamentId: internalPayment.tournamentId,
-      paymentId: internalPayment.id,
+      organizerUserId:
+        internalPayment?.organizerUserId || reservationPayment?.ownerId || null,
+      tournamentId: internalPayment?.tournamentId || null,
+      paymentId: internalPayment?.id || reservationPayment?.id || null,
       providerPaymentId,
       externalReference: nullableString(payload.payment?.externalReference),
       message,

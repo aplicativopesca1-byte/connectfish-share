@@ -41,6 +41,15 @@ export default function SellerClient({ uid, email }: SellerClientProps) {
         status: "Ativa",
       },
       {
+  title: "Reservas",
+  description:
+    "Acompanhe reservas do dia, pagamentos pendentes, check-ins e operação do pesqueiro.",
+  emoji: "📅",
+  href: "/seller/reservations",
+  cta: "Abrir reservas",
+  status: "Operação",
+},
+      {
         title: "Conta do organizador",
         description:
           "Atualize seu cadastro financeiro e acompanhe o status da aprovação.",
