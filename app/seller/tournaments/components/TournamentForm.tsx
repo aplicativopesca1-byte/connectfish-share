@@ -91,6 +91,7 @@ type TournamentFinancialConfig = {
 
 type RankingMode = "auto_best_valid" | "all_captures_sum";
 type CaptureSourceMode = "camera_live_only";
+type ScoringMetric = "length_cm" | "weight_kg";
 
 type TournamentDoc = {
   title?: string;
@@ -103,6 +104,10 @@ type TournamentDoc = {
   entryFee?: number;
   currency?: string | null;
   minSizeCm?: number;
+  minLengthCm?: number | null;
+  minWeightKg?: number | null;
+  scoringMetric?: ScoringMetric | string;
+  measurementUnit?: "cm" | "kg" | string | null;
   validFishCount?: number;
   maxValidCaptures?: number;
   rankingMaxCaptures?: number;
@@ -272,14 +277,14 @@ function normalizeRegistrationMode(value: unknown): RegistrationMode {
 }
 
 function normalizeRegistrationFields(
-  value: unknown
+  value: unknown,
 ): RegistrationFieldConfig[] {
   if (!Array.isArray(value) || value.length === 0) {
     return cloneDefaultRegistrationFields();
   }
 
   const baseMap = new Map(
-    cloneDefaultRegistrationFields().map((field) => [field.key, field])
+    cloneDefaultRegistrationFields().map((field) => [field.key, field]),
   );
 
   return value
@@ -309,7 +314,7 @@ function normalizeRegistrationFields(
         .map((role) => safeTrim(role).toLowerCase())
         .filter(
           (role): role is RegistrationFieldRole =>
-            role === "captain" || role === "member" || role === "individual"
+            role === "captain" || role === "member" || role === "individual",
         );
 
       return {
@@ -362,6 +367,32 @@ function normalizeValidFishCount(value: unknown) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 3;
   return Math.min(5, Math.max(2, Math.round(n)));
+}
+
+function normalizeScoringMetric(value: unknown): ScoringMetric {
+  if (value === "weight_kg") return "weight_kg";
+  return "length_cm";
+}
+
+function getScoringMetricLabel(metric: ScoringMetric) {
+  if (metric === "weight_kg") return "Peso em kg";
+  return "Medida em centímetros";
+}
+
+function getScoringMetricShortLabel(metric: ScoringMetric) {
+  if (metric === "weight_kg") return "peso";
+  return "medida";
+}
+
+function getScoringUnit(metric: ScoringMetric) {
+  if (metric === "weight_kg") return "kg";
+  return "cm";
+}
+
+function normalizeMinWeightKg(value: unknown) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Number(n.toFixed(3)));
 }
 
 function getDateMsFromInput(value: string) {
@@ -519,9 +550,7 @@ function parseLatLng(value: unknown): LatLng | null {
 function parsePolygonPoints(value: unknown): LatLng[] {
   if (!Array.isArray(value)) return [];
 
-  return value
-    .map((item) => parseLatLng(item))
-    .filter(Boolean) as LatLng[];
+  return value.map((item) => parseLatLng(item)).filter(Boolean) as LatLng[];
 }
 
 function calculatePolygonCenter(points: LatLng[]): LatLng | null {
@@ -533,7 +562,7 @@ function calculatePolygonCenter(points: LatLng[]): LatLng | null {
       acc.longitude += point.longitude;
       return acc;
     },
-    { latitude: 0, longitude: 0 }
+    { latitude: 0, longitude: 0 },
   );
 
   return {
@@ -663,7 +692,11 @@ export default function TournamentForm({
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const { uid, email, loading: authLoading } = useAuth() as {
+  const {
+    uid,
+    email,
+    loading: authLoading,
+  } = useAuth() as {
     uid?: string | null;
     email?: string | null;
     loading?: boolean;
@@ -685,7 +718,10 @@ export default function TournamentForm({
   const [species, setSpecies] = useState("");
   const [entryFee, setEntryFee] = useState<number>(0);
   const [currency, setCurrency] = useState("BRL");
+  const [scoringMetric, setScoringMetric] =
+    useState<ScoringMetric>("length_cm");
   const [minSizeCm, setMinSizeCm] = useState<number>(30);
+  const [minWeightKg, setMinWeightKg] = useState<number>(0);
   const [validFishCount, setValidFishCount] = useState<number>(3);
   const [rankingMode, setRankingMode] =
     useState<RankingMode>("auto_best_valid");
@@ -714,7 +750,9 @@ export default function TournamentForm({
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [finishedAt, setFinishedAt] = useState<string | null>(null);
 
-  const [loadedRegistrationUrl, setLoadedRegistrationUrl] = useState<string | null>(null);
+  const [loadedRegistrationUrl, setLoadedRegistrationUrl] = useState<
+    string | null
+  >(null);
   const [loadedPublicUrl, setLoadedPublicUrl] = useState<string | null>(null);
   const [loadedAdminUrl, setLoadedAdminUrl] = useState<string | null>(null);
 
@@ -747,25 +785,31 @@ export default function TournamentForm({
   const parsedRules = useMemo(() => parseRules(rulesText), [rulesText]);
   const safeValidFishCount = useMemo(
     () => normalizeValidFishCount(validFishCount),
-    [validFishCount]
+    [validFishCount],
   );
+  const scoringUnit = getScoringUnit(scoringMetric);
+  const scoringLabel = getScoringMetricShortLabel(scoringMetric);
+  const minMeasurementValue =
+    scoringMetric === "weight_kg"
+      ? normalizeMinWeightKg(minWeightKg)
+      : Number(minSizeCm || 0);
 
   const enabledRegistrationFields = useMemo(
     () => registrationFields.filter((field) => field.enabled),
-    [registrationFields]
+    [registrationFields],
   );
 
   const registrationValidation = useMemo(() => {
     const missing: string[] = [];
 
     const captainFields = enabledRegistrationFields.filter((field) =>
-      field.appliesTo.includes("captain")
+      field.appliesTo.includes("captain"),
     );
     const memberFields = enabledRegistrationFields.filter((field) =>
-      field.appliesTo.includes("member")
+      field.appliesTo.includes("member"),
     );
     const individualFields = enabledRegistrationFields.filter((field) =>
-      field.appliesTo.includes("individual")
+      field.appliesTo.includes("individual"),
     );
 
     if (registrationMode === "team" || registrationMode === "both") {
@@ -801,7 +845,13 @@ export default function TournamentForm({
       missing,
       enabledCount: enabledRegistrationFields.length,
     };
-  }, [enabledRegistrationFields, registrationFields, registrationMode, teamSizeMax, teamSizeMin]);
+  }, [
+    enabledRegistrationFields,
+    registrationFields,
+    registrationMode,
+    teamSizeMax,
+    teamSizeMin,
+  ]);
 
   const previewUrls = useMemo(() => {
     if (!tournamentId || !finalSlugPreview) {
@@ -836,7 +886,12 @@ export default function TournamentForm({
     if (!description.trim()) missing.push("Descrição");
     if (!species.trim()) missing.push("Espécie");
     if (Number(entryFee) < 0) missing.push("Valor da inscrição inválido");
-    if (Number(minSizeCm) < 0) missing.push("Tamanho mínimo inválido");
+    if (scoringMetric === "length_cm" && Number(minSizeCm) < 0) {
+      missing.push("Tamanho mínimo inválido");
+    }
+    if (scoringMetric === "weight_kg" && Number(minWeightKg) < 0) {
+      missing.push("Peso mínimo inválido");
+    }
     if (safeValidFishCount < 2 || safeValidFishCount > 5) {
       missing.push("Quantidade de peixes válidos entre 2 e 5");
     }
@@ -879,7 +934,9 @@ export default function TournamentForm({
     description,
     species,
     entryFee,
+    scoringMetric,
     minSizeCm,
+    minWeightKg,
     safeValidFishCount,
     rankingMode,
     manualRankingSelectionAllowed,
@@ -931,9 +988,7 @@ export default function TournamentForm({
 
     const missingFields: string[] = [
       ...basicsValidation.missing,
-      ...(!registrationValidation.valid
-        ? registrationValidation.missing
-        : []),
+      ...(!registrationValidation.valid ? registrationValidation.missing : []),
       ...(boundaryEnabled && !boundarySummary.isConfigured
         ? ["Perímetro do torneio"]
         : []),
@@ -997,12 +1052,12 @@ export default function TournamentForm({
 
       const response = await fetch(
         `/api/finance/organizer/profile?organizerUserId=${encodeURIComponent(
-          safeUserId
+          safeUserId,
         )}`,
         {
           method: "GET",
           cache: "no-store",
-        }
+        },
       );
 
       const result = await response.json().catch(() => null);
@@ -1010,11 +1065,12 @@ export default function TournamentForm({
       if (!response.ok || !result?.success) {
         throw new Error(
           safeTrim(result?.message) ||
-            "Não foi possível carregar o perfil financeiro."
+            "Não foi possível carregar o perfil financeiro.",
         );
       }
 
-      const profile = (result?.profile || null) as OrganizerPaymentProfile | null;
+      const profile = (result?.profile ||
+        null) as OrganizerPaymentProfile | null;
       const ready = isOrganizerFinanciallyReady(profile);
 
       setFinancialReady(ready);
@@ -1048,7 +1104,7 @@ export default function TournamentForm({
     } catch (loadError) {
       console.error(
         "Erro ao carregar status financeiro do organizador:",
-        loadError
+        loadError,
       );
       setFinancialReady(false);
       setFinancialStatusLabel("Erro ao verificar conta financeira");
@@ -1081,15 +1137,23 @@ export default function TournamentForm({
       setSpecies(data.species || "");
       setEntryFee(Number(data.entryFee ?? 0) || 0);
       setCurrency(safeTrim(data.currency).toUpperCase() || "BRL");
-      setMinSizeCm(Number(data.minSizeCm ?? 30) || 30);
+      const loadedScoringMetric = normalizeScoringMetric(
+        data.scoringMetric ||
+          (data.measurementUnit === "kg" || data.minWeightKg !== undefined
+            ? "weight_kg"
+            : "length_cm"),
+      );
+      setScoringMetric(loadedScoringMetric);
+      setMinSizeCm(Number(data.minLengthCm ?? data.minSizeCm ?? 30) || 30);
+      setMinWeightKg(normalizeMinWeightKg(data.minWeightKg ?? 0));
       setValidFishCount(
         normalizeValidFishCount(
           data.validFishCount ??
             data.maxValidCaptures ??
             data.rankingMaxCaptures ??
             data.scoreFishCount ??
-            3
-        )
+            3,
+        ),
       );
       setRankingMode("auto_best_valid");
       setManualRankingSelectionAllowed(false);
@@ -1100,10 +1164,12 @@ export default function TournamentForm({
       setStatus(data.status || "draft");
       setVisibility(data.visibility || "draft");
       setScheduledStartAt(
-        toDateTimeLocalInput(data.scheduledStartAt || data.startAt || data.startsAt)
+        toDateTimeLocalInput(
+          data.scheduledStartAt || data.startAt || data.startsAt,
+        ),
       );
       setScheduledEndAt(
-        toDateTimeLocalInput(data.scheduledEndAt || data.endAt || data.endsAt)
+        toDateTimeLocalInput(data.scheduledEndAt || data.endAt || data.endsAt),
       );
       setBoundaryEnabled(data.boundaryEnabled !== false);
       setRegistrationMode(normalizeRegistrationMode(data.registrationMode));
@@ -1111,7 +1177,7 @@ export default function TournamentForm({
       setTeamSizeMin(Math.max(1, Number(data.teamSizeMin ?? 2) || 2));
       setTeamSizeMax(Math.max(1, Number(data.teamSizeMax ?? 3) || 3));
       setRegistrationFields(
-        normalizeRegistrationFields(data.registrationFormConfig?.fields)
+        normalizeRegistrationFields(data.registrationFormConfig?.fields),
       );
       setPublishedAt(toIsoStringSafe(data.publishedAt));
       setStartedAt(toIsoStringSafe(data.startedAt));
@@ -1137,7 +1203,7 @@ export default function TournamentForm({
     const slugQuery = query(
       collection(db, "tournaments"),
       where("slug", "==", safeSlug),
-      limit(5)
+      limit(5),
     );
 
     const snap = await getDocs(slugQuery);
@@ -1145,7 +1211,7 @@ export default function TournamentForm({
     const conflict = snap.docs.find((docSnap) => docSnap.id !== tournamentId);
     if (conflict) {
       throw new Error(
-        "Já existe um torneio com este slug público. Escolha outro slug."
+        "Já existe um torneio com este slug público. Escolha outro slug.",
       );
     }
   }
@@ -1169,6 +1235,10 @@ export default function TournamentForm({
     const tournamentStartAtMs = getDateMsFromInput(scheduledStartAt);
     const tournamentEndAtMs = getDateMsFromInput(scheduledEndAt);
     const normalizedValidFishCount = normalizeValidFishCount(validFishCount);
+    const normalizedScoringMetric = normalizeScoringMetric(scoringMetric);
+    const normalizedMinLengthCm = Number(minSizeCm || 0);
+    const normalizedMinWeightKg = normalizeMinWeightKg(minWeightKg);
+    const normalizedMeasurementUnit = getScoringUnit(normalizedScoringMetric);
     const urls = buildTournamentUrls(finalSlugPreview, tournamentDocId);
 
     if (!urls.publicUrl || !urls.registrationUrl || !urls.adminUrl) {
@@ -1185,7 +1255,13 @@ export default function TournamentForm({
       species: species.trim(),
       entryFee: Number(entryFee || 0),
       currency: normalizedCurrency,
-      minSizeCm: Number(minSizeCm || 0),
+      scoringMetric: normalizedScoringMetric,
+      measurementUnit: normalizedMeasurementUnit,
+      minSizeCm: normalizedMinLengthCm,
+      minLengthCm:
+        normalizedScoringMetric === "length_cm" ? normalizedMinLengthCm : null,
+      minWeightKg:
+        normalizedScoringMetric === "weight_kg" ? normalizedMinWeightKg : null,
       validFishCount: normalizedValidFishCount,
       maxValidCaptures: normalizedValidFishCount,
       rankingMaxCaptures: normalizedValidFishCount,
@@ -1212,9 +1288,13 @@ export default function TournamentForm({
       registrationMode,
       requiresBoatLicense,
       teamSizeMin:
-        registrationMode === "individual" ? 1 : Math.max(1, Number(teamSizeMin || 1)),
+        registrationMode === "individual"
+          ? 1
+          : Math.max(1, Number(teamSizeMin || 1)),
       teamSizeMax:
-        registrationMode === "individual" ? 1 : Math.max(1, Number(teamSizeMax || 1)),
+        registrationMode === "individual"
+          ? 1
+          : Math.max(1, Number(teamSizeMax || 1)),
       registrationFormConfig: {
         fields: registrationFields.map((field) => ({
           ...field,
@@ -1312,7 +1392,9 @@ export default function TournamentForm({
           visibility: "draft" as TournamentVisibility,
           setupStep: nextStep,
           basicsCompleted: basicsValidation.valid,
-          boundaryCompleted: boundaryEnabled ? boundarySummary.isConfigured : true,
+          boundaryCompleted: boundaryEnabled
+            ? boundarySummary.isConfigured
+            : true,
           publishReady: false,
           missingFields: reviewChecklist.missingFields,
         };
@@ -1327,7 +1409,9 @@ export default function TournamentForm({
         setMessage(options?.successMessage || "Rascunho salvo com sucesso.");
 
         if (options?.redirectToStep) {
-          router.push(`/seller/tournaments/${tournamentId}/edit?step=${nextStep}`);
+          router.push(
+            `/seller/tournaments/${tournamentId}/edit?step=${nextStep}`,
+          );
         } else {
           setCurrentStep(nextStep);
         }
@@ -1337,12 +1421,16 @@ export default function TournamentForm({
 
       const newTournamentId = await createDraftTournament(nextStep);
       setMessage(options?.successMessage || "Rascunho criado com sucesso.");
-      router.push(`/seller/tournaments/${newTournamentId}/edit?step=${nextStep}`);
+      router.push(
+        `/seller/tournaments/${newTournamentId}/edit?step=${nextStep}`,
+      );
       return newTournamentId;
     } catch (err) {
       console.error("Erro ao salvar rascunho:", err);
       setError(
-        err instanceof Error ? err.message : "Não foi possível salvar o rascunho."
+        err instanceof Error
+          ? err.message
+          : "Não foi possível salvar o rascunho.",
       );
       return null;
     } finally {
@@ -1361,8 +1449,8 @@ export default function TournamentForm({
     if (!basicsValidation.valid) {
       setError(
         `Preencha os campos obrigatórios antes de avançar: ${basicsValidation.missing.join(
-          ", "
-        )}.`
+          ", ",
+        )}.`,
       );
       return;
     }
@@ -1390,7 +1478,7 @@ export default function TournamentForm({
 
     if (boundaryEnabled && !boundarySummary.isConfigured) {
       setError(
-        "Configure o perímetro do torneio antes de seguir para a revisão final."
+        "Configure o perímetro do torneio antes de seguir para a revisão final.",
       );
       return;
     }
@@ -1418,15 +1506,15 @@ export default function TournamentForm({
     if (!reviewChecklist.publishReady) {
       setError(
         `Ainda faltam itens obrigatórios para publicar: ${reviewChecklist.missingFields.join(
-          ", "
-        )}.`
+          ", ",
+        )}.`,
       );
       return;
     }
 
     if (requiresFinancialOnboarding && !financialReady) {
       setError(
-        "Para publicar um torneio pago, primeiro ative e aprove a conta financeira do organizador."
+        "Para publicar um torneio pago, primeiro ative e aprove a conta financeira do organizador.",
       );
       return;
     }
@@ -1447,7 +1535,9 @@ export default function TournamentForm({
         visibility: "published" as TournamentVisibility,
         setupStep: 3,
         basicsCompleted: true,
-        boundaryCompleted: boundaryEnabled ? boundarySummary.isConfigured : true,
+        boundaryCompleted: boundaryEnabled
+          ? boundarySummary.isConfigured
+          : true,
         publishReady: true,
         missingFields: [],
         publishedAt: publishedAt ? new Date(publishedAt) : serverTimestamp(),
@@ -1465,7 +1555,9 @@ export default function TournamentForm({
     } catch (err) {
       console.error("Erro ao publicar torneio:", err);
       setError(
-        err instanceof Error ? err.message : "Não foi possível publicar o torneio."
+        err instanceof Error
+          ? err.message
+          : "Não foi possível publicar o torneio.",
       );
     } finally {
       setSaving(false);
@@ -1494,12 +1586,15 @@ export default function TournamentForm({
               {isEdit ? "Configuração do torneio" : "Novo torneio"}
             </h1>
             <p style={styles.sectionSub}>
-              Crie em 3 etapas: informações principais, perímetro e revisão final.
+              Crie em 3 etapas: informações principais, perímetro e revisão
+              final.
             </p>
           </div>
 
           <div style={styles.heroBadges}>
-            <span style={getStatusBadgeStyle(status)}>{getStatusLabel(status)}</span>
+            <span style={getStatusBadgeStyle(status)}>
+              {getStatusLabel(status)}
+            </span>
             <span
               style={
                 visibility === "published"
@@ -1520,9 +1615,15 @@ export default function TournamentForm({
         </div>
 
         <div style={styles.timelineGrid}>
-          <PreviewCard label="Publicado em" value={formatDateTime(publishedAt)} />
+          <PreviewCard
+            label="Publicado em"
+            value={formatDateTime(publishedAt)}
+          />
           <PreviewCard label="Iniciado em" value={formatDateTime(startedAt)} />
-          <PreviewCard label="Encerrado em" value={formatDateTime(finishedAt)} />
+          <PreviewCard
+            label="Encerrado em"
+            value={formatDateTime(finishedAt)}
+          />
         </div>
 
         <div style={styles.stepsRow}>
@@ -1551,9 +1652,12 @@ export default function TournamentForm({
         <>
           <section style={styles.card}>
             <div style={styles.sectionHeader}>
-              <h2 style={styles.sectionTitle}>Etapa 1 · Informações principais</h2>
+              <h2 style={styles.sectionTitle}>
+                Etapa 1 · Informações principais
+              </h2>
               <p style={styles.sectionSub}>
-                Preencha toda a estrutura do torneio antes de seguir para o mapa.
+                Preencha toda a estrutura do torneio antes de seguir para o
+                mapa.
               </p>
             </div>
 
@@ -1696,14 +1800,42 @@ export default function TournamentForm({
                 />
               </Field>
 
-              <Field label="Tamanho mínimo (cm) *">
+              <Field label="Critério de pontuação *">
+                <select
+                  value={scoringMetric}
+                  onChange={(e) => {
+                    clearFeedback();
+                    setScoringMetric(normalizeScoringMetric(e.target.value));
+                  }}
+                  style={styles.input}
+                  disabled={!canEditStructure}
+                >
+                  <option value="length_cm">Por medida em centímetros</option>
+                  <option value="weight_kg">Por peso em kg</option>
+                </select>
+              </Field>
+
+              <Field
+                label={
+                  scoringMetric === "weight_kg"
+                    ? "Peso mínimo (kg) *"
+                    : "Tamanho mínimo (cm) *"
+                }
+              >
                 <input
                   type="number"
                   min={0}
-                  value={minSizeCm}
+                  step={scoringMetric === "weight_kg" ? 0.001 : 1}
+                  value={
+                    scoringMetric === "weight_kg" ? minWeightKg : minSizeCm
+                  }
                   onChange={(e) => {
                     clearFeedback();
-                    setMinSizeCm(Number(e.target.value));
+                    if (scoringMetric === "weight_kg") {
+                      setMinWeightKg(Number(e.target.value));
+                    } else {
+                      setMinSizeCm(Number(e.target.value));
+                    }
                   }}
                   style={styles.input}
                   disabled={!canEditStructure}
@@ -1741,11 +1873,14 @@ export default function TournamentForm({
             <div style={styles.professionalRulesBox}>
               <div style={styles.professionalRulesHeader}>
                 <div>
-                  <p style={styles.professionalRulesTitle}>Regra profissional de ranking</p>
+                  <p style={styles.professionalRulesTitle}>
+                    Regra profissional de ranking
+                  </p>
                   <p style={styles.professionalRulesText}>
-                    O atleta registra capturas oficiais durante o torneio. O sistema
-                    calcula automaticamente os {safeValidFishCount} maiores peixes
-                    aprovados da equipe, sem escolha manual no final.
+                    O atleta registra capturas oficiais durante o torneio. O
+                    sistema calcula automaticamente os {safeValidFishCount}{" "}
+                    peixes com maior {scoringLabel} aprovados da equipe, sem
+                    escolha manual no final.
                   </p>
                 </div>
 
@@ -1759,11 +1894,17 @@ export default function TournamentForm({
                 />
                 <PreviewCard
                   label="Escolha manual"
-                  value={manualRankingSelectionAllowed ? "Permitida" : "Bloqueada"}
+                  value={
+                    manualRankingSelectionAllowed ? "Permitida" : "Bloqueada"
+                  }
                 />
                 <PreviewCard
                   label="Origem da captura"
-                  value={captureSource === "camera_live_only" ? "Câmera ao vivo" : "—"}
+                  value={
+                    captureSource === "camera_live_only"
+                      ? "Câmera ao vivo"
+                      : "—"
+                  }
                 />
                 <PreviewCard
                   label="Galeria"
@@ -1801,7 +1942,7 @@ export default function TournamentForm({
                   setRulesText(e.target.value);
                 }}
                 style={styles.textareaLarge}
-                placeholder={`Valem os ${safeValidFishCount} maiores peixes aprovados da equipe.
+                placeholder={`Valem os ${safeValidFishCount} peixes com maior ${scoringLabel} aprovados da equipe.
 Captura deve ser feita pela câmera ao vivo do app.
 Capturas feitas fora do horário oficial são recusadas.
 A sincronização depois do fim é aceita somente se a foto foi capturada dentro do horário.
@@ -1882,7 +2023,7 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
                 </select>
               </Field>
 
-              {(registrationMode === "team" || registrationMode === "both") ? (
+              {registrationMode === "team" || registrationMode === "both" ? (
                 <>
                   <Field label="Mínimo de participantes por equipe *">
                     <input
@@ -1942,16 +2083,22 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
             <div style={styles.financeConfigBox}>
               <p style={styles.financeConfigTitle}>Financeiro do organizador</p>
               <p style={styles.financeConfigText}>
-                Este torneio será salvo com o organizador financeiro vinculado ao
-                usuário atual, taxa padrão da plataforma de 10% e liberação após o
-                torneio + 2 dias.
+                Este torneio será salvo com o organizador financeiro vinculado
+                ao usuário atual, taxa padrão da plataforma de 10% e liberação
+                após o torneio + 2 dias.
               </p>
 
               <div style={styles.previewGrid}>
-                <PreviewCard label="Organizador" value={resolvedUserName || "—"} />
+                <PreviewCard
+                  label="Organizador"
+                  value={resolvedUserName || "—"}
+                />
                 <PreviewCard label="UID" value={resolvedUserId || "—"} />
                 <PreviewCard label="Taxa ConnectFish" value="10%" />
-                <PreviewCard label="Liberação" value="Após o torneio + 2 dias" />
+                <PreviewCard
+                  label="Liberação"
+                  value="Após o torneio + 2 dias"
+                />
               </div>
             </div>
           </section>
@@ -2020,38 +2167,44 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
                   </div>
 
                   <div style={styles.roleChipsRow}>
-                    {(["captain", "member", "individual"] as RegistrationFieldRole[]).map(
-                      (role) => (
-                        <label key={role} style={styles.roleChip}>
-                          <input
-                            type="checkbox"
-                            checked={field.appliesTo.includes(role)}
-                            onChange={(e) => {
-                              clearFeedback();
-                              setRegistrationFields((prev) => {
-                                const next = [...prev];
-                                const currentRoles = new Set(next[index].appliesTo);
+                    {(
+                      [
+                        "captain",
+                        "member",
+                        "individual",
+                      ] as RegistrationFieldRole[]
+                    ).map((role) => (
+                      <label key={role} style={styles.roleChip}>
+                        <input
+                          type="checkbox"
+                          checked={field.appliesTo.includes(role)}
+                          onChange={(e) => {
+                            clearFeedback();
+                            setRegistrationFields((prev) => {
+                              const next = [...prev];
+                              const currentRoles = new Set(
+                                next[index].appliesTo,
+                              );
 
-                                if (e.target.checked) {
-                                  currentRoles.add(role);
-                                } else {
-                                  currentRoles.delete(role);
-                                }
+                              if (e.target.checked) {
+                                currentRoles.add(role);
+                              } else {
+                                currentRoles.delete(role);
+                              }
 
-                                next[index] = {
-                                  ...next[index],
-                                  appliesTo: Array.from(currentRoles),
-                                };
+                              next[index] = {
+                                ...next[index],
+                                appliesTo: Array.from(currentRoles),
+                              };
 
-                                return next;
-                              });
-                            }}
-                            disabled={!canEditStructure}
-                          />
-                          <span>{getRegistrationRoleLabel(role)}</span>
-                        </label>
-                      )
-                    )}
+                              return next;
+                            });
+                          }}
+                          disabled={!canEditStructure}
+                        />
+                        <span>{getRegistrationRoleLabel(role)}</span>
+                      </label>
+                    ))}
                   </div>
                 </div>
               ))}
@@ -2059,7 +2212,9 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
 
             {!registrationValidation.valid ? (
               <div style={styles.warningBox}>
-                <p style={styles.warningTitle}>Configuração de inscrição pendente</p>
+                <p style={styles.warningTitle}>
+                  Configuração de inscrição pendente
+                </p>
                 <p style={styles.warningText}>
                   Ajuste os pontos a seguir antes de publicar:{" "}
                   {registrationValidation.missing.join(", ")}.
@@ -2067,7 +2222,9 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
               </div>
             ) : (
               <div style={styles.successBox}>
-                <p style={styles.successTitle}>Configuração de inscrição pronta</p>
+                <p style={styles.successTitle}>
+                  Configuração de inscrição pronta
+                </p>
                 <p style={styles.successBoxText}>
                   {enabledRegistrationFields.length} campo(s) ativo(s) serão
                   exibidos para os participantes.
@@ -2096,7 +2253,14 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
                 label="Inscrição"
                 value={formatMoney(entryFee || 0, currency || "BRL")}
               />
-              <PreviewCard label="Mínimo" value={`${minSizeCm || 0} cm`} />
+              <PreviewCard
+                label="Critério"
+                value={getScoringMetricLabel(scoringMetric)}
+              />
+              <PreviewCard
+                label="Mínimo"
+                value={`${minMeasurementValue || 0} ${scoringUnit}`}
+              />
               <PreviewCard
                 label="Peixes válidos"
                 value={String(safeValidFishCount || 0)}
@@ -2107,12 +2271,11 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
               />
               <PreviewCard
                 label="Escolha manual"
-                value={manualRankingSelectionAllowed ? "Permitida" : "Bloqueada"}
+                value={
+                  manualRankingSelectionAllowed ? "Permitida" : "Bloqueada"
+                }
               />
-              <PreviewCard
-                label="Captura"
-                value="Câmera ao vivo obrigatória"
-              />
+              <PreviewCard label="Captura" value="Câmera ao vivo obrigatória" />
             </div>
 
             <div style={styles.urlPreviewBox}>
@@ -2147,10 +2310,12 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
                   successMessage: "Rascunho salvo com sucesso.",
                 })
               }
-              disabled={saving || !canEditStructure || (!isEdit && !!authLoading)}
+              disabled={
+                saving || !canEditStructure || (!isEdit && !!authLoading)
+              }
               style={{
                 ...styles.secondaryButton,
-                ...((saving || !canEditStructure || (!isEdit && !!authLoading))
+                ...(saving || !canEditStructure || (!isEdit && !!authLoading)
                   ? styles.disabledButton
                   : {}),
               }}
@@ -2161,10 +2326,12 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
             <button
               type="button"
               onClick={() => void handleContinueToBoundary()}
-              disabled={saving || !canEditStructure || (!isEdit && !!authLoading)}
+              disabled={
+                saving || !canEditStructure || (!isEdit && !!authLoading)
+              }
               style={{
                 ...styles.primaryButton,
-                ...((saving || !canEditStructure || (!isEdit && !!authLoading))
+                ...(saving || !canEditStructure || (!isEdit && !!authLoading)
                   ? styles.disabledButton
                   : {}),
               }}
@@ -2195,7 +2362,9 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
                 }}
                 disabled={!canEditStructure}
               />
-              <span style={styles.toggleLabel}>Ativar perímetro do torneio</span>
+              <span style={styles.toggleLabel}>
+                Ativar perímetro do torneio
+              </span>
             </label>
 
             <div style={styles.boundarySummaryGrid}>
@@ -2242,10 +2411,12 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
               {boundaryEnabled ? (
                 boundarySummary.isConfigured ? (
                   <>
-                    <p style={styles.boundaryStatusTitle}>Perímetro configurado</p>
+                    <p style={styles.boundaryStatusTitle}>
+                      Perímetro configurado
+                    </p>
                     <p style={styles.boundaryStatusText}>
-                      O torneio já possui uma área oficial pronta para validação de
-                      capturas.
+                      O torneio já possui uma área oficial pronta para validação
+                      de capturas.
                     </p>
                   </>
                 ) : (
@@ -2254,8 +2425,8 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
                       Perímetro ainda não configurado
                     </p>
                     <p style={styles.boundaryStatusText}>
-                      Abra o editor de mapa e desenhe o círculo ou polígono antes
-                      de seguir para a revisão final.
+                      Abra o editor de mapa e desenhe o círculo ou polígono
+                      antes de seguir para a revisão final.
                     </p>
                   </>
                 )
@@ -2276,7 +2447,7 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
                 disabled={!isEdit || !tournamentId}
                 style={{
                   ...styles.primaryButton,
-                  ...((!isEdit || !tournamentId) ? styles.disabledButton : {}),
+                  ...(!isEdit || !tournamentId ? styles.disabledButton : {}),
                 }}
               >
                 Abrir editor de perímetro
@@ -2331,7 +2502,9 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
                   key={item.label}
                   style={{
                     ...styles.reviewItem,
-                    ...(item.ok ? styles.reviewItemOk : styles.reviewItemPending),
+                    ...(item.ok
+                      ? styles.reviewItemOk
+                      : styles.reviewItemPending),
                   }}
                 >
                   <span style={styles.reviewIcon}>{item.ok ? "✓" : "!"}</span>
@@ -2342,14 +2515,21 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
 
             <section style={styles.financialStatusCard}>
               <div style={styles.sectionHeader}>
-                <h3 style={styles.sectionTitle}>Conta financeira do organizador</h3>
+                <h3 style={styles.sectionTitle}>
+                  Conta financeira do organizador
+                </h3>
                 <p style={styles.sectionSub}>
-                  Torneios com inscrição paga só podem ser publicados com onboarding financeiro aprovado.
+                  Torneios com inscrição paga só podem ser publicados com
+                  onboarding financeiro aprovado.
                 </p>
               </div>
 
               <div style={styles.infoPillRow}>
-                <span style={financialReady ? styles.successBadge : styles.warningBadge}>
+                <span
+                  style={
+                    financialReady ? styles.successBadge : styles.warningBadge
+                  }
+                >
                   {financialLoading ? "Verificando..." : financialStatusLabel}
                 </span>
 
@@ -2362,7 +2542,8 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
 
               {requiresFinancialOnboarding && !financialReady ? (
                 <p style={styles.errorText}>
-                  Finalize o onboarding financeiro antes de publicar este torneio.
+                  Finalize o onboarding financeiro antes de publicar este
+                  torneio.
                 </p>
               ) : null}
             </section>
@@ -2384,8 +2565,16 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
                 value={previewUrls.registrationUrl || "—"}
               />
               <PreviewCard
+                label="Critério"
+                value={getScoringMetricLabel(scoringMetric)}
+              />
+              <PreviewCard
+                label="Mínimo"
+                value={`${minMeasurementValue || 0} ${scoringUnit}`}
+              />
+              <PreviewCard
                 label="Peixes válidos"
-                value={`${safeValidFishCount} maiores aprovados`}
+                value={`${safeValidFishCount} maiores por ${scoringLabel}`}
               />
               <PreviewCard
                 label="Regra do ranking"
@@ -2421,7 +2610,9 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
               onClick={() => {
                 setCurrentStep(2);
                 if (isEdit && tournamentId) {
-                  router.push(`/seller/tournaments/${tournamentId}/edit?step=2`);
+                  router.push(
+                    `/seller/tournaments/${tournamentId}/edit?step=2`,
+                  );
                 }
               }}
               style={styles.secondaryButton}
@@ -2453,7 +2644,7 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
               disabled={saving || !reviewChecklist.publishReady}
               style={{
                 ...styles.primaryButton,
-                ...((saving || !reviewChecklist.publishReady)
+                ...(saving || !reviewChecklist.publishReady
                   ? styles.disabledButton
                   : {}),
               }}
@@ -2471,7 +2662,7 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
             router.push(
               isEdit && tournamentId
                 ? `/seller/tournaments/${tournamentId}`
-                : "/seller/tournaments"
+                : "/seller/tournaments",
             )
           }
           style={styles.ghostButton}
@@ -2486,13 +2677,7 @@ O atleta não escolhe manualmente quais peixes entram no ranking.`}
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label style={styles.field}>
       <span style={styles.label}>{label}</span>
