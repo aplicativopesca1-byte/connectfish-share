@@ -79,11 +79,11 @@ export default function TournamentPaymentSuccessPage({
   const [registrationId, setRegistrationId] = useState(
     searchParams?.registrationId ?? ""
   );
-
   const [status, setStatus] = useState<Status>("checking");
 
   const attemptsRef = useRef(0);
   const isCheckingRef = useRef(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -100,11 +100,16 @@ export default function TournamentPaymentSuccessPage({
     }
 
     setRegistrationId(id);
-    checkStatus(id);
-  }, []);
+    void checkStatus(id);
+
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      isCheckingRef.current = false;
+    };
+  }, [searchParams?.registrationId]);
 
   async function checkStatus(id: string) {
-    if (isCheckingRef.current) return;
+    if (!id || isCheckingRef.current) return;
 
     isCheckingRef.current = true;
 
@@ -114,7 +119,7 @@ export default function TournamentPaymentSuccessPage({
         { cache: "no-store" }
       );
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       const resolvedStatus = String(data?.resolvedStatus || "")
         .trim()
@@ -124,32 +129,64 @@ export default function TournamentPaymentSuccessPage({
         .trim()
         .toLowerCase();
 
-      // ✅ aprovado
-      if (resolvedStatus === "approved" || paymentStatus === "approved") {
+      const registrationStatus = String(data?.registrationStatus || "")
+        .trim()
+        .toLowerCase();
+
+      const isApproved =
+        resolvedStatus === "approved" ||
+        paymentStatus === "approved" ||
+        registrationStatus === "confirmed";
+
+      if (isApproved) {
         setStatus("approved");
         return;
       }
 
-      // ❌ falhou
-      if (resolvedStatus === "failed") {
+      const isFailed =
+        resolvedStatus === "failed" ||
+        registrationStatus === "payment_failed" ||
+        registrationStatus === "cancelled" ||
+        paymentStatus === "rejected" ||
+        paymentStatus === "cancelled" ||
+        paymentStatus === "error";
+
+      if (isFailed) {
         setStatus("failed");
         return;
       }
 
-      // ⏳ pending → retry
       setStatus("pending");
 
-      if (attemptsRef.current < 10) {
+      if (attemptsRef.current < 30) {
         attemptsRef.current += 1;
 
-        setTimeout(() => {
+        timeoutRef.current = setTimeout(() => {
           isCheckingRef.current = false;
-          checkStatus(id);
+          void checkStatus(id);
         }, 2000);
+
+        return;
       }
+
+      setStatus("pending");
     } catch (err) {
       console.error("[SuccessPage] erro:", err);
-      setStatus("failed");
+
+      setStatus((current) =>
+        current === "approved" ? "approved" : "pending"
+      );
+
+      if (attemptsRef.current < 30) {
+        attemptsRef.current += 1;
+
+        timeoutRef.current = setTimeout(() => {
+          isCheckingRef.current = false;
+          void checkStatus(id);
+        }, 2000);
+
+        return;
+      }
     } finally {
       isCheckingRef.current = false;
     }
@@ -172,9 +209,10 @@ export default function TournamentPaymentSuccessPage({
 
           {status === "pending" && (
             <>
-              <h1 style={styles.title}>Pagamento em análise</h1>
+              <h1 style={styles.title}>Pagamento em processamento</h1>
               <p style={styles.text}>
-                Seu pagamento foi recebido e está sendo processado.
+                Seu pagamento foi recebido e está sendo processado. A confirmação
+                pode levar alguns segundos.
               </p>
             </>
           )}
@@ -188,7 +226,8 @@ export default function TournamentPaymentSuccessPage({
               <h1 style={styles.title}>Inscrição confirmada</h1>
 
               <p style={styles.text}>
-                Pagamento aprovado com sucesso. Sua equipe está confirmada no torneio.
+                Pagamento aprovado com sucesso. Sua equipe está confirmada no
+                torneio.
               </p>
             </>
           )}
@@ -258,6 +297,7 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     alignItems: "center",
     textAlign: "center",
+    boxShadow: "0 10px 30px rgba(15,23,42,0.08)",
   },
   iconWrapSuccess: {
     width: 84,
@@ -282,21 +322,39 @@ const styles: Record<string, CSSProperties> = {
   text: {
     marginTop: 12,
     color: "#475569",
+    fontSize: 16,
+    lineHeight: 1.6,
+    maxWidth: 560,
   },
   infoBox: {
     marginTop: 20,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    padding: 12,
+    borderRadius: 12,
+    background: "#F8FAFC",
+    border: "1px solid #E2E8F0",
+    minWidth: 220,
   },
   infoLabel: {
     fontSize: 12,
+    color: "#64748B",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
   },
   infoValue: {
     fontSize: 14,
     fontWeight: 900,
+    color: "#0F172A",
+    wordBreak: "break-word",
   },
   actions: {
     marginTop: 20,
     display: "flex",
     gap: 10,
+    flexWrap: "wrap",
+    justifyContent: "center",
   },
   primaryButton: {
     padding: "12px 16px",
@@ -304,11 +362,14 @@ const styles: Record<string, CSSProperties> = {
     color: "#fff",
     borderRadius: 8,
     textDecoration: "none",
+    fontWeight: 700,
   },
   secondaryButton: {
     padding: "12px 16px",
     background: "#E2E8F0",
+    color: "#0F172A",
     borderRadius: 8,
     textDecoration: "none",
+    fontWeight: 700,
   },
 };

@@ -1,13 +1,13 @@
 import TournamentDashboardClient from "./TournamentDashboardClient";
 
 type PageProps = {
-  params: Promise<{
+  params: {
     id: string;
-  }>;
+  };
 };
 
-export default async function TournamentPage({ params }: PageProps) {
-  const { id } = await params;
+export default function TournamentPage({ params }: PageProps) {
+  const { id } = params;
 
   return <TournamentDashboardClient tournamentId={id} />;
 }

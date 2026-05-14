@@ -3,9 +3,13 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
   collection,
+  deleteDoc,
   doc,
+  getDoc,
+  increment,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   updateDoc,
   where,
@@ -32,6 +36,9 @@ type Reservation = {
   providerPaymentId?: string;
   createdAt?: any;
   updatedAt?: any;
+  spotId?: string;
+spotName?: string;
+spotType?: string;
 };
 
 type FishingSession = {
@@ -43,6 +50,19 @@ type FishingSession = {
   capacity?: number;
   reservedSpots?: number;
   status?: string;
+};
+
+type SpotOccupancy = {
+  id: string;
+  ownerId?: string;
+  sessionId?: string;
+  areaName?: string;
+  spotId?: string;
+  spotName?: string;
+  spotType?: string;
+  capacity?: number;
+  reservedPeople?: number;
+  availablePeople?: number;
 };
 
 type FilterKey =
@@ -91,6 +111,81 @@ function formatDateTime(raw?: string) {
   }
 }
 
+function canPerformCheckIn(
+  reservation: Reservation,
+  session?: FishingSession | null
+) {
+  const paymentStatus = normalize(reservation.paymentStatus);
+  const status = normalize(reservation.status);
+
+  if (paymentStatus !== "paid") {
+    return {
+      allowed: false,
+      reason: "Pagamento pendente.",
+    };
+  }
+
+  if (
+    status === "checked_in" ||
+    status === "completed"
+  ) {
+    return {
+      allowed: false,
+      reason: "Check-in já realizado.",
+    };
+  }
+
+  if (
+    status === "cancelled" ||
+    status === "no_show"
+  ) {
+    return {
+      allowed: false,
+      reason: "Reserva inválida.",
+    };
+  }
+
+  if (!session?.startAt) {
+    return {
+      allowed: true,
+      reason: null,
+    };
+  }
+
+  const start = new Date(session.startAt).getTime();
+
+  if (!Number.isFinite(start)) {
+    return {
+      allowed: true,
+      reason: null,
+    };
+  }
+
+  const now = Date.now();
+
+  const checkInOpen = start - 1000 * 60 * 60;
+  const checkInClose = start + 1000 * 60 * 120;
+
+  if (now < checkInOpen) {
+    return {
+      allowed: false,
+      reason: "Check-in ainda não liberado.",
+    };
+  }
+
+  if (now > checkInClose) {
+    return {
+      allowed: false,
+      reason: "Janela de check-in encerrada.",
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: null,
+  };
+}
+
 function paymentLabel(status?: string) {
   const value = normalize(status);
 
@@ -123,6 +218,7 @@ export default function ReservationsClient({ uid }: { uid: string }) {
   const [loading, setLoading] = useState(true);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [occupancy, setOccupancy] = useState<SpotOccupancy[]>([]);
 
   useEffect(() => {
     setLoading(true);
@@ -161,6 +257,20 @@ export default function ReservationsClient({ uid }: { uid: string }) {
       where("ownerId", "==", uid)
     );
 
+    const occupancyQuery = query(
+  collection(db, "fishingSessionSpotOccupancy"),
+  where("ownerId", "==", uid)
+);
+
+const unsubscribeOccupancy = onSnapshot(occupancyQuery, (snap) => {
+  const rows = snap.docs.map((item) => ({
+    id: item.id,
+    ...(item.data() as any),
+  }));
+
+  setOccupancy(rows);
+});
+
     const unsubscribeSessions = onSnapshot(sessionsQuery, (snap) => {
       const map: Record<string, FishingSession> = {};
 
@@ -177,6 +287,7 @@ export default function ReservationsClient({ uid }: { uid: string }) {
     return () => {
       unsubscribeReservations();
       unsubscribeSessions();
+      unsubscribeOccupancy();
     };
   }, [uid]);
 
@@ -257,6 +368,21 @@ export default function ReservationsClient({ uid }: { uid: string }) {
     };
   }, [reservations, sessions]);
 
+  const todayOccupancy = useMemo(() => {
+  const today = todayKey();
+
+  return occupancy
+    .filter((item) => {
+      const session = item.sessionId ? sessions[item.sessionId] : null;
+      return dateKeyFromSession(session) === today;
+    })
+    .sort((a, b) => {
+      const aReserved = Number(a.reservedPeople || 0);
+      const bReserved = Number(b.reservedPeople || 0);
+      return bReserved - aReserved;
+    });
+}, [occupancy, sessions]);
+
   async function handleCheckIn(reservationId: string) {
     try {
       setActionLoadingId(reservationId);
@@ -272,23 +398,112 @@ export default function ReservationsClient({ uid }: { uid: string }) {
     }
   }
 
-  async function handleCancel(reservationId: string) {
-    const ok = window.confirm("Deseja cancelar esta reserva?");
-    if (!ok) return;
+async function handleCancel(reservationId: string) {
+  const ok = window.confirm(
+    "Deseja cancelar esta reserva? Isso vai liberar a vaga e o local escolhido."
+  );
+  if (!ok) return;
 
-    try {
-      setActionLoadingId(reservationId);
+  try {
+    setActionLoadingId(reservationId);
 
-      await updateDoc(doc(db, "fishingReservations", reservationId), {
+    await runTransaction(db, async (transaction) => {
+      const reservationRef = doc(db, "fishingReservations", reservationId);
+      const reservationSnap = await transaction.get(reservationRef);
+
+      if (!reservationSnap.exists()) {
+        throw new Error("Reserva não encontrada.");
+      }
+
+      const reservationData = reservationSnap.data() as Reservation;
+
+      if (reservationData.ownerId !== uid) {
+        throw new Error("Você não tem permissão para cancelar esta reserva.");
+      }
+
+      const status = normalize(reservationData.status);
+
+      if (status === "cancelled") {
+        throw new Error("Essa reserva já foi cancelada.");
+      }
+
+      if (status === "completed") {
+        throw new Error("Não é possível cancelar uma reserva finalizada.");
+      }
+
+      const peopleCount = Math.max(0, Number(reservationData.peopleCount || 0));
+
+      if (reservationData.sessionId) {
+        const sessionRef = doc(
+          db,
+          "fishingSessions",
+          String(reservationData.sessionId)
+        );
+
+        transaction.update(sessionRef, {
+          reservedSpots: increment(-peopleCount),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+if (reservationData.sessionId && reservationData.spotId) {
+  const occupancyRef = doc(
+    db,
+    "fishingSessionSpotOccupancy",
+    `${reservationData.sessionId}_${reservationData.spotId}`
+  );
+
+  const occupancySnap = await transaction.get(occupancyRef);
+
+  if (occupancySnap.exists()) {
+    const occupancyData = occupancySnap.data();
+
+    const currentReserved = Math.max(
+      0,
+      Number(occupancyData?.reservedPeople || 0)
+    );
+
+    const currentCapacity = Math.max(
+      0,
+      Number(occupancyData?.capacity || 0)
+    );
+
+    const nextReserved = Math.max(
+      0,
+      currentReserved - peopleCount
+    );
+
+    const nextAvailable = Math.max(
+      0,
+      currentCapacity - nextReserved
+    );
+
+    if (nextReserved <= 0) {
+      transaction.delete(occupancyRef);
+    } else {
+      transaction.update(occupancyRef, {
+        reservedPeople: nextReserved,
+        availablePeople: nextAvailable,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  }
+}
+
+      transaction.update(reservationRef, {
         status: "cancelled",
         cancelledAt: serverTimestamp(),
         cancelledBy: uid,
+        releasedSpotAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-    } finally {
-      setActionLoadingId(null);
-    }
+    });
+  } catch (e: any) {
+    window.alert(e?.message || "Não foi possível cancelar a reserva.");
+  } finally {
+    setActionLoadingId(null);
   }
+}
 
   return (
     <div style={styles.page}>
@@ -309,6 +524,65 @@ export default function ReservationsClient({ uid }: { uid: string }) {
         <Metric title="Pagamentos pendentes" value={String(metrics.pendingPayments)} emoji="⏳" />
         <Metric title="Check-ins pendentes" value={String(metrics.checkinPending)} emoji="✅" />
       </section>
+
+      <section style={styles.occupancyPanel}>
+  <div style={styles.panelHeader}>
+    <div>
+      <h2 style={styles.panelTitle}>Ocupação por local hoje</h2>
+      <p style={styles.panelSub}>
+        Veja quais decks, quiosques ou pontos estão mais ocupados.
+      </p>
+    </div>
+  </div>
+
+  {todayOccupancy.length === 0 ? (
+    <div style={styles.empty}>
+      Nenhum local ocupado hoje.
+    </div>
+  ) : (
+    <div style={styles.occupancyGrid}>
+      {todayOccupancy.map((item) => {
+        const capacity = Number(item.capacity || 0);
+        const reserved = Number(item.reservedPeople || 0);
+        const available = Math.max(0, capacity - reserved);
+        const percent = capacity > 0 ? Math.min(100, Math.round((reserved / capacity) * 100)) : 0;
+
+        return (
+          <article key={item.id} style={styles.occupancyCard}>
+            <div style={styles.occupancyTop}>
+              <div>
+                <div style={styles.occupancyName}>
+                  {item.spotName || "Local"}
+                </div>
+                <div style={styles.occupancyMeta}>
+                  {item.areaName || "Área"} · {item.spotType || "local"}
+                </div>
+              </div>
+
+              <div style={styles.occupancyPercent}>
+                {percent}%
+              </div>
+            </div>
+
+            <div style={styles.occupancyBar}>
+              <div
+                style={{
+                  ...styles.occupancyFill,
+                  width: `${percent}%`,
+                }}
+              />
+            </div>
+
+            <div style={styles.occupancyFooter}>
+              <span>{reserved}/{capacity} ocupadas</span>
+              <span>{available} livres</span>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  )}
+</section>
 
       <section style={styles.panel}>
         <div style={styles.panelHeader}>
@@ -361,6 +635,7 @@ export default function ReservationsClient({ uid }: { uid: string }) {
                   <th style={styles.th}>Cliente</th>
                   <th style={styles.th}>Sessão</th>
                   <th style={styles.th}>Área</th>
+                  <th style={styles.th}>Local</th>
                   <th style={styles.th}>Pessoas</th>
                   <th style={styles.th}>Valor</th>
                   <th style={styles.th}>Pagamento</th>
@@ -377,11 +652,12 @@ export default function ReservationsClient({ uid }: { uid: string }) {
 
                   const paymentStatus = normalize(reservation.paymentStatus);
                   const status = normalize(reservation.status);
-                  const canCheckIn =
-                    paymentStatus === "paid" &&
-                    status !== "checked_in" &&
-                    status !== "completed" &&
-                    status !== "cancelled";
+                  const checkInState = canPerformCheckIn(
+  reservation,
+  session
+);
+
+const canCheckIn = checkInState.allowed;
 
                   return (
                     <tr key={reservation.id} style={styles.tr}>
@@ -403,6 +679,18 @@ export default function ReservationsClient({ uid }: { uid: string }) {
                         {session?.areaName || reservation.areaName || "Área não definida"}
                       </td>
 
+                      <td style={styles.td}>
+  <div style={styles.spotName}>
+    {reservation.spotName || "Não selecionado"}
+  </div>
+
+  {reservation.spotType ? (
+    <div style={styles.spotType}>
+      {reservation.spotType}
+    </div>
+  ) : null}
+</td>
+
                       <td style={styles.td}>{reservation.peopleCount || 0}</td>
 
                       <td style={styles.td}>{money(reservation.totalPrice)}</td>
@@ -411,9 +699,17 @@ export default function ReservationsClient({ uid }: { uid: string }) {
                         <Badge type={paymentStatus}>{paymentLabel(reservation.paymentStatus)}</Badge>
                       </td>
 
-                      <td style={styles.td}>
-                        <Badge type={status}>{reservationLabel(reservation.status)}</Badge>
-                      </td>
+                     <td style={styles.td}>
+  <Badge type={status}>
+    {reservationLabel(reservation.status)}
+  </Badge>
+
+  {!canCheckIn && checkInState.reason ? (
+    <div style={styles.checkinReason}>
+      {checkInState.reason}
+    </div>
+  ) : null}
+</td>
 
                       <td style={styles.td}>
 <div style={styles.actions}>
@@ -424,16 +720,17 @@ export default function ReservationsClient({ uid }: { uid: string }) {
     Detalhes
   </a>
 
-  {canCheckIn ? (
-    <button
-      type="button"
-      style={styles.actionPrimary}
-      disabled={actionLoadingId === reservation.id}
-      onClick={() => handleCheckIn(reservation.id)}
-    >
-      Check-in
-    </button>
-  ) : null}
+<button
+  type="button"
+  disabled={!canCheckIn}
+  onClick={() => handleCheckIn(reservation.id)}
+  style={{
+    ...styles.actionPrimary,
+    ...(!canCheckIn ? styles.actionBtnDisabled : {}),
+  }}
+>
+  {canCheckIn ? "Fazer check-in" : "Check-in bloqueado"}
+</button>
 
   {reservation.checkoutUrl || reservation.asaasInvoiceUrl ? (
     <a
@@ -811,4 +1108,99 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     fontWeight: 900,
   },
+
+  checkinReason: {
+  marginTop: 6,
+  fontSize: 11,
+  fontWeight: 800,
+  color: "#64748B",
+  },
+  actionBtnDisabled: {
+  opacity: 0.6,
+  cursor: "not-allowed",
+  background: "#CBD5E1",
+},
+spotName: {
+  fontSize: 13,
+  fontWeight: 1000,
+  color: "#0F172A",
+},
+
+spotType: {
+  marginTop: 4,
+  fontSize: 11,
+  fontWeight: 800,
+  color: "#64748B",
+  textTransform: "capitalize",
+},
+occupancyPanel: {
+  borderRadius: 22,
+  background: "#FFFFFF",
+  border: "1px solid rgba(15,23,42,0.08)",
+  boxShadow: "0 10px 24px rgba(15,23,42,0.05)",
+  overflow: "hidden",
+},
+
+occupancyGrid: {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
+  gap: 12,
+  padding: 16,
+},
+
+occupancyCard: {
+  borderRadius: 18,
+  padding: 14,
+  background: "#F8FAFC",
+  border: "1px solid rgba(15,23,42,0.08)",
+},
+
+occupancyTop: {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 12,
+},
+
+occupancyName: {
+  fontSize: 14,
+  fontWeight: 1000,
+  color: "#0F172A",
+},
+
+occupancyMeta: {
+  marginTop: 4,
+  fontSize: 12,
+  fontWeight: 800,
+  color: "#64748B",
+},
+
+occupancyPercent: {
+  fontSize: 18,
+  fontWeight: 1000,
+  color: "#0B3C5D",
+},
+
+occupancyBar: {
+  marginTop: 12,
+  height: 9,
+  borderRadius: 999,
+  background: "rgba(15,23,42,0.08)",
+  overflow: "hidden",
+},
+
+occupancyFill: {
+  height: "100%",
+  borderRadius: 999,
+  background: "#0B3C5D",
+},
+
+occupancyFooter: {
+  marginTop: 10,
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 8,
+  fontSize: 12,
+  fontWeight: 900,
+  color: "#475569",
+},
 };

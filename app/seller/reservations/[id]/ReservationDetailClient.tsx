@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import {
   collection,
   doc,
   getDoc,
+  increment,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   updateDoc,
   where,
@@ -23,6 +25,9 @@ type Reservation = {
   sessionId?: string;
   sessionTitle?: string;
   areaName?: string;
+  spotId?: string;
+  spotName?: string;
+  spotType?: string;
   peopleCount?: number;
   pricePerPerson?: number;
   totalPrice?: number;
@@ -159,7 +164,13 @@ export default function ReservationDetailClient({
     setLoading(true);
     setError(null);
 
-    const ref = doc(db, "fishingReservations", reservationId);
+    if (!reservationId) {
+      setError("Reserva não informada.");
+      setLoading(false);
+      return;
+    }
+
+    const ref = doc(db, "fishingReservations", String(reservationId));
 
     const unsubscribe = onSnapshot(
       ref,
@@ -186,7 +197,10 @@ export default function ReservationDetailClient({
         setReservation(data);
 
         if (data.sessionId) {
-          const sessionSnap = await getDoc(doc(db, "fishingSessions", data.sessionId));
+          const sessionSnap = await getDoc(
+            doc(db, "fishingSessions", String(data.sessionId))
+          );
+
           if (sessionSnap.exists()) {
             setSession({
               id: sessionSnap.id,
@@ -211,7 +225,7 @@ export default function ReservationDetailClient({
 
     const logsQuery = query(
       collection(db, "financialAuditLogs"),
-      where("reservationId", "==", reservationId)
+      where("reservationId", "==", String(reservationId))
     );
 
     const unsubscribe = onSnapshot(logsQuery, (snap) => {
@@ -252,18 +266,106 @@ export default function ReservationDetailClient({
   async function handleCancel() {
     if (!reservation) return;
 
-    const ok = window.confirm("Deseja cancelar esta reserva?");
+    const ok = window.confirm(
+      "Deseja cancelar esta reserva? Isso vai liberar a vaga e o local escolhido."
+    );
     if (!ok) return;
 
     try {
       setActionLoading(true);
 
-      await updateDoc(doc(db, "fishingReservations", reservation.id), {
-        status: "cancelled",
-        cancelledAt: serverTimestamp(),
-        cancelledBy: uid,
+      await runTransaction(db, async (transaction) => {
+        const reservationRef = doc(db, "fishingReservations", reservation.id);
+        const reservationSnap = await transaction.get(reservationRef);
+
+        if (!reservationSnap.exists()) {
+          throw new Error("Reserva não encontrada.");
+        }
+
+        const reservationData = reservationSnap.data() as Reservation;
+        const currentStatus = normalize(reservationData.status);
+
+        if (currentStatus === "cancelled") {
+          throw new Error("Essa reserva já foi cancelada.");
+        }
+
+        if (currentStatus === "completed") {
+          throw new Error("Não é possível cancelar uma reserva finalizada.");
+        }
+
+        if (reservationData.ownerId !== uid) {
+          throw new Error("Você não tem permissão para cancelar esta reserva.");
+        }
+
+        const peopleCount = Math.max(0, Number(reservationData.peopleCount || 0));
+
+        if (reservationData.sessionId) {
+          const sessionRef = doc(
+            db,
+            "fishingSessions",
+            String(reservationData.sessionId)
+          );
+
+          transaction.update(sessionRef, {
+            reservedSpots: increment(-peopleCount),
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+       if (reservationData.sessionId && reservationData.spotId) {
+  const occupancyRef = doc(
+    db,
+    "fishingSessionSpotOccupancy",
+    `${reservationData.sessionId}_${reservationData.spotId}`
+  );
+
+  const occupancySnap = await transaction.get(occupancyRef);
+
+  if (occupancySnap.exists()) {
+    const occupancyData = occupancySnap.data();
+
+    const currentReserved = Math.max(
+      0,
+      Number(occupancyData?.reservedPeople || 0)
+    );
+
+    const currentCapacity = Math.max(
+      0,
+      Number(occupancyData?.capacity || 0)
+    );
+
+    const nextReserved = Math.max(
+      0,
+      currentReserved - peopleCount
+    );
+
+    const nextAvailable = Math.max(
+      0,
+      currentCapacity - nextReserved
+    );
+
+    if (nextReserved <= 0) {
+      transaction.delete(occupancyRef);
+    } else {
+      transaction.update(occupancyRef, {
+        reservedPeople: nextReserved,
+        availablePeople: nextAvailable,
         updatedAt: serverTimestamp(),
       });
+    }
+  }
+}
+
+        transaction.update(reservationRef, {
+          status: "cancelled",
+          cancelledAt: serverTimestamp(),
+          cancelledBy: uid,
+          releasedSpotAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+    } catch (e: any) {
+      window.alert(e?.message || "Não foi possível cancelar a reserva.");
     } finally {
       setActionLoading(false);
     }
@@ -308,10 +410,11 @@ export default function ReservationDetailClient({
         <div>
           <div style={styles.overline}>Detalhe da reserva</div>
           <h1 style={styles.heroTitle}>
-            {reservation.userName || "Usuário"} · {session?.title || reservation.sessionTitle || "Sessão"}
+            {reservation.userName || "Usuário"} ·{" "}
+            {session?.title || reservation.sessionTitle || "Sessão"}
           </h1>
           <p style={styles.heroSub}>
-            Controle pagamento, presença, dados do cliente e histórico financeiro.
+            Controle pagamento, presença, local escolhido e histórico financeiro.
           </p>
         </div>
 
@@ -334,6 +437,8 @@ export default function ReservationDetailClient({
           <h2 style={styles.cardTitle}>Reserva</h2>
 
           <Info label="Área" value={session?.areaName || reservation.areaName || "Não definida"} />
+          <Info label="Local" value={reservation.spotName || "Não selecionado"} />
+          <Info label="Tipo do local" value={reservation.spotType || "Não informado"} />
           <Info label="Sessão" value={session?.title || reservation.sessionTitle || "Não definida"} />
           <Info label="Início" value={formatDateTime(session?.startAt)} />
           <Info label="Fim" value={formatDateTime(session?.endAt)} />
@@ -394,7 +499,7 @@ export default function ReservationDetailClient({
           </div>
 
           <div style={styles.helpBox}>
-            O check-in só fica liberado quando o pagamento estiver como pago.
+            Ao cancelar, o sistema libera a vaga da sessão e o local escolhido.
           </div>
         </div>
       </section>

@@ -11,8 +11,7 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
-  orderBy,
+  onSnapshot,
   query,
   where,
 } from "firebase/firestore";
@@ -66,8 +65,15 @@ type TournamentCapture = {
   species: string;
   declaredLengthCm: number;
   submittedAt: string | null;
+  capturedAt: string | null;
   insideBoundary: boolean | null;
   status: CaptureStatus;
+};
+
+type CaptureAlert = {
+  key: string;
+  label: string;
+  tone: "red" | "yellow";
 };
 
 function toIsoStringSafe(value: unknown): string | null {
@@ -140,6 +146,7 @@ function mapCaptureDoc(rawId: string, raw: Record<string, unknown>): TournamentC
     species: raw.species ? String(raw.species) : "Espécie não informada",
     declaredLengthCm: Number(raw.declaredLengthCm ?? raw.lengthCm ?? 0) || 0,
     submittedAt: toIsoStringSafe(raw.submittedAt),
+    capturedAt: toIsoStringSafe(raw.capturedAt),
     insideBoundary:
       typeof raw.insideBoundary === "boolean" ? raw.insideBoundary : null,
     status,
@@ -150,6 +157,59 @@ function formatBoundaryValue(value: boolean | null) {
   if (value === true) return "Dentro da área";
   if (value === false) return "Fora da área";
   return "Não informado";
+}
+
+function deriveCaptureAlerts(params: {
+  capture: TournamentCapture;
+  minSizeCm: number;
+  scheduledStartAt: string | null;
+  scheduledEndAt: string | null;
+}) {
+  const alerts: CaptureAlert[] = [];
+
+  if (params.minSizeCm > 0 && params.capture.declaredLengthCm < params.minSizeCm) {
+    alerts.push({
+      key: "min_size",
+      label: `Abaixo do mínimo (${params.minSizeCm} cm)`,
+      tone: "red",
+    });
+  }
+
+  if (params.capture.insideBoundary === false) {
+    alerts.push({
+      key: "boundary",
+      label: "Fora da área",
+      tone: "red",
+    });
+  }
+
+  if (params.scheduledStartAt && params.capture.capturedAt) {
+    const startMs = new Date(params.scheduledStartAt).getTime();
+    const captureMs = new Date(params.capture.capturedAt).getTime();
+
+    if (!Number.isNaN(startMs) && !Number.isNaN(captureMs) && captureMs < startMs) {
+      alerts.push({
+        key: "before_start",
+        label: "Antes do início",
+        tone: "yellow",
+      });
+    }
+  }
+
+  if (params.scheduledEndAt && params.capture.capturedAt) {
+    const endMs = new Date(params.scheduledEndAt).getTime();
+    const captureMs = new Date(params.capture.capturedAt).getTime();
+
+    if (!Number.isNaN(endMs) && !Number.isNaN(captureMs) && captureMs > endMs) {
+      alerts.push({
+        key: "after_end",
+        label: "Após o encerramento",
+        tone: "red",
+      });
+    }
+  }
+
+  return alerts;
 }
 
 export default function TournamentCapturesClient({ tournamentId }: Props) {
@@ -163,66 +223,109 @@ export default function TournamentCapturesClient({ tournamentId }: Props) {
   const [teamsCount, setTeamsCount] = useState(0);
 
   useEffect(() => {
-    void loadPage();
-  }, [tournamentId]);
-
-  async function loadPage() {
-    setLoading(true);
-    setError(null);
-
-    try {
-      if (!tournamentId?.trim()) {
-        setError("ID do torneio inválido.");
-        return;
-      }
-
-      await Promise.all([loadTournament(), loadCaptures(), loadTeamsCount()]);
-    } catch (err) {
-      console.error("Erro ao carregar central do torneio:", err);
-      setError("Não foi possível carregar os dados do torneio.");
-    } finally {
+    if (!tournamentId?.trim()) {
+      setError("ID do torneio inválido.");
       setLoading(false);
-    }
-  }
-
-  async function loadTournament() {
-    const ref = doc(db, "tournaments", tournamentId);
-    const snap = await getDoc(ref);
-
-    if (!snap.exists()) {
-      setError("Torneio não encontrado.");
       return;
     }
 
-    setTournament(snap.data() as TournamentDoc);
-  }
+    setLoading(true);
+    setError(null);
 
-  async function loadCaptures() {
-    const capturesRef = collection(db, "tournamentCaptures");
+    const unsubscribers: Array<() => void> = [];
+
+    const tournamentRef = doc(db, "tournaments", tournamentId);
     const capturesQuery = query(
-      capturesRef,
-      where("tournamentId", "==", tournamentId),
-      orderBy("submittedAt", "desc")
+      collection(db, "tournamentCaptures"),
+      where("tournamentId", "==", tournamentId)
+    );
+    const teamsQuery = query(
+      collection(db, "tournamentTeams"),
+      where("tournamentId", "==", tournamentId)
     );
 
-    const snapshot = await getDocs(capturesQuery);
-    const items = snapshot.docs.map((item) =>
-      mapCaptureDoc(item.id, item.data() as Record<string, unknown>)
+    let tournamentLoaded = false;
+    let capturesLoaded = false;
+    let teamsLoaded = false;
+
+    const resolveLoading = () => {
+      if (tournamentLoaded && capturesLoaded && teamsLoaded) {
+        setLoading(false);
+      }
+    };
+
+    unsubscribers.push(
+      onSnapshot(
+        tournamentRef,
+        (snap) => {
+          if (!snap.exists()) {
+            setError("Torneio não encontrado.");
+            tournamentLoaded = true;
+            resolveLoading();
+            return;
+          }
+
+          setTournament(snap.data() as TournamentDoc);
+          tournamentLoaded = true;
+          resolveLoading();
+        },
+        (err) => {
+          console.error("Erro realtime torneio:", err);
+          setError("Não foi possível carregar os dados do torneio.");
+          tournamentLoaded = true;
+          resolveLoading();
+        }
+      )
     );
 
-    setCaptures(items);
-  }
+    unsubscribers.push(
+      onSnapshot(
+        capturesQuery,
+        (snapshot) => {
+          const items = snapshot.docs
+            .map((item) =>
+              mapCaptureDoc(item.id, item.data() as Record<string, unknown>)
+            )
+            .sort((a, b) => {
+              const aMs = a.submittedAt ? new Date(a.submittedAt).getTime() : 0;
+              const bMs = b.submittedAt ? new Date(b.submittedAt).getTime() : 0;
+              return bMs - aMs;
+            });
 
-  async function loadTeamsCount() {
-    try {
-      const teamsRef = collection(db, "tournamentTeams");
-      const teamsQuery = query(teamsRef, where("tournamentId", "==", tournamentId));
-      const snapshot = await getDocs(teamsQuery);
-      setTeamsCount(snapshot.size);
-    } catch {
-      setTeamsCount(0);
-    }
-  }
+          setCaptures(items);
+          capturesLoaded = true;
+          resolveLoading();
+        },
+        (err) => {
+          console.error("Erro realtime capturas:", err);
+          setError("Não foi possível carregar as capturas do torneio.");
+          capturesLoaded = true;
+          resolveLoading();
+        }
+      )
+    );
+
+    unsubscribers.push(
+      onSnapshot(
+        teamsQuery,
+        (snapshot) => {
+          setTeamsCount(snapshot.size);
+          teamsLoaded = true;
+          resolveLoading();
+        },
+        (err) => {
+          console.error("Erro realtime equipes:", err);
+          setTeamsCount(0);
+          teamsLoaded = true;
+          resolveLoading();
+        }
+      )
+    );
+
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [tournamentId]);
 
   const title = tournament?.title || "Torneio";
   const subtitle = tournament?.subtitle || "";
@@ -242,6 +345,18 @@ export default function TournamentCapturesClient({ tournamentId }: Props) {
   const pendingCaptures = captures.filter((item) => item.status === "pending");
   const approvedCaptures = captures.filter((item) => item.status === "approved");
   const rejectedCaptures = captures.filter((item) => item.status === "rejected");
+
+  const pendingWithAlerts = useMemo(() => {
+    return pendingCaptures.filter(
+      (capture) =>
+        deriveCaptureAlerts({
+          capture,
+          minSizeCm,
+          scheduledStartAt,
+          scheduledEndAt,
+        }).length > 0
+    );
+  }, [pendingCaptures, minSizeCm, scheduledStartAt, scheduledEndAt]);
 
   const boundaryConfigured = useMemo(() => {
     const boundary = tournament?.boundary;
@@ -378,6 +493,7 @@ export default function TournamentCapturesClient({ tournamentId }: Props) {
           <KpiCard label="Capturas pendentes" value={String(pendingCaptures.length)} emoji="📸" />
           <KpiCard label="Capturas aprovadas" value={String(approvedCaptures.length)} emoji="✅" />
           <KpiCard label="Capturas reprovadas" value={String(rejectedCaptures.length)} emoji="❌" />
+          <KpiCard label="Pendentes com alerta" value={String(pendingWithAlerts.length)} emoji="⚠️" />
         </div>
 
         <div style={styles.mainGrid}>
@@ -422,16 +538,16 @@ export default function TournamentCapturesClient({ tournamentId }: Props) {
                 🗺️ Configurar perímetro
               </Link>
 
+              <Link href={`/seller/tournaments/${tournamentId}/captures`} style={styles.quickLink}>
+                📸 Validar capturas
+              </Link>
+
               <Link href={`/seller/tournaments/${tournamentId}/ranking`} style={styles.quickLink}>
                 🥇 Abrir ranking
               </Link>
 
               <Link href={`/seller/tournaments/${tournamentId}/teams`} style={styles.quickLink}>
                 👥 Ver equipes
-              </Link>
-
-              <Link href={`/seller/tournaments/${tournamentId}`} style={styles.quickLinkSoft}>
-                📸 Painel atual
               </Link>
 
               <Link href={`/seller/tournaments/${tournamentId}/edit`} style={styles.quickLinkSoft}>
@@ -488,20 +604,50 @@ export default function TournamentCapturesClient({ tournamentId }: Props) {
               <p style={styles.muted}>Nenhuma captura pendente no momento.</p>
             ) : (
               <div style={styles.pendingList}>
-                {pendingCaptures.slice(0, 5).map((capture) => (
-                  <div key={capture.id} style={styles.pendingRow}>
-                    <div>
-                      <p style={styles.pendingTitle}>{capture.teamName}</p>
-                      <p style={styles.pendingMeta}>
-                        {capture.species} • {capture.declaredLengthCm} cm •{" "}
-                        {formatDateTime(capture.submittedAt)}
-                      </p>
-                      <p style={styles.pendingMeta}>
-                        Geofence: {formatBoundaryValue(capture.insideBoundary)}
-                      </p>
+                {pendingCaptures.slice(0, 5).map((capture) => {
+                  const alerts = deriveCaptureAlerts({
+                    capture,
+                    minSizeCm,
+                    scheduledStartAt,
+                    scheduledEndAt,
+                  });
+
+                  return (
+                    <div key={capture.id} style={styles.pendingRow}>
+                      <div>
+                        <p style={styles.pendingTitle}>{capture.teamName}</p>
+                        <p style={styles.pendingMeta}>
+                          {capture.species} • {capture.declaredLengthCm} cm •{" "}
+                          {formatDateTime(capture.submittedAt)}
+                        </p>
+                        <p style={styles.pendingMeta}>
+                          Geofence: {formatBoundaryValue(capture.insideBoundary)}
+                        </p>
+
+                        {alerts.length ? (
+                          <div style={styles.alertsWrap}>
+                            {alerts.map((alert) => (
+                              <span
+                                key={`${capture.id}-${alert.key}`}
+                                style={
+                                  alert.tone === "red"
+                                    ? styles.alertBadgeDanger
+                                    : styles.alertBadgeWarning
+                                }
+                              >
+                                {alert.label}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={styles.alertsWrap}>
+                            <span style={styles.alertBadgeOk}>Sem alerta automático</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>
@@ -912,6 +1058,42 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 700,
     color: "#64748B",
     lineHeight: 1.5,
+  },
+  alertsWrap: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    marginTop: 10,
+  },
+  alertBadgeDanger: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "6px 10px",
+    borderRadius: 999,
+    background: "#FEE2E2",
+    color: "#991B1B",
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  alertBadgeWarning: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "6px 10px",
+    borderRadius: 999,
+    background: "#FEF3C7",
+    color: "#92400E",
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  alertBadgeOk: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "6px 10px",
+    borderRadius: 999,
+    background: "#DCFCE7",
+    color: "#166534",
+    fontSize: 12,
+    fontWeight: 900,
   },
   primaryLink: {
     display: "inline-flex",

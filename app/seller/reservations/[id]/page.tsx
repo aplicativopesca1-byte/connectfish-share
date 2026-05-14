@@ -8,13 +8,15 @@ export const dynamic = "force-dynamic";
 export default async function SellerReservationDetailPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
+  const { id } = await params;
+
   const uid = await getServerSessionUid();
 
   if (!uid) {
-    redirect(`/login?next=%2Fseller%2Freservations%2F${params.id}`);
+    redirect(`/login?next=%2Fseller%2Freservations%2F${id}`);
   }
 
-  return <ReservationDetailClient uid={uid} reservationId={params.id} />;
+  return <ReservationDetailClient uid={uid} reservationId={id} />;
 }

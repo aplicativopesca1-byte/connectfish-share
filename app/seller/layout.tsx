@@ -13,6 +13,49 @@ type NavItem = {
   soon?: boolean;
 };
 
+type NavSection = {
+  title: string;
+  items: NavItem[];
+};
+
+const navSections: NavSection[] = [
+  {
+    title: "Principal",
+    items: [{ href: "/seller", label: "Dashboard", emoji: "📊" }],
+  },
+  {
+    title: "Pesqueiro",
+    items: [
+      { href: "/seller/fishery", label: "Visão geral", emoji: "🎣" },
+      { href: "/seller/fishery/profile", label: "Cadastro", emoji: "🏞️" },
+      { href: "/seller/fishery/areas", label: "Estruturas", emoji: "🌊" },
+      { href: "/seller/fishery/sessions", label: "Sessões", emoji: "🎟️" },
+      { href: "/seller/reservations", label: "Reservas", emoji: "📅" },
+    ],
+  },
+  {
+    title: "Torneios",
+    items: [
+      { href: "/seller/tournaments", label: "Meus torneios", emoji: "🏆" },
+      { href: "/seller/tournaments/new", label: "Criar torneio", emoji: "➕" },
+    ],
+  },
+  {
+    title: "Financeiro",
+    items: [
+      { href: "/seller/wallet", label: "Carteira", emoji: "💳" },
+      { href: "/seller/account", label: "Conta financeira", emoji: "🪪" },
+    ],
+  },
+  {
+    title: "Futuro",
+    items: [
+      { href: "/seller/products", label: "Produtos", emoji: "🛒", soon: true },
+      { href: "/seller/orders", label: "Pedidos", emoji: "📦", soon: true },
+    ],
+  },
+];
+
 function isActive(pathname: string, href: string) {
   if (href === "/seller") return pathname === "/seller";
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -46,19 +89,6 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
       .filter(Boolean)
       .includes(uid);
   }, [uid]);
-
-  const navMain = useMemo<NavItem[]>(
-  () => [
-    { href: "/seller", label: "Visão geral", emoji: "📊" },
-    { href: "/seller/wallet", label: "Carteira", emoji: "💳" },
-    { href: "/seller/fishery", label: "Meu pesqueiro", emoji: "🎣" },
-    { href: "/seller/tournaments", label: "Torneios", emoji: "🏆" },
-    { href: "/seller/account", label: "Conta do organizador", emoji: "🪪" },
-    { href: "/seller/products", label: "Produtos", emoji: "🛒", soon: true },
-    { href: "/seller/orders", label: "Pedidos", emoji: "📦", soon: true },
-  ],
-  []
-);
 
   const navAccount = useMemo<NavItem[]>(
     () => [
@@ -185,11 +215,14 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
           </div>
 
           <nav style={styles.nav}>
-            <div style={styles.navGroupTitle}>Principal</div>
-            <div style={styles.navList}>{navMain.map(renderNavItem)}</div>
-
-            <div style={{ ...styles.navGroupTitle, marginTop: 20 }}>Conta</div>
-            <div style={styles.navList}>{navAccount.map(renderNavItem)}</div>
+            {navSections.map((section) => (
+  <div key={section.title} style={styles.navSection}>
+    <div style={styles.navGroupTitle}>{section.title}</div>
+    <div style={styles.navList}>
+      {section.items.map(renderNavItem)}
+    </div>
+  </div>
+))}
 
             <div style={{ ...styles.navGroupTitle, marginTop: 20 }}>
               Documentos legais
@@ -853,5 +886,9 @@ content: {
   padding: "clamp(12px, 3vw, 20px)",
   overflowX: "hidden",
   boxSizing: "border-box",
+},
+
+navSection: {
+  marginBottom: 20,
 },
 };

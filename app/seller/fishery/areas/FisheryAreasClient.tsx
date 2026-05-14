@@ -8,7 +8,6 @@ import {
   deleteDoc,
   doc,
   getDocs,
-  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -42,6 +41,19 @@ type FisheryArea = {
   price: number;
   rules: string;
   active: boolean;
+};
+
+type FishingSpot = {
+  id: string;
+  ownerId: string;
+  pesqueiroId: string;
+  areaId: string;
+  areaName: string;
+  name: string;
+  type: string;
+  capacity: number;
+  active: boolean;
+  order: number;
 };
 
 type FormState = {
@@ -83,6 +95,15 @@ function getTypeLabel(type: AreaType, customTypeLabel?: string) {
   return customTypeLabel || "Outro";
 }
 
+function getSpotTypeLabel(type: string) {
+  if (type === "deck") return "Deck";
+  if (type === "platform") return "Plataforma";
+  if (type === "kiosk") return "Quiosque";
+  if (type === "cabin") return "Rancho / chalé";
+  if (type === "shore") return "Margem";
+  return "Outro";
+}
+
 function formatMoney(value: number) {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -92,8 +113,18 @@ function formatMoney(value: number) {
 
 export default function FisheryAreasClient({ uid }: Props) {
   const [areas, setAreas] = useState<FisheryArea[]>([]);
+  const [spots, setSpots] = useState<FishingSpot[]>([]);
+
   const [form, setForm] = useState<FormState>(initialForm);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  const [selectedAreaForSpots, setSelectedAreaForSpots] =
+    useState<FisheryArea | null>(null);
+  const [spotName, setSpotName] = useState("");
+  const [spotType, setSpotType] = useState("deck");
+  const [spotCapacity, setSpotCapacity] = useState("");
+  const [savingSpot, setSavingSpot] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -104,54 +135,92 @@ export default function FisheryAreasClient({ uid }: Props) {
     [areas]
   );
 
+  const selectedAreaSpots = useMemo(() => {
+    if (!selectedAreaForSpots) return [];
+
+    return spots
+      .filter((spot) => spot.areaId === selectedAreaForSpots.id)
+      .sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order;
+        return a.name.localeCompare(b.name);
+      });
+  }, [spots, selectedAreaForSpots]);
+
   useEffect(() => {
-    void loadAreas();
+    void loadAll();
   }, [uid]);
 
-async function loadAreas() {
-  try {
+  async function loadAll() {
     setLoading(true);
-    setError(null);
 
-    console.log("Carregando pesqueiroAreas para uid:", uid);
-
-    const q = query(
-      collection(db, "pesqueiroAreas"),
-      where("ownerId", "==", uid)
-    );
-
-    const snap = await getDocs(q);
-
-    console.log("pesqueiroAreas encontrados:", snap.size);
-
-    const items: FisheryArea[] = snap.docs.map((item) => {
-      const data = item.data() as any;
-
-      return {
-        id: item.id,
-        pesqueiroId: data?.pesqueiroId ?? uid,
-        ownerId: data?.ownerId ?? uid,
-        type: data?.type ?? "other",
-        customTypeLabel: data?.customTypeLabel ?? "",
-        name: data?.name ?? "Sem nome",
-        description: data?.description ?? "",
-        capacity: Number(data?.capacity ?? 0),
-        maxReservations: Number(data?.maxReservations ?? 0),
-        price: Number(data?.price ?? 0),
-        rules: data?.rules ?? "",
-        active: data?.active !== false,
-      };
-    });
-
-    setAreas(items);
-  } catch (e: any) {
-    console.error("Erro ao carregar pesqueiroAreas:", e);
-    setError(e?.message || "Não foi possível carregar as estruturas.");
-  } finally {
-    console.log("Finalizando loading pesqueiroAreas");
-    setLoading(false);
+    try {
+      await Promise.all([loadAreas(), loadSpots()]);
+    } finally {
+      setLoading(false);
+    }
   }
-}
+
+  async function loadAreas() {
+    try {
+      setError(null);
+
+      const q = query(collection(db, "pesqueiroAreas"), where("ownerId", "==", uid));
+      const snap = await getDocs(q);
+
+      const items: FisheryArea[] = snap.docs.map((item) => {
+        const data = item.data() as any;
+
+        return {
+          id: item.id,
+          pesqueiroId: data?.pesqueiroId ?? uid,
+          ownerId: data?.ownerId ?? uid,
+          type: data?.type ?? "other",
+          customTypeLabel: data?.customTypeLabel ?? "",
+          name: data?.name ?? "Sem nome",
+          description: data?.description ?? "",
+          capacity: Number(data?.capacity ?? 0),
+          maxReservations: Number(data?.maxReservations ?? 0),
+          price: Number(data?.price ?? 0),
+          rules: data?.rules ?? "",
+          active: data?.active !== false,
+        };
+      });
+
+      setAreas(items);
+    } catch (e: any) {
+      console.error("Erro ao carregar pesqueiroAreas:", e);
+      setError(e?.message || "Não foi possível carregar as estruturas.");
+    }
+  }
+
+  async function loadSpots() {
+    try {
+      const q = query(collection(db, "fishingSpots"), where("ownerId", "==", uid));
+      const snap = await getDocs(q);
+
+      const items: FishingSpot[] = snap.docs.map((item) => {
+        const data = item.data() as any;
+
+        return {
+          id: item.id,
+          ownerId: data?.ownerId ?? uid,
+          pesqueiroId: data?.pesqueiroId ?? uid,
+          areaId: data?.areaId ?? "",
+          areaName: data?.areaName ?? "",
+          name: data?.name ?? "Sem nome",
+          type: data?.type ?? "deck",
+          capacity: Number(data?.capacity ?? 0),
+          active: data?.active !== false,
+          order: Number(data?.order ?? 0),
+        };
+      });
+
+      setSpots(items);
+    } catch (e: any) {
+      console.error("Erro ao carregar fishingSpots:", e);
+      setError(e?.message || "Não foi possível carregar os locais reserváveis.");
+    }
+  }
 
   function updateField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -162,6 +231,12 @@ async function loadAreas() {
     setEditingId(null);
     setMessage(null);
     setError(null);
+  }
+
+  function resetSpotForm() {
+    setSpotName("");
+    setSpotType("deck");
+    setSpotCapacity("");
   }
 
   function startEdit(area: FisheryArea) {
@@ -179,6 +254,18 @@ async function loadAreas() {
     });
 
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function openSpotsManager(area: FisheryArea) {
+    setSelectedAreaForSpots(area);
+    resetSpotForm();
+    setMessage(null);
+    setError(null);
+
+    window.setTimeout(() => {
+      const el = document.getElementById("fishery-spots-manager");
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -234,6 +321,49 @@ async function loadAreas() {
     }
   }
 
+  async function handleSaveSpot(area: FisheryArea) {
+    try {
+      setSavingSpot(true);
+      setError(null);
+      setMessage(null);
+
+      if (!spotName.trim()) {
+        throw new Error("Informe o nome do local.");
+      }
+
+      if (toNumber(spotCapacity) <= 0) {
+        throw new Error("Informe a capacidade do local.");
+      }
+
+      const currentAreaSpots = spots.filter((item) => item.areaId === area.id);
+
+      await addDoc(collection(db, "fishingSpots"), {
+        ownerId: uid,
+        pesqueiroId: uid,
+
+        areaId: area.id,
+        areaName: area.name,
+
+        name: spotName.trim(),
+        type: spotType,
+        capacity: toNumber(spotCapacity),
+        active: true,
+        order: currentAreaSpots.length + 1,
+
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      resetSpotForm();
+      setMessage("Local reservável criado com sucesso.");
+      await loadSpots();
+    } catch (e: any) {
+      setError(e?.message || "Não foi possível salvar o local.");
+    } finally {
+      setSavingSpot(false);
+    }
+  }
+
   async function toggleActive(area: FisheryArea) {
     try {
       setError(null);
@@ -251,12 +381,34 @@ async function loadAreas() {
     }
   }
 
+  async function toggleSpotActive(spot: FishingSpot) {
+    try {
+      setError(null);
+      setMessage(null);
+
+      await updateDoc(doc(db, "fishingSpots", spot.id), {
+        active: !spot.active,
+        updatedAt: serverTimestamp(),
+      });
+
+      setMessage(spot.active ? "Local pausado." : "Local ativado.");
+      await loadSpots();
+    } catch (e: any) {
+      setError(e?.message || "Não foi possível alterar o local.");
+    }
+  }
+
   async function removeArea(area: FisheryArea) {
+    const areaSpotsCount = spots.filter((spot) => spot.areaId === area.id).length;
+
     const ok = window.confirm(
-      `Tem certeza que deseja excluir "${area.name}"? Essa ação não pode ser desfeita.`
+      areaSpotsCount > 0
+        ? `A estrutura "${area.name}" possui ${areaSpotsCount} local(is) reservável(is). Exclua ou pause os locais antes de excluir a estrutura.`
+        : `Tem certeza que deseja excluir "${area.name}"? Essa ação não pode ser desfeita.`
     );
 
     if (!ok) return;
+    if (areaSpotsCount > 0) return;
 
     try {
       setError(null);
@@ -265,6 +417,7 @@ async function loadAreas() {
       await deleteDoc(doc(db, "pesqueiroAreas", area.id));
 
       if (editingId === area.id) resetForm();
+      if (selectedAreaForSpots?.id === area.id) setSelectedAreaForSpots(null);
 
       setMessage("Estrutura excluída com sucesso.");
       await loadAreas();
@@ -273,12 +426,28 @@ async function loadAreas() {
     }
   }
 
+  async function removeSpot(spot: FishingSpot) {
+    const ok = window.confirm(`Excluir "${spot.name}"? Essa ação não pode ser desfeita.`);
+    if (!ok) return;
+
+    try {
+      setError(null);
+      setMessage(null);
+
+      await deleteDoc(doc(db, "fishingSpots", spot.id));
+      setMessage("Local excluído com sucesso.");
+      await loadSpots();
+    } catch (e: any) {
+      setError(e?.message || "Não foi possível excluir o local.");
+    }
+  }
+
   if (loading) {
     return (
       <div style={styles.wrap}>
         <div style={styles.card}>
           <div style={styles.title}>Estruturas do pesqueiro</div>
-          <div style={styles.sub}>Carregando estruturas...</div>
+          <div style={styles.sub}>Carregando estruturas e locais...</div>
         </div>
       </div>
     );
@@ -291,19 +460,19 @@ async function loadAreas() {
           <div style={styles.stepLabel}>Etapa 2 de 4</div>
           <div style={styles.title}>Estruturas do pesqueiro</div>
           <div style={styles.sub}>
-            Cadastre os lagos, quiosques, plataformas, decks, chalés, barcos ou
-            qualquer estrutura que poderá ser usada em sessões e reservas.
+            Cadastre as estruturas principais e, dentro delas, os locais
+            reserváveis que o pescador poderá escolher no app.
           </div>
         </div>
 
         <div style={styles.statusChip}>
-          {activeCount} ativas · {areas.length} cadastradas
+          {activeCount} estruturas ativas · {spots.length} locais cadastrados
         </div>
       </div>
 
       <form onSubmit={handleSave} style={styles.formCard}>
         <div style={styles.sectionTitle}>
-          {editingId ? "Editar estrutura" : "Nova estrutura"}
+          {editingId ? "Editar estrutura principal" : "Nova estrutura principal"}
         </div>
 
         <div style={styles.grid2}>
@@ -359,17 +528,17 @@ async function loadAreas() {
 
         <div style={styles.grid2}>
           <Field
-            label="Capacidade de pessoas"
+            label="Capacidade total da estrutura"
             value={form.capacity}
             onChange={(v) => updateField("capacity", v)}
-            placeholder="Ex: 8"
+            placeholder="Ex: 30"
           />
 
           <Field
             label="Reservas simultâneas"
             value={form.maxReservations}
             onChange={(v) => updateField("maxReservations", v)}
-            placeholder="Ex: 1"
+            placeholder="Ex: 10"
           />
         </div>
 
@@ -384,7 +553,7 @@ async function loadAreas() {
           label="Regras específicas"
           value={form.rules}
           onChange={(v) => updateField("rules", v)}
-          placeholder="Ex: permitido até 4 varas, proibido ceva externa, uso obrigatório de passaguá..."
+          placeholder="Ex: permitido até 4 varas, proibido ceva externa..."
         />
 
         <label style={styles.checkItem}>
@@ -394,9 +563,7 @@ async function loadAreas() {
             onChange={(e) => updateField("active", e.target.checked)}
             style={styles.checkbox}
           />
-          <span style={styles.checkLabel}>
-            Estrutura ativa para futuras reservas
-          </span>
+          <span style={styles.checkLabel}>Estrutura ativa para futuras reservas</span>
         </label>
 
         {message ? <div style={styles.success}>{message}</div> : null}
@@ -431,8 +598,8 @@ async function loadAreas() {
           <div>
             <div style={styles.sectionTitle}>Estruturas cadastradas</div>
             <div style={styles.sectionSub}>
-              Depois de cadastrar as estruturas, continue para criar as sessões
-              de pesca.
+              Depois de criar uma estrutura, cadastre os locais reserváveis dentro
+              dela, como decks, plataformas, quiosques ou pontos de pesca.
             </div>
           </div>
         </div>
@@ -444,81 +611,222 @@ async function loadAreas() {
           </div>
         ) : (
           <div style={styles.list}>
-            {areas.map((area) => (
-              <article key={area.id} style={styles.areaCard}>
-                <div style={styles.areaTop}>
-                  <div style={styles.areaTitleBox}>
-                    <div style={styles.areaTitle}>{area.name}</div>
-                    <div style={styles.areaType}>
-                      {getTypeLabel(area.type, area.customTypeLabel)}
+            {areas.map((area) => {
+              const areaSpots = spots.filter((spot) => spot.areaId === area.id);
+              const activeSpots = areaSpots.filter((spot) => spot.active);
+
+              return (
+                <article key={area.id} style={styles.areaCard}>
+                  <div style={styles.areaTop}>
+                    <div style={styles.areaTitleBox}>
+                      <div style={styles.areaTitle}>{area.name}</div>
+                      <div style={styles.areaType}>
+                        {getTypeLabel(area.type, area.customTypeLabel)}
+                      </div>
                     </div>
+
+                    <span
+                      style={{
+                        ...styles.areaStatusChip,
+                        ...(area.active ? styles.statusActive : styles.statusPaused),
+                      }}
+                    >
+                      {area.active ? "Ativa" : "Pausada"}
+                    </span>
                   </div>
 
-                  <span
-                    style={{
-                      ...styles.areaStatusChip,
-                      ...(area.active ? styles.statusActive : styles.statusPaused),
-                    }}
-                  >
-                    {area.active ? "Ativa" : "Pausada"}
-                  </span>
-                </div>
+                  {area.description ? (
+                    <div style={styles.description}>{area.description}</div>
+                  ) : null}
 
-                {area.description ? (
-                  <div style={styles.description}>{area.description}</div>
-                ) : null}
-
-                <div style={styles.infoGrid}>
-                  <Info label="Capacidade" value={`${area.capacity || 0} pessoas`} />
-                  <Info
-                    label="Reservas"
-                    value={`${area.maxReservations || 0} simultâneas`}
-                  />
-                  <Info label="Preço base" value={formatMoney(area.price)} />
-                </div>
-
-                {area.rules ? (
-                  <div style={styles.rulesBox}>
-                    <strong>Regras:</strong> {area.rules}
+                  <div style={styles.infoGrid}>
+                    <Info label="Capacidade" value={`${area.capacity || 0} pessoas`} />
+                    <Info
+                      label="Reservas"
+                      value={`${area.maxReservations || 0} simultâneas`}
+                    />
+                    <Info label="Preço base" value={formatMoney(area.price)} />
+                    <Info
+                      label="Locais"
+                      value={`${activeSpots.length} ativos · ${areaSpots.length} total`}
+                    />
                   </div>
-                ) : null}
 
-                <div style={styles.cardActions}>
-                  <button
-                    type="button"
-                    onClick={() => startEdit(area)}
-                    style={styles.secondaryBtn}
-                  >
-                    Editar
-                  </button>
+                  {area.rules ? (
+                    <div style={styles.rulesBox}>
+                      <strong>Regras:</strong> {area.rules}
+                    </div>
+                  ) : null}
 
-                  <button
-                    type="button"
-                    onClick={() => toggleActive(area)}
-                    style={styles.secondaryBtn}
-                  >
-                    {area.active ? "Pausar" : "Ativar"}
-                  </button>
+                  <div style={styles.cardActions}>
+                    <button
+                      type="button"
+                      onClick={() => openSpotsManager(area)}
+                      style={styles.primaryBtnSmall}
+                    >
+                      Gerenciar locais
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() => removeArea(area)}
-                    style={styles.dangerBtn}
-                  >
-                    Excluir
-                  </button>
-                </div>
-              </article>
-            ))}
+                    <button
+                      type="button"
+                      onClick={() => startEdit(area)}
+                      style={styles.secondaryBtn}
+                    >
+                      Editar
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleActive(area)}
+                      style={styles.secondaryBtn}
+                    >
+                      {area.active ? "Pausar" : "Ativar"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => removeArea(area)}
+                      style={styles.dangerBtn}
+                    >
+                      Excluir
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
+
+      {selectedAreaForSpots ? (
+        <section id="fishery-spots-manager" style={styles.card}>
+          <div style={styles.sectionHeader}>
+            <div>
+              <div style={styles.sectionTitle}>
+                Locais reserváveis · {selectedAreaForSpots.name}
+              </div>
+              <div style={styles.sectionSub}>
+                Cadastre decks, plataformas, quiosques, ranchos ou pontos
+                específicos dentro desta estrutura.
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedAreaForSpots(null);
+                resetSpotForm();
+              }}
+              style={styles.secondaryBtn}
+            >
+              Fechar
+            </button>
+          </div>
+
+          <div style={styles.formCardSoft}>
+            <div style={styles.grid2}>
+              <Field
+                label="Nome do local"
+                value={spotName}
+                onChange={setSpotName}
+                placeholder="Ex: Deck 01"
+              />
+
+              <label style={styles.labelWrap}>
+                <span style={styles.label}>Tipo</span>
+                <select
+                  value={spotType}
+                  onChange={(e) => setSpotType(e.target.value)}
+                  style={styles.input}
+                >
+                  <option value="deck">Deck</option>
+                  <option value="platform">Plataforma</option>
+                  <option value="kiosk">Quiosque</option>
+                  <option value="cabin">Rancho / chalé</option>
+                  <option value="shore">Margem</option>
+                  <option value="other">Outro</option>
+                </select>
+              </label>
+            </div>
+
+            <Field
+              label="Capacidade do local"
+              value={spotCapacity}
+              onChange={setSpotCapacity}
+              placeholder="Ex: 4"
+            />
+
+            <div style={styles.actions}>
+              <button
+                type="button"
+                onClick={() => handleSaveSpot(selectedAreaForSpots)}
+                disabled={savingSpot}
+                style={{
+                  ...styles.primaryBtn,
+                  ...(savingSpot ? styles.btnDisabled : {}),
+                }}
+              >
+                {savingSpot ? "Salvando..." : "Salvar local"}
+              </button>
+            </div>
+          </div>
+
+          {selectedAreaSpots.length === 0 ? (
+            <div style={styles.emptyBox}>
+              Nenhum local criado para esta estrutura. Crie o primeiro local
+              reservável para o pescador escolher no app.
+            </div>
+          ) : (
+            <div style={styles.list}>
+              {selectedAreaSpots.map((spot) => (
+                <article key={spot.id} style={styles.spotCard}>
+                  <div style={styles.areaTop}>
+                    <div style={styles.areaTitleBox}>
+                      <div style={styles.areaTitle}>{spot.name}</div>
+                      <div style={styles.areaType}>
+                        {getSpotTypeLabel(spot.type)} · {spot.capacity || 0} pessoas
+                      </div>
+                    </div>
+
+                    <span
+                      style={{
+                        ...styles.areaStatusChip,
+                        ...(spot.active ? styles.statusActive : styles.statusPaused),
+                      }}
+                    >
+                      {spot.active ? "Ativo" : "Pausado"}
+                    </span>
+                  </div>
+
+                  <div style={styles.cardActions}>
+                    <button
+                      type="button"
+                      onClick={() => toggleSpotActive(spot)}
+                      style={styles.secondaryBtn}
+                    >
+                      {spot.active ? "Pausar" : "Ativar"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => removeSpot(spot)}
+                      style={styles.dangerBtn}
+                    >
+                      Excluir
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : null}
 
       <section style={styles.footerCard}>
         <div style={styles.footerText}>
           <div style={styles.sectionTitle}>Próxima etapa</div>
           <div style={styles.sectionSub}>
-            Cadastre todas as estruturas necessárias e avance para configurar
+            Cadastre todas as estruturas e locais necessários. Depois configure
             horários, vagas e preços das sessões.
           </div>
         </div>
@@ -717,10 +1025,22 @@ const styles: Record<string, CSSProperties> = {
     overflow: "hidden",
   },
 
+  formCardSoft: {
+    ...baseBox,
+    padding: 14,
+    borderRadius: 16,
+    background: "#F8FAFC",
+    border: "1px solid rgba(15,23,42,0.08)",
+    display: "grid",
+    gap: 14,
+    marginBottom: 14,
+  },
+
   sectionHeader: {
     ...baseBox,
     display: "flex",
     justifyContent: "space-between",
+    alignItems: "flex-start",
     gap: 12,
     marginBottom: 14,
     flexWrap: "wrap",
@@ -844,6 +1164,18 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
   },
 
+  primaryBtnSmall: {
+    height: 40,
+    padding: "0 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(15,23,42,0.10)",
+    background: "#0B3C5D",
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: 1000,
+    cursor: "pointer",
+  },
+
   secondaryBtn: {
     height: 40,
     padding: "0 14px",
@@ -920,23 +1252,23 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 900,
   },
 
-error: {
-  width: "100%",
-  maxWidth: "100%",
-  minWidth: 0,
-  padding: 12,
-  borderRadius: 12,
-  background: "rgba(229,57,53,0.10)",
-  border: "1px solid rgba(229,57,53,0.20)",
-  color: "#B91C1C",
-  fontSize: 12,
-  fontWeight: 900,
-  overflowWrap: "anywhere",
-  wordBreak: "break-word",
-  whiteSpace: "pre-wrap",
-  lineHeight: 1.5,
-  boxSizing: "border-box",
-},
+  error: {
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    padding: 12,
+    borderRadius: 12,
+    background: "rgba(229,57,53,0.10)",
+    border: "1px solid rgba(229,57,53,0.20)",
+    color: "#B91C1C",
+    fontSize: 12,
+    fontWeight: 900,
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+    whiteSpace: "pre-wrap",
+    lineHeight: 1.5,
+    boxSizing: "border-box",
+  },
 
   emptyBox: {
     ...baseBox,
@@ -964,6 +1296,16 @@ error: {
     borderRadius: 16,
     border: "1px solid rgba(15,23,42,0.08)",
     background: "#FFFFFF",
+  },
+
+  spotCard: {
+    ...baseBox,
+    display: "grid",
+    gap: 12,
+    padding: 14,
+    borderRadius: 16,
+    border: "1px solid rgba(11,60,93,0.12)",
+    background: "rgba(11,60,93,0.035)",
   },
 
   areaTop: {
