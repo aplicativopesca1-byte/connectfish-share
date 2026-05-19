@@ -3,7 +3,9 @@ import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import { adminDb } from "@/lib/firebaseAdmin";
 
-type PageProps = { params: { id: string } };
+type PageProps = {
+  params: Promise<{ id: string }>;
+};
 
 type ShareData = {
   id: string;
@@ -100,13 +102,25 @@ function isPostPublic(post: any) {
 }
 
 async function getShareData(id: string): Promise<ShareData> {
-  const db = adminDb();
+  const safeId = safeString(id, "");
 
-  const postSnap = await db.collection("posts").doc(id).get();
+  if (!safeId) {
+    return {
+      id: "",
+      exists: false,
+      isPublic: false,
+      title: "Atividade não encontrada – ConnectFish",
+      description: "O link da atividade está inválido.",
+      image: DEFAULT_IMAGE,
+    };
+  }
+
+  const db = adminDb();
+  const postSnap = await db.collection("posts").doc(safeId).get();
 
   if (!postSnap.exists) {
     return {
-      id,
+      id: safeId,
       exists: false,
       isPublic: false,
       title: "Atividade não encontrada – ConnectFish",
@@ -116,38 +130,36 @@ async function getShareData(id: string): Promise<ShareData> {
   }
 
   const post = postSnap.data() || {};
-  const publicPost = isPostPublic(post);
 
-  if (!publicPost) {
+  if (!isPostPublic(post)) {
     return {
-      id,
+      id: safeId,
       exists: true,
       isPublic: false,
       title: "Atividade privada – ConnectFish",
-      description:
-        "Essa atividade não está disponível publicamente no ConnectFish.",
+      description: "Essa atividade não está disponível publicamente no ConnectFish.",
       image: DEFAULT_IMAGE,
     };
   }
 
-let userDoc: any | null = null;
+  let userDoc: any | null = null;
 
-const userId = safeString(
-  post?.userId || post?.uid || post?.ownerId || post?.authorId,
-  ""
-);
+  const userId = safeString(
+    post?.userId || post?.uid || post?.ownerId || post?.authorId,
+    ""
+  );
 
-if (userId) {
-  try {
-    const u = await db.collection("users").doc(userId).get();
+  if (userId) {
+    try {
+      const u = await db.collection("users").doc(userId).get();
 
-    if (u.exists) {
-      userDoc = u.data() || null;
+      if (u.exists) {
+        userDoc = u.data() || null;
+      }
+    } catch {
+      userDoc = null;
     }
-  } catch {
-    userDoc = null;
   }
-}
 
   let dateObj = new Date();
 
@@ -179,7 +191,7 @@ if (userId) {
   const statsText = `Tempo: ${timeStr} • Distância: ${distStr} • Peixes: ${fishCount}`;
 
   return {
-    id,
+    id: safeId,
     exists: true,
     isPublic: true,
     title,
@@ -200,10 +212,13 @@ export const dynamic = "force-dynamic";
 export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
-  const d = await getShareData(params.id);
+  const { id } = await params;
+  const safeId = safeString(id, "");
+
+  const d = await getShareData(safeId);
 
   const canonicalUrl = `https://connectfish.app/a/${encodeURIComponent(
-    params.id
+    safeId
   )}`;
 
   const description =
@@ -235,10 +250,13 @@ export async function generateMetadata({
 }
 
 export default async function SharePage({ params }: PageProps) {
-  const d = await getShareData(params.id);
+  const { id } = await params;
+  const safeId = safeString(id, "");
+
+  const d = await getShareData(safeId);
 
   const openAppLink = `connectfish://activity?id=${encodeURIComponent(
-    params.id
+    safeId
   )}`;
 
   const showActivity = d.exists && d.isPublic;
@@ -261,9 +279,7 @@ export default async function SharePage({ params }: PageProps) {
             <div>
               <div style={styles.brandName}>ConnectFish</div>
               <div style={styles.brandSub}>
-                {showActivity
-                  ? "Atividade compartilhada"
-                  : "Link compartilhado"}
+                {showActivity ? "Atividade compartilhada" : "Link compartilhado"}
               </div>
             </div>
           </div>
@@ -540,7 +556,7 @@ const styles: Record<string, CSSProperties> = {
     textDecoration: "none",
     fontSize: 14,
     fontWeight: 950,
-    color: "rgba(247, 230, 230, 0.88)",
+    color: "rgba(230,246,247,0.88)",
     background: "rgba(255,255,255,0.06)",
     border: "1px solid rgba(255,255,255,0.12)",
   },

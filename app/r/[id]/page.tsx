@@ -5,9 +5,7 @@ import type { Metadata } from "next";
 import { adminDb } from "@/lib/firebaseAdmin";
 
 type PageProps = {
-  params: {
-    id: string;
-  };
+  params: Promise<{ id: string }>;
 };
 
 const DEFAULT_IMAGE = "https://connectfish.app/og-default.png";
@@ -101,9 +99,20 @@ function pickHandle(post: any, userDoc: any | null) {
 }
 
 async function getReplayData(id: string) {
+  const safeId = safeString(id, "");
+
+  if (!safeId) {
+    return {
+      exists: false,
+      title: "Replay não encontrado – ConnectFish",
+      description: "O link do replay está inválido.",
+      image: DEFAULT_IMAGE,
+    };
+  }
+
   const db = adminDb();
 
-  const snap = await db.collection("posts").doc(id).get();
+  const snap = await db.collection("posts").doc(safeId).get();
 
   if (!snap.exists) {
     return {
@@ -166,8 +175,8 @@ if (userId) {
     `Peixes: ${fishCount}`;
 
   return {
-    exists: true,
-    id,
+  exists: true,
+  id: safeId,
     title:
       safeString(post?.title, "") ||
       "🎥 Replay de pescaria – ConnectFish",
@@ -194,27 +203,25 @@ export const dynamic = "force-dynamic";
 export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
-  const d = await getReplayData(params.id);
+  const { id } = await params;
+  const safeId = safeString(id, "");
 
-  const canonical = `https://connectfish.app/r/${encodeURIComponent(
-    params.id
-  )}`;
+  const d = await getReplayData(safeId);
+
+  const canonical = `https://connectfish.app/r/${encodeURIComponent(safeId)}`;
 
   return {
     title: d.title,
     description: d.description,
-
     alternates: {
       canonical,
     },
-
     openGraph: {
       title: d.title,
       description: d.description,
       url: canonical,
       type: "website",
       siteName: "ConnectFish",
-
       images: d.image
         ? [
             {
@@ -226,7 +233,6 @@ export async function generateMetadata({
           ]
         : [],
     },
-
     twitter: {
       card: "summary_large_image",
       title: d.title,
@@ -236,14 +242,13 @@ export async function generateMetadata({
   };
 }
 
-export default async function ReplayPage({
-  params,
-}: PageProps) {
-  const d = await getReplayData(params.id);
+export default async function ReplayPage({ params }: PageProps) {
+  const { id } = await params;
+  const safeId = safeString(id, "");
 
-  const deepLink = `connectfish://replay?id=${encodeURIComponent(
-    params.id
-  )}`;
+  const d = await getReplayData(safeId);
+
+  const deepLink = `connectfish://replay?id=${encodeURIComponent(safeId)}`;
 
   return (
     <main style={styles.page}>
