@@ -1,178 +1,316 @@
-"use client";
-import type { CSSProperties, FormEvent } from "react";
+import type { CSSProperties } from "react";
+import { adminDb } from "@/lib/firebaseAdmin";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+type Activity = {
+  id: string;
+  title: string;
+  image: string;
+  username: string;
+  dateText: string;
+  statsText: string;
+  regionLabel?: string;
+  note?: string;
+  canReplay: boolean;
+};
+
+const DEFAULT_IMAGE = "https://connectfish.app/og-default.png";
+
+function safeString(v: any, fallback = "") {
+  const s = typeof v === "string" ? v.trim() : "";
+  return s || fallback;
+}
+
+function isPublicPost(post: any) {
+  if (post?.activityVisibility === "private") return false;
+  if (post?.visibility === "private") return false;
+  if (post?.status === "draft") return false;
+  if (post?.status === "private") return false;
+  return true;
+}
+
+function formatDateBR(date: Date) {
+  try {
+    return date.toLocaleDateString("pt-BR");
+  } catch {
+    return "";
+  }
+}
+
+function formatTimeShort(sec: any) {
+  const s = Number(sec || 0);
+  if (!Number.isFinite(s) || s <= 0) return "0 min";
+  const m = s / 60;
+  if (m < 60) return `${m.toFixed(1)} min`;
+  const h = Math.floor(m / 60);
+  const rm = Math.round(m % 60);
+  return `${h}h ${rm}min`;
+}
+
+function formatDistanceKm(km: any) {
+  const v = Number(km || 0);
+  if (!Number.isFinite(v) || v < 0) return "0,00 km";
+  return `${v.toFixed(2)} km`;
+}
+
+function pickImage(post: any) {
+  return (
+    safeString(post?.mediaUrl) ||
+    safeString(post?.feedPreview?.mapThumbnailUrl) ||
+    safeString(post?.thumbnailUrl) ||
+    safeString(post?.mediaGallery?.[0]?.url) ||
+    DEFAULT_IMAGE
+  );
+}
+
+function pickHandle(post: any) {
+  const raw =
+    post?.userHandle ||
+    post?.username ||
+    post?.handle ||
+    post?.displayName ||
+    post?.userDisplayName ||
+    "pescador";
+
+  return `@${String(raw).replace(/^@/, "")}`;
+}
+
+async function getFeaturedActivity(): Promise<Activity | null> {
+  try {
+    const db = adminDb();
+
+    const snap = await db
+      .collection("posts")
+      .orderBy("createdAt", "desc")
+      .limit(12)
+      .get();
+
+    const doc = snap.docs.find((d) => isPublicPost(d.data()));
+
+    if (!doc) return null;
+
+    const post = doc.data();
+
+    let date = new Date();
+
+    try {
+      if (post?.createdAt?.toDate) date = post.createdAt.toDate();
+      else if (post?.createdAtLocal) date = new Date(post.createdAtLocal);
+      else if (post?.createdAtMs) date = new Date(Number(post.createdAtMs));
+    } catch {}
+
+    const fishCount = Number(post?.fishCount ?? 0) || 0;
+
+    return {
+      id: doc.id,
+      title:
+        safeString(post?.title) ||
+        "Toda pescaria conta uma história.",
+      image: pickImage(post),
+      username: pickHandle(post),
+      dateText: formatDateBR(date),
+      statsText: `Tempo: ${formatTimeShort(post?.time)} • Distância: ${formatDistanceKm(
+        post?.distance
+      )} • Peixes: ${fishCount}`,
+      regionLabel:
+        safeString(post?.location?.regionLabel) ||
+        safeString(post?.regionLabel) ||
+        safeString(post?.waterBodyContext?.name),
+      note: safeString(post?.note),
+      canReplay: post?.allowReplayNavigation !== false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export default async function Home() {
   const year = new Date().getFullYear();
+  const activity = await getFeaturedActivity();
 
-  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    alert("Cadastro recebido! (modo preview)");
+  const featured = activity || {
+    id: "",
+    title: "Toda pescaria conta uma história.",
+    image: DEFAULT_IMAGE,
+    username: "@connectfish",
+    dateText: "Em breve",
+    statsText: "Rota • Capturas • Replay",
+    regionLabel: "Brasil",
+    note:
+      "O ConnectFish transforma cada pescaria em um registro vivo — com rota, capturas, replay e comunidade.",
+    canReplay: false,
   };
 
   return (
     <main style={styles.page}>
-      <div style={styles.bgGlow} aria-hidden="true" />
+      <div style={styles.bgGlow} />
+
+      <a href="/seller" style={styles.portalLink}>
+        Portal
+      </a>
 
       <div style={styles.container}>
-        <header style={styles.header}>
+        <section style={styles.hero}>
           <div style={styles.brandRow}>
-            <div style={styles.logoMark} aria-hidden="true">
-              CF
-            </div>
-
-            <div style={styles.brandText}>
-              <h1 style={styles.title}>ConnectFish</h1>
-              <div style={styles.badges}>
-                <span style={styles.badge}>Private beta</span>
-                <span style={styles.badgeMuted}>Em construção</span>
-              </div>
+            <div style={styles.logo}>CF</div>
+            <div>
+              <h1 style={styles.brand}>ConnectFish</h1>
+              <p style={styles.brandSub}>A rede social da pesca esportiva</p>
             </div>
           </div>
 
-          <p style={styles.subtitle}>
-            Uma nova experiência está chegando. Design, performance e detalhes
-            pensados do zero.
+          <div style={styles.heroGrid}>
+            <div>
+              <p style={styles.eyebrow}>Compartilhe. Reviva. Descubra.</p>
+
+              <h2 style={styles.title}>
+                Toda pescaria conta uma história. Agora ela pode ser revivida.
+              </h2>
+
+              <p style={styles.text}>
+                Antes de qualquer aplicativo, a pesca já era uma rede social:
+                histórias no barco, conhecimento entre amigos e experiências
+                guardadas na memória. O ConnectFish transforma cada pescaria em
+                rota, replay, capturas e comunidade.
+              </p>
+
+              <div style={styles.ctaRow}>
+                {activity ? (
+                  <a href={`/a/${activity.id}`} style={styles.primaryCta}>
+                    Abrir pescaria compartilhada
+                  </a>
+                ) : (
+                  <a href="#como-funciona" style={styles.primaryCta}>
+                    Ver como funciona
+                  </a>
+                )}
+
+                <a href="#como-funciona" style={styles.secondaryCta}>
+                  Conhecer o app
+                </a>
+              </div>
+            </div>
+
+            <div style={styles.activityCard}>
+              <div style={styles.cardTop}>
+                <div style={styles.avatar}>🎣</div>
+                <div>
+                  <p style={styles.cardName}>{featured.username}</p>
+                  <p style={styles.cardMeta}>
+                    {featured.regionLabel || "Pescaria"} • {featured.dateText}
+                  </p>
+                </div>
+              </div>
+
+              <a
+                href={activity ? `/a/${activity.id}` : "#como-funciona"}
+                style={styles.imageLink}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={featured.image} alt={featured.title} style={styles.image} />
+                <div style={styles.imageBadge}>Atividade compartilhada</div>
+              </a>
+
+              <div style={styles.cardBody}>
+                <h3 style={styles.cardTitle}>{featured.title}</h3>
+
+                <div style={styles.stats}>{featured.statsText}</div>
+
+                {featured.note ? <p style={styles.note}>{featured.note}</p> : null}
+
+                <div style={styles.cardActions}>
+                  {activity ? (
+                    <a href={`/a/${activity.id}`} style={styles.smallPrimary}>
+                      Ver atividade
+                    </a>
+                  ) : null}
+
+                  {activity && featured.canReplay ? (
+                    <a href={`/r/${activity.id}`} style={styles.smallGhost}>
+                      Ver replay
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="como-funciona" style={styles.manifest}>
+          <p style={styles.eyebrow}>O manifesto</p>
+
+          <h2 style={styles.sectionTitle}>
+            A comunidade que sempre existiu agora encontra tecnologia para crescer.
+          </h2>
+
+          <p style={styles.sectionText}>
+            Cada trajeto, captura, ponto marcado e replay ajuda a transformar a
+            experiência individual em aprendizado coletivo. O ConnectFish nasce
+            para valorizar a tradição da pesca e dar vida às histórias que antes
+            ficavam apenas na memória.
           </p>
-
-          <div style={styles.ctaRow}>
-            <a href="/seller" style={styles.primaryCta}>
-              Acessar portal
-            </a>
-            <a href="#updates" style={styles.secondaryCta}>
-              Receber novidades
-            </a>
-          </div>
-        </header>
-
-        <section style={styles.legalSectionHighlight}>
-          <div style={styles.legalHeroHeader}>
-            <div style={styles.legalHeroBadge}>Segurança e transparência</div>
-            <h2 style={styles.legalHeroTitle}>Documentos oficiais do ConnectFish</h2>
-            <p style={styles.legalHeroSubtitle}>
-              Consulte nossos Termos de Uso e Política de Privacidade para
-              entender como a plataforma funciona, como tratamos dados, quais
-              são os direitos dos usuários e quais regras se aplicam ao uso do
-              app e do site.
-            </p>
-          </div>
-
-          <div style={styles.legalGrid}>
-            <a href="/terms" style={styles.legalCard}>
-              <div style={styles.legalIcon} aria-hidden="true">
-                📘
-              </div>
-
-              <div style={styles.legalContent}>
-                <h3 style={styles.legalCardTitle}>Termos de Uso</h3>
-                <p style={styles.legalCardText}>
-                  Regras de uso da plataforma, responsabilidades do usuário,
-                  limites de uso, riscos da atividade, suspensão de conta,
-                  propriedade intelectual e condições aplicáveis ao ConnectFish.
-                </p>
-                <span style={styles.legalLink}>Abrir Termos de Uso</span>
-              </div>
-            </a>
-
-            <a href="/privacy" style={styles.legalCard}>
-              <div style={styles.legalIcon} aria-hidden="true">
-                🔐
-              </div>
-
-              <div style={styles.legalContent}>
-                <h3 style={styles.legalCardTitle}>Política de Privacidade</h3>
-                <p style={styles.legalCardText}>
-                  Entenda como coletamos, utilizamos, armazenamos, protegemos e
-                  compartilhamos dados, incluindo localização, replay, mapa,
-                  conta, conteúdos publicados e recursos sociais.
-                </p>
-                <span style={styles.legalLink}>Abrir Política de Privacidade</span>
-              </div>
-            </a>
-          </div>
         </section>
 
         <section style={styles.grid}>
-          <div style={styles.card}>
-            <div style={styles.cardIcon} aria-hidden="true">
-              ✦
-            </div>
-            <h2 style={styles.cardTitle}>Produto em evolução</h2>
-            <p style={styles.cardText}>
-              Estamos finalizando as principais funcionalidades antes de abrir ao
-              público.
+          <Feature icon="📍" title="Registre" text="Grave rota, tempo, distância e momentos da pescaria." />
+          <Feature icon="🐟" title="Capture" text="Salve peixes, fotos, medidas e pontos importantes." />
+          <Feature icon="▶️" title="Reviva" text="Assista ao replay e veja a pescaria acontecer de novo." />
+          <Feature icon="↗️" title="Compartilhe" text="Envie atividades públicas para amigos e redes sociais." />
+        </section>
+
+        <section style={styles.shareBox}>
+          <div>
+            <p style={styles.eyebrow}>Crescimento orgânico</p>
+            <h2 style={styles.sectionTitle}>
+              Quem recebe o link vê a pescaria primeiro.
+            </h2>
+            <p style={styles.sectionText}>
+              A atividade compartilhada vira uma página pública bonita, com
+              imagem, pescador, estatísticas e chamada para conhecer o app.
             </p>
           </div>
 
-          <div style={styles.card}>
-            <div style={styles.cardIcon} aria-hidden="true">
-              ⚡
-            </div>
-            <h2 style={styles.cardTitle}>Foco em qualidade</h2>
-            <p style={styles.cardText}>
-              Interface limpa, fluxo rápido e experiência consistente em todas as
-              telas.
-            </p>
-          </div>
-
-          <div style={styles.card}>
-            <div style={styles.cardIcon} aria-hidden="true">
-              🔒
-            </div>
-            <h2 style={styles.cardTitle}>Acesso controlado</h2>
-            <p style={styles.cardText}>
-              Por enquanto, apenas áreas internas e parceiros selecionados.
-            </p>
+          <div style={styles.linkBox}>
+            <strong>connectfish.app/a/atividade</strong>
+            <span>connectfish.app/r/replay</span>
           </div>
         </section>
 
-        <section id="updates" style={styles.newsletter}>
-          <div style={styles.newsLeft}>
-            <h3 style={styles.newsTitle}>Quer ser avisado quando abrir?</h3>
-            <p style={styles.newsText}>
-              Deixe seu e-mail e você recebe um aviso quando liberarmos o acesso.
-            </p>
+        <section style={styles.legalBox}>
+          <span>
+            © {year} ConnectFish • Toda pescaria conta uma história.
+          </span>
+
+          <div style={styles.legalLinks}>
+            <a href="/terms" style={styles.footerLink}>
+              Termos
+            </a>
+            <a href="/privacy" style={styles.footerLink}>
+              Privacidade
+            </a>
           </div>
-
-          <form style={styles.form} onSubmit={handleSubmit}>
-            <input
-              type="email"
-              required
-              placeholder="seuemail@exemplo.com"
-              style={styles.input}
-            />
-            <button type="submit" style={styles.button}>
-              Entrar na lista
-            </button>
-          </form>
         </section>
-
-        <footer style={styles.footer}>
-          <span style={styles.footerText}>© {year} ConnectFish</span>
-
-          <span style={styles.dot} aria-hidden="true">
-            •
-          </span>
-
-          <a href="/terms" style={styles.footerLink}>
-            Termos
-          </a>
-
-          <span style={styles.dot} aria-hidden="true">
-            •
-          </span>
-
-          <a href="/privacy" style={styles.footerLink}>
-            Privacidade
-          </a>
-
-          <span style={styles.dot} aria-hidden="true">
-            •
-          </span>
-
-          <span style={styles.footerTextMuted}>Build em progresso</span>
-        </footer>
       </div>
     </main>
+  );
+}
+
+function Feature({
+  icon,
+  title,
+  text,
+}: {
+  icon: string;
+  title: string;
+  text: string;
+}) {
+  return (
+    <div style={styles.feature}>
+      <div style={styles.featureIcon}>{icon}</div>
+      <h3 style={styles.featureTitle}>{title}</h3>
+      <p style={styles.featureText}>{text}</p>
+    </div>
   );
 }
 
@@ -190,376 +328,377 @@ const styles: Record<string, CSSProperties> = {
 
   bgGlow: {
     position: "absolute",
-    inset: -200,
+    inset: -220,
     background:
       "radial-gradient(circle at 50% 50%, rgba(16,185,129,0.10), transparent 55%)",
     filter: "blur(30px)",
     pointerEvents: "none",
   },
 
-  container: {
-    position: "relative",
-    padding: 32,
-    maxWidth: 1100,
-    margin: "0 auto",
+  portalLink: {
+    position: "fixed",
+    top: 18,
+    right: 18,
+    zIndex: 30,
+    padding: "9px 12px",
+    borderRadius: 999,
+    textDecoration: "none",
+    fontSize: 12,
+    fontWeight: 900,
+    color: "rgba(230,246,247,0.82)",
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    backdropFilter: "blur(10px)",
   },
 
-  header: {
-    marginTop: 24,
-    marginBottom: 22,
-    padding: 28,
-    borderRadius: 20,
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03))",
-    border: "1px solid rgba(255,255,255,0.10)",
-    boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
-    backdropFilter: "blur(10px)",
+  container: {
+    position: "relative",
+    zIndex: 1,
+    maxWidth: 1180,
+    margin: "0 auto",
+    padding: 32,
+  },
+
+  hero: {
+    minHeight: "82vh",
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "center",
+    gap: 34,
   },
 
   brandRow: {
     display: "flex",
     alignItems: "center",
     gap: 14,
-    flexWrap: "wrap",
   },
 
-  brandText: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  },
-
-  logoMark: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
+  logo: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
     display: "grid",
     placeItems: "center",
-    fontWeight: 900,
-    letterSpacing: 0.5,
+    fontWeight: 950,
     color: "#001114",
     background:
-      "linear-gradient(135deg, rgba(45,212,191,1) 0%, rgba(56,189,248,1) 100%)",
-    boxShadow: "0 16px 40px rgba(0,0,0,0.35)",
-    userSelect: "none",
+      "linear-gradient(135deg, rgba(45,212,191,1), rgba(56,189,248,1))",
+    boxShadow: "0 18px 46px rgba(0,0,0,0.36)",
   },
 
-  title: {
-    fontSize: 42,
-    fontWeight: 950,
+  brand: {
     margin: 0,
-    lineHeight: 1.05,
+    fontSize: 34,
+    fontWeight: 950,
     letterSpacing: -0.8,
   },
 
-  badges: {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
+  brandSub: {
+    margin: "3px 0 0",
+    fontSize: 13,
+    fontWeight: 850,
+    color: "rgba(230,246,247,0.64)",
   },
 
-  badge: {
-    fontSize: 12,
-    fontWeight: 800,
-    padding: "6px 10px",
-    borderRadius: 999,
-    background: "rgba(45,212,191,0.16)",
-    border: "1px solid rgba(45,212,191,0.28)",
+  heroGrid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1.05fr) minmax(340px, 0.95fr)",
+    gap: 34,
+    alignItems: "center",
+  },
+
+  eyebrow: {
+    margin: 0,
     color: "#bff7ee",
+    fontSize: 13,
+    fontWeight: 950,
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
 
-  badgeMuted: {
-    fontSize: 12,
-    fontWeight: 800,
-    padding: "6px 10px",
-    borderRadius: 999,
-    background: "rgba(255,255,255,0.06)",
-    border: "1px solid rgba(255,255,255,0.10)",
-    color: "rgba(230,246,247,0.75)",
+  title: {
+    margin: "14px 0 0",
+    fontSize: 58,
+    lineHeight: 1,
+    letterSpacing: -1.8,
+    fontWeight: 950,
   },
 
-  subtitle: {
-    marginTop: 14,
-    marginBottom: 0,
-    fontSize: 18,
-    lineHeight: 1.55,
-    color: "rgba(230,246,247,0.80)",
-    maxWidth: 720,
+  text: {
+    margin: "18px 0 0",
+    fontSize: 17,
+    lineHeight: 1.75,
+    color: "rgba(230,246,247,0.78)",
+    maxWidth: 660,
   },
 
   ctaRow: {
     display: "flex",
     gap: 12,
-    marginTop: 18,
+    marginTop: 24,
     flexWrap: "wrap",
   },
 
   primaryCta: {
     display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "12px 16px",
-    borderRadius: 12,
+    padding: "14px 18px",
+    borderRadius: 15,
     textDecoration: "none",
-    fontWeight: 900,
+    fontWeight: 950,
     color: "#001114",
     background:
-      "linear-gradient(135deg, rgba(45,212,191,1) 0%, rgba(56,189,248,1) 100%)",
-    boxShadow: "0 16px 40px rgba(0,0,0,0.35)",
+      "linear-gradient(135deg, rgba(45,212,191,1), rgba(56,189,248,1))",
+    boxShadow: "0 18px 44px rgba(0,0,0,0.35)",
   },
 
   secondaryCta: {
     display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "12px 16px",
-    borderRadius: 12,
+    padding: "14px 18px",
+    borderRadius: 15,
     textDecoration: "none",
-    fontWeight: 900,
+    fontWeight: 950,
     color: "rgba(230,246,247,0.88)",
     background: "rgba(255,255,255,0.06)",
     border: "1px solid rgba(255,255,255,0.12)",
   },
 
-  legalSectionHighlight: {
-    marginTop: 16,
-    marginBottom: 24,
-    padding: 22,
-    borderRadius: 20,
+  activityCard: {
+    borderRadius: 28,
+    overflow: "hidden",
     background:
-      "linear-gradient(135deg, rgba(0,191,223,0.14), rgba(94,252,161,0.08))",
-    border: "1px solid rgba(0,191,223,0.35)",
-    boxShadow: "0 20px 60px rgba(0,191,223,0.15)",
-    backdropFilter: "blur(10px)",
+      "linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.035))",
+    border: "1px solid rgba(255,255,255,0.13)",
+    boxShadow: "0 34px 90px rgba(0,0,0,0.46)",
+    backdropFilter: "blur(12px)",
   },
 
-  legalHeroHeader: {
-    marginBottom: 16,
-  },
-
-  legalHeroBadge: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "6px 10px",
-    borderRadius: 999,
-    fontSize: 12,
-    fontWeight: 900,
-    color: "#bff7ee",
-    background: "rgba(45,212,191,0.16)",
-    border: "1px solid rgba(45,212,191,0.28)",
-  },
-
-  legalHeroTitle: {
-    marginTop: 14,
-    marginBottom: 0,
-    fontSize: 24,
-    fontWeight: 950,
-    letterSpacing: -0.4,
-  },
-
-  legalHeroSubtitle: {
-    marginTop: 10,
-    marginBottom: 0,
-    fontSize: 15,
-    lineHeight: 1.7,
-    color: "rgba(230,246,247,0.78)",
-    maxWidth: 820,
-  },
-
-  legalGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-    gap: 14,
-  },
-
-  legalCard: {
+  cardTop: {
     display: "flex",
-    gap: 14,
-    alignItems: "flex-start",
+    alignItems: "center",
+    gap: 12,
     padding: 18,
-    borderRadius: 18,
-    textDecoration: "none",
-    background: "rgba(255,255,255,0.05)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    boxShadow: "0 16px 40px rgba(0,0,0,0.20)",
-    color: "#e6f6f7",
   },
 
-  legalIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+  avatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 999,
     display: "grid",
     placeItems: "center",
     background: "rgba(255,255,255,0.08)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    flexShrink: 0,
-    userSelect: "none",
   },
 
-  legalContent: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  },
-
-  legalCardTitle: {
+  cardName: {
     margin: 0,
-    fontSize: 17,
-    fontWeight: 900,
-    letterSpacing: -0.2,
+    fontSize: 15,
+    fontWeight: 950,
   },
 
-  legalCardText: {
-    margin: 0,
-    fontSize: 14,
-    lineHeight: 1.65,
-    color: "rgba(230,246,247,0.78)",
+  cardMeta: {
+    margin: "3px 0 0",
+    fontSize: 12,
+    fontWeight: 800,
+    color: "rgba(230,246,247,0.58)",
   },
 
-  legalLink: {
-    fontSize: 13,
-    fontWeight: 900,
-    color: "#bff7ee",
+  imageLink: {
+    position: "relative",
+    display: "block",
+    height: 290,
+    overflow: "hidden",
+    background: "rgba(0,0,0,0.28)",
   },
 
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-    gap: 14,
-    marginBottom: 18,
+  image: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    display: "block",
   },
 
-  card: {
+  imageBadge: {
+    position: "absolute",
+    right: 14,
+    bottom: 14,
+    padding: "8px 11px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 950,
+    color: "#001114",
+    background:
+      "linear-gradient(135deg, rgba(94,252,161,0.96), rgba(0,191,223,0.96))",
+  },
+
+  cardBody: {
     padding: 18,
-    borderRadius: 18,
-    background: "rgba(255,255,255,0.04)",
-    border: "1px solid rgba(255,255,255,0.10)",
-    boxShadow: "0 16px 40px rgba(0,0,0,0.25)",
-  },
-
-  cardIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    display: "grid",
-    placeItems: "center",
-    background: "rgba(255,255,255,0.06)",
-    border: "1px solid rgba(255,255,255,0.10)",
-    marginBottom: 12,
-    userSelect: "none",
   },
 
   cardTitle: {
     margin: 0,
-    fontSize: 16,
-    fontWeight: 900,
-    letterSpacing: -0.2,
+    fontSize: 22,
+    lineHeight: 1.15,
+    fontWeight: 950,
   },
 
-  cardText: {
-    marginTop: 8,
-    marginBottom: 0,
-    fontSize: 14,
-    lineHeight: 1.6,
-    color: "rgba(230,246,247,0.75)",
-  },
-
-  newsletter: {
-    marginTop: 18,
-    padding: 18,
-    borderRadius: 18,
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03))",
+  stats: {
+    marginTop: 14,
+    padding: 13,
+    borderRadius: 16,
+    background: "rgba(255,255,255,0.06)",
     border: "1px solid rgba(255,255,255,0.10)",
+    fontSize: 14,
+    fontWeight: 900,
+  },
+
+  note: {
+    margin: "14px 0 0",
+    fontSize: 14,
+    lineHeight: 1.65,
+    color: "rgba(230,246,247,0.74)",
+  },
+
+  cardActions: {
     display: "flex",
-    gap: 14,
-    alignItems: "center",
-    justifyContent: "space-between",
+    gap: 10,
+    marginTop: 16,
     flexWrap: "wrap",
   },
 
-  newsLeft: {
+  smallPrimary: {
+    flex: 1,
+    minWidth: 130,
+    textAlign: "center",
+    padding: "12px 14px",
+    borderRadius: 14,
+    textDecoration: "none",
+    fontSize: 13,
+    fontWeight: 950,
+    color: "#001114",
+    background:
+      "linear-gradient(135deg, rgba(45,212,191,1), rgba(56,189,248,1))",
+  },
+
+  smallGhost: {
+    flex: 1,
+    minWidth: 130,
+    textAlign: "center",
+    padding: "12px 14px",
+    borderRadius: 14,
+    textDecoration: "none",
+    fontSize: 13,
+    fontWeight: 950,
+    color: "rgba(230,246,247,0.88)",
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.12)",
+  },
+
+  manifest: {
+    marginTop: 24,
+    padding: 28,
+    borderRadius: 24,
+    background:
+      "linear-gradient(135deg, rgba(0,191,223,0.13), rgba(94,252,161,0.075))",
+    border: "1px solid rgba(0,191,223,0.26)",
+    boxShadow: "0 20px 60px rgba(0,191,223,0.12)",
+  },
+
+  sectionTitle: {
+    margin: "10px 0 0",
+    fontSize: 34,
+    lineHeight: 1.12,
+    letterSpacing: -0.8,
+    fontWeight: 950,
+  },
+
+  sectionText: {
+    margin: "12px 0 0",
+    fontSize: 16,
+    lineHeight: 1.75,
+    color: "rgba(230,246,247,0.76)",
+  },
+
+  grid: {
+    marginTop: 18,
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+    gap: 14,
+  },
+
+  feature: {
+    padding: 18,
+    borderRadius: 20,
+    background: "rgba(255,255,255,0.04)",
+    border: "1px solid rgba(255,255,255,0.10)",
+  },
+
+  featureIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 15,
+    display: "grid",
+    placeItems: "center",
+    background: "rgba(255,255,255,0.06)",
+    marginBottom: 12,
+  },
+
+  featureTitle: {
+    margin: 0,
+    fontSize: 17,
+    fontWeight: 950,
+  },
+
+  featureText: {
+    margin: "8px 0 0",
+    fontSize: 14,
+    lineHeight: 1.6,
+    color: "rgba(230,246,247,0.72)",
+  },
+
+  shareBox: {
+    marginTop: 18,
+    padding: 24,
+    borderRadius: 22,
+    background: "rgba(255,255,255,0.045)",
+    border: "1px solid rgba(255,255,255,0.10)",
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 280px",
+    gap: 18,
+    alignItems: "center",
+  },
+
+  linkBox: {
+    padding: 18,
+    borderRadius: 20,
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.12)",
     display: "flex",
     flexDirection: "column",
     gap: 8,
+    color: "rgba(230,246,247,0.72)",
+    fontSize: 13,
   },
 
-  newsTitle: {
-    margin: 0,
-    fontSize: 16,
-    fontWeight: 950,
-    letterSpacing: -0.2,
-  },
-
-  newsText: {
-    margin: 0,
-    fontSize: 14,
-    lineHeight: 1.5,
-    color: "rgba(230,246,247,0.75)",
-  },
-
-  form: {
-    display: "flex",
-    gap: 10,
-    flexWrap: "wrap",
-    alignItems: "center",
-    justifyContent: "flex-end",
-  },
-
-  input: {
-    width: 280,
-    maxWidth: "80vw",
-    padding: "12px 12px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.14)",
-    outline: "none",
-    background: "rgba(0,0,0,0.25)",
-    color: "#e6f6f7",
-    fontWeight: 700,
-  },
-
-  button: {
-    padding: "12px 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(45,212,191,0.28)",
-    background: "rgba(45,212,191,0.16)",
-    color: "#bff7ee",
-    fontWeight: 950,
-    cursor: "pointer",
-  },
-
-  footer: {
-    marginTop: 26,
+  legalBox: {
+    marginTop: 24,
     paddingTop: 18,
-    borderTop: "1px solid rgba(255,255,255,0.10)",
+    borderTop: "1px solid rgba(255,255,255,0.08)",
     display: "flex",
-    gap: 10,
-    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
     flexWrap: "wrap",
-  },
-
-  footerText: {
-    color: "rgba(230,246,247,0.70)",
-    fontWeight: 800,
     fontSize: 13,
-  },
-
-  footerTextMuted: {
     color: "rgba(230,246,247,0.50)",
-    fontWeight: 800,
-    fontSize: 13,
+  },
+
+  legalLinks: {
+    display: "flex",
+    gap: 12,
   },
 
   footerLink: {
-    color: "rgba(230,246,247,0.82)",
-    fontWeight: 800,
     fontSize: 13,
+    fontWeight: 850,
+    color: "rgba(230,246,247,0.66)",
     textDecoration: "none",
-  },
-
-  dot: {
-    opacity: 0.5,
   },
 };
