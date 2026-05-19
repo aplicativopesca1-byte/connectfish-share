@@ -58,15 +58,16 @@ function formatDistanceKm(km: any) {
 
 function pickImageFromPost(post: any) {
   return (
-    safeString(post?.mediaUrl) ||
     safeString(post?.feedPreview?.mapThumbnailUrl) ||
+    safeString(post?.mapThumbnailUrl) ||
+    safeString(post?.mediaUrl) ||
     safeString(post?.mediaGallery?.[0]?.url) ||
     safeString(post?.thumbnailUrl) ||
     DEFAULT_IMAGE
   );
 }
 
-function pickHandle(post: any, userDoc: any | null) {
+function pickHandle(post: any, userDoc: any | null = null) {
   const raw =
     post?.userHandle ||
     post?.username ||
@@ -93,6 +94,53 @@ function isPostPublic(post: any) {
   if (status === "private") return false;
 
   return true;
+}
+
+function pickDate(post: any) {
+  try {
+    if (post?.createdAt?.toDate) return post.createdAt.toDate();
+    if (post?.createdAtLocal) return new Date(post.createdAtLocal);
+    if (Number.isFinite(Number(post?.createdAtMs))) {
+      return new Date(Number(post.createdAtMs));
+    }
+  } catch {}
+
+  return new Date();
+}
+
+function mapPostToShareData(id: string, post: any, userDoc: any | null = null): ShareData {
+  const dateObj = pickDate(post);
+  const username = pickHandle(post, userDoc);
+  const timeText = formatTimeShort(post?.time);
+  const distanceText = formatDistanceKm(post?.distance);
+  const fishCount = Number(post?.fishCount ?? 0) || 0;
+
+  const title = safeString(post?.title) || "Toda pescaria conta uma história.";
+  const note = safeString(post?.note);
+
+  const regionLabel =
+    safeString(post?.location?.regionLabel) ||
+    safeString(post?.regionLabel) ||
+    safeString(post?.waterBodyContext?.name);
+
+  return {
+    id,
+    exists: true,
+    isPublic: true,
+    title,
+    description:
+      note ||
+      `${username} compartilhou uma pescaria no ConnectFish com rota, capturas e replay.`,
+    image: pickImageFromPost(post),
+    username,
+    dateText: formatDateBR(dateObj),
+    timeText,
+    distanceText,
+    fishCount,
+    note,
+    regionLabel,
+    canReplay: post?.allowReplayNavigation !== false,
+  };
 }
 
 async function getShareData(id: string): Promise<ShareData> {
@@ -152,49 +200,28 @@ async function getShareData(id: string): Promise<ShareData> {
     }
   }
 
-  let dateObj = new Date();
+  return mapPostToShareData(safeId, post, userDoc);
+}
 
+async function getMoreActivities(currentId: string): Promise<ShareData[]> {
   try {
-    if (post?.createdAt?.toDate) dateObj = post.createdAt.toDate();
-    else if (typeof post?.createdAtLocal === "string") {
-      dateObj = new Date(post.createdAtLocal);
-    } else if (Number.isFinite(Number(post?.createdAtMs))) {
-      dateObj = new Date(Number(post.createdAtMs));
-    }
-  } catch {}
+    const db = adminDb();
 
-  const username = pickHandle(post, userDoc);
-  const timeText = formatTimeShort(post?.time);
-  const distanceText = formatDistanceKm(post?.distance);
-  const fishCount = Number(post?.fishCount ?? 0) || 0;
+    const snap = await db
+      .collection("posts")
+      .orderBy("createdAt", "desc")
+      .limit(18)
+      .get();
 
-  const title =
-    safeString(post?.title) || "Toda pescaria conta uma história.";
-
-  const note = safeString(post?.note);
-  const regionLabel =
-    safeString(post?.location?.regionLabel) ||
-    safeString(post?.regionLabel) ||
-    safeString(post?.waterBodyContext?.name);
-
-  return {
-    id: safeId,
-    exists: true,
-    isPublic: true,
-    title,
-    description:
-      note ||
-      `${username} compartilhou uma pescaria no ConnectFish com rota, capturas e replay.`,
-    image: pickImageFromPost(post),
-    username,
-    dateText: formatDateBR(dateObj),
-    timeText,
-    distanceText,
-    fishCount,
-    note,
-    regionLabel,
-    canReplay: post?.allowReplayNavigation !== false,
-  };
+    return snap.docs
+      .filter((doc) => doc.id !== currentId)
+      .filter((doc) => isPostPublic(doc.data()))
+      .map((doc) => mapPostToShareData(doc.id, doc.data()))
+      .filter((item) => item.image && item.image !== DEFAULT_IMAGE)
+      .slice(0, 6);
+  } catch {
+    return [];
+  }
 }
 
 export const dynamic = "force-dynamic";
@@ -206,13 +233,13 @@ export async function generateMetadata({
   const safeId = safeString(id, "");
   const d = await getShareData(safeId);
 
-  const canonicalUrl = `https://connectfish.app/a/${encodeURIComponent(
-    safeId
-  )}`;
+  const canonicalUrl = `https://connectfish.app/a/${encodeURIComponent(safeId)}`;
 
   const description =
     d.username && d.dateText
-      ? `${d.username} — ${d.dateText}. Tempo: ${d.timeText || "0 min"} • Distância: ${d.distanceText || "0,00 km"} • Peixes: ${d.fishCount || 0}`
+      ? `${d.username} — ${d.dateText}. Tempo: ${d.timeText || "0 min"} • Distância: ${
+          d.distanceText || "0,00 km"
+        } • Peixes: ${d.fishCount || 0}`
       : d.description;
 
   return {
@@ -225,7 +252,14 @@ export async function generateMetadata({
       url: canonicalUrl,
       type: "website",
       siteName: "ConnectFish",
-      images: [{ url: d.image || DEFAULT_IMAGE, width: 1200, height: 630, alt: d.title }],
+      images: [
+        {
+          url: d.image || DEFAULT_IMAGE,
+          width: 1200,
+          height: 630,
+          alt: d.title,
+        },
+      ],
     },
     twitter: {
       card: "summary_large_image",
@@ -240,6 +274,7 @@ export default async function SharePage({ params }: PageProps) {
   const { id } = await params;
   const safeId = safeString(id, "");
   const d = await getShareData(safeId);
+  const moreActivities = await getMoreActivities(safeId);
 
   const openAppLink = `connectfish://activity?id=${encodeURIComponent(safeId)}`;
   const replayUrl = `/r/${encodeURIComponent(safeId)}`;
@@ -249,14 +284,16 @@ export default async function SharePage({ params }: PageProps) {
     <main style={styles.page}>
       <div style={styles.bgGlow} aria-hidden="true" />
 
-      <a href="/" style={styles.homeLink}>ConnectFish</a>
+      <a href="/" style={styles.homeLink}>
+        ConnectFish
+      </a>
 
       <section style={styles.shell}>
         <div style={styles.heroCard}>
           <div style={styles.imageStage}>
             <img
               src={d.image || DEFAULT_IMAGE}
-              alt={showActivity ? "Foto da pescaria" : "ConnectFish"}
+              alt={showActivity ? "Mapa da pescaria" : "ConnectFish"}
               style={styles.heroImage}
             />
 
@@ -267,13 +304,14 @@ export default async function SharePage({ params }: PageProps) {
               <div>
                 <div style={styles.brandName}>ConnectFish</div>
                 <div style={styles.brandSub}>
-                  {showActivity ? "Pescaria compartilhada" : "Link compartilhado"}
+                  {showActivity ? "Mapa da pescaria" : "Link compartilhado"}
                 </div>
               </div>
             </div>
 
             <div style={styles.heroTextBlock}>
-              <div style={styles.badge}>🎣 Toda pescaria conta uma história</div>
+              <div style={styles.badge}>🗺️ Rota registrada no mapa</div>
+
               <h1 style={styles.title}>{d.title}</h1>
 
               {showActivity ? (
@@ -298,6 +336,18 @@ export default async function SharePage({ params }: PageProps) {
                   <Stat label="Peixes" value={String(d.fishCount || 0)} />
                 </div>
 
+                <section style={styles.mapPowerBox}>
+                  <p style={styles.storyEyebrow}>O poder do ConnectFish</p>
+                  <h2 style={styles.mapPowerTitle}>
+                    Não é só uma foto. É a rota real da pescaria.
+                  </h2>
+                  <p style={styles.storyText}>
+                    Cada atividade pode mostrar o caminho, os pontos marcados,
+                    capturas e momentos importantes. É isso que transforma uma
+                    pescaria em uma história que pode ser revivida.
+                  </p>
+                </section>
+
                 <section style={styles.storyBox}>
                   <p style={styles.storyEyebrow}>A história da pescaria</p>
                   <p style={styles.storyText}>
@@ -309,14 +359,18 @@ export default async function SharePage({ params }: PageProps) {
                 <section style={styles.replayBox}>
                   <div>
                     <p style={styles.replayEyebrow}>Reviva o momento</p>
-                    <h2 style={styles.replayTitle}>Veja essa pescaria ganhar vida no replay.</h2>
+                    <h2 style={styles.replayTitle}>
+                      Veja essa pescaria ganhar vida no replay.
+                    </h2>
                     <p style={styles.replayText}>
                       O replay mostra a rota, os pontos e os eventos da atividade dentro do ConnectFish.
                     </p>
                   </div>
 
                   {d.canReplay ? (
-                    <a href={replayUrl} style={styles.replayBtn}>▶ Ver replay</a>
+                    <a href={replayUrl} style={styles.replayBtn}>
+                      ▶ Ver replay
+                    </a>
                   ) : null}
                 </section>
               </>
@@ -328,7 +382,9 @@ export default async function SharePage({ params }: PageProps) {
 
             <div style={styles.actions}>
               {showActivity ? (
-                <a href={openAppLink} style={styles.primaryBtn}>Abrir no app</a>
+                <a href={openAppLink} style={styles.primaryBtn}>
+                  Abrir no app
+                </a>
               ) : null}
 
               <a href="/" style={showActivity ? styles.secondaryBtn : styles.primaryBtn}>
@@ -348,12 +404,45 @@ export default async function SharePage({ params }: PageProps) {
           </div>
         </div>
 
+        {moreActivities.length ? (
+          <section style={styles.moreSection}>
+            <div style={styles.moreHeader}>
+              <p style={styles.storyEyebrow}>Mais pescarias da comunidade</p>
+              <h2 style={styles.moreTitle}>Explore outras rotas no mapa</h2>
+            </div>
+
+            <div style={styles.moreGrid}>
+              {moreActivities.map((item) => (
+                <MoreActivityCard key={item.id} item={item} />
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <section style={styles.downloadBox}>
+          <p style={styles.downloadEyebrow}>Baixe o app</p>
+          <h2 style={styles.downloadTitle}>
+            Grave sua rota, salve capturas e compartilhe sua pescaria.
+          </h2>
+          <p style={styles.downloadText}>
+            O ConnectFish transforma cada saída de pesca em uma atividade com mapa,
+            estatísticas, replay e comunidade.
+          </p>
+          <a href="/" style={styles.downloadBtn}>
+            Conhecer o ConnectFish
+          </a>
+        </section>
+
         <footer style={styles.footer}>
           <span>© ConnectFish</span>
           <span>•</span>
-          <a href="/terms" style={styles.footerLink}>Termos</a>
+          <a href="/terms" style={styles.footerLink}>
+            Termos
+          </a>
           <span>•</span>
-          <a href="/privacy" style={styles.footerLink}>Privacidade</a>
+          <a href="/privacy" style={styles.footerLink}>
+            Privacidade
+          </a>
         </footer>
       </section>
     </main>
@@ -369,6 +458,44 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+function MoreActivityCard({ item }: { item: ShareData }) {
+  return (
+    <article style={styles.moreCard}>
+      <a href={`/a/${encodeURIComponent(item.id)}`} style={styles.moreImageWrap}>
+        <img src={item.image} alt={item.title} style={styles.moreImage} />
+        <div style={styles.moreImageOverlay} />
+        <span style={styles.moreBadge}>🗺️ Ver rota</span>
+      </a>
+
+      <div style={styles.moreBody}>
+        <div style={styles.moreMeta}>
+          <span>{item.username}</span>
+          <span>•</span>
+          <span>{item.dateText}</span>
+        </div>
+
+        <h3 style={styles.moreCardTitle}>{item.title}</h3>
+
+        <p style={styles.moreStats}>
+          {item.timeText} • {item.distanceText} • {item.fishCount || 0} peixes
+        </p>
+
+        <div style={styles.moreActions}>
+          <a href={`/a/${encodeURIComponent(item.id)}`} style={styles.morePrimary}>
+            Abrir
+          </a>
+
+          {item.canReplay ? (
+            <a href={`/r/${encodeURIComponent(item.id)}`} style={styles.moreGhost}>
+              Replay
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 const styles: Record<string, CSSProperties> = {
   page: {
     minHeight: "100vh",
@@ -378,8 +505,9 @@ const styles: Record<string, CSSProperties> = {
       "linear-gradient(180deg, #06141a 0%, #050a0f 100%)",
     color: "#e6f6f7",
     position: "relative",
-    overflow: "hidden",
+    overflowX: "hidden",
     padding: 20,
+    boxSizing: "border-box",
   },
 
   bgGlow: {
@@ -410,7 +538,7 @@ const styles: Record<string, CSSProperties> = {
   shell: {
     position: "relative",
     zIndex: 1,
-    maxWidth: 760,
+    maxWidth: 920,
     margin: "0 auto",
     paddingTop: 26,
     paddingBottom: 26,
@@ -428,7 +556,7 @@ const styles: Record<string, CSSProperties> = {
 
   imageStage: {
     position: "relative",
-    minHeight: 500,
+    minHeight: 520,
     background: "rgba(0,0,0,0.25)",
   },
 
@@ -444,7 +572,7 @@ const styles: Record<string, CSSProperties> = {
     position: "absolute",
     inset: 0,
     background:
-      "linear-gradient(180deg, rgba(0,0,0,0.40) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.82) 100%)",
+      "linear-gradient(180deg, rgba(0,0,0,0.40) 0%, rgba(0,0,0,0.04) 34%, rgba(0,0,0,0.84) 100%)",
   },
 
   topBrand: {
@@ -502,7 +630,7 @@ const styles: Record<string, CSSProperties> = {
 
   title: {
     margin: "14px 0 0",
-    fontSize: 42,
+    fontSize: "clamp(31px, 8vw, 48px)",
     lineHeight: 1.04,
     letterSpacing: -1,
     fontWeight: 950,
@@ -553,9 +681,25 @@ const styles: Record<string, CSSProperties> = {
   },
 
   statValue: {
-    fontSize: 18,
+    fontSize: "clamp(15px, 4vw, 18px)",
     fontWeight: 950,
     color: "#bff7ee",
+  },
+
+  mapPowerBox: {
+    marginTop: 16,
+    padding: 18,
+    borderRadius: 20,
+    background:
+      "linear-gradient(135deg, rgba(45,212,191,0.13), rgba(56,189,248,0.08))",
+    border: "1px solid rgba(45,212,191,0.25)",
+  },
+
+  mapPowerTitle: {
+    margin: "8px 0 0",
+    fontSize: 24,
+    lineHeight: 1.13,
+    fontWeight: 950,
   },
 
   storyBox: {
@@ -692,6 +836,181 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 14,
     lineHeight: 1.65,
     color: "rgba(230,246,247,0.70)",
+  },
+
+  moreSection: {
+    marginTop: 22,
+    padding: 18,
+    borderRadius: 28,
+    background: "rgba(255,255,255,0.035)",
+    border: "1px solid rgba(255,255,255,0.09)",
+  },
+
+  moreHeader: {
+    marginBottom: 14,
+  },
+
+  moreTitle: {
+    margin: "8px 0 0",
+    fontSize: "clamp(25px, 7vw, 34px)",
+    lineHeight: 1.1,
+    letterSpacing: -0.7,
+    fontWeight: 950,
+  },
+
+  moreGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
+    gap: 14,
+  },
+
+  moreCard: {
+    overflow: "hidden",
+    borderRadius: 22,
+    background:
+      "linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.035))",
+    border: "1px solid rgba(255,255,255,0.10)",
+  },
+
+  moreImageWrap: {
+    position: "relative",
+    display: "block",
+    width: "100%",
+    aspectRatio: "1 / 1",
+    overflow: "hidden",
+    background: "rgba(0,0,0,0.25)",
+  },
+
+  moreImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    display: "block",
+  },
+
+  moreImageOverlay: {
+    position: "absolute",
+    inset: 0,
+    background:
+      "linear-gradient(180deg, rgba(0,0,0,0.08), rgba(0,0,0,0.42))",
+  },
+
+  moreBadge: {
+    position: "absolute",
+    right: 10,
+    bottom: 10,
+    padding: "7px 9px",
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: 950,
+    color: "#001114",
+    background:
+      "linear-gradient(135deg, rgba(94,252,161,0.96), rgba(0,191,223,0.96))",
+  },
+
+  moreBody: {
+    padding: 13,
+  },
+
+  moreMeta: {
+    display: "flex",
+    gap: 6,
+    flexWrap: "wrap",
+    fontSize: 12,
+    fontWeight: 850,
+    color: "rgba(230,246,247,0.58)",
+  },
+
+  moreCardTitle: {
+    margin: "7px 0 0",
+    fontSize: 16,
+    lineHeight: 1.22,
+    fontWeight: 950,
+  },
+
+  moreStats: {
+    margin: "8px 0 0",
+    fontSize: 12,
+    lineHeight: 1.45,
+    fontWeight: 850,
+    color: "rgba(230,246,247,0.68)",
+  },
+
+  moreActions: {
+    marginTop: 11,
+    display: "flex",
+    gap: 8,
+  },
+
+  morePrimary: {
+    flex: 1,
+    textAlign: "center",
+    padding: "10px 11px",
+    borderRadius: 13,
+    textDecoration: "none",
+    fontSize: 12,
+    fontWeight: 950,
+    color: "#001114",
+    background:
+      "linear-gradient(135deg, rgba(45,212,191,1), rgba(56,189,248,1))",
+  },
+
+  moreGhost: {
+    flex: 1,
+    textAlign: "center",
+    padding: "10px 11px",
+    borderRadius: 13,
+    textDecoration: "none",
+    fontSize: 12,
+    fontWeight: 950,
+    color: "rgba(230,246,247,0.88)",
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.12)",
+  },
+
+  downloadBox: {
+    marginTop: 18,
+    padding: 22,
+    borderRadius: 26,
+    background:
+      "linear-gradient(135deg, rgba(45,212,191,0.16), rgba(56,189,248,0.08))",
+    border: "1px solid rgba(45,212,191,0.26)",
+  },
+
+  downloadEyebrow: {
+    margin: 0,
+    fontSize: 12,
+    fontWeight: 950,
+    color: "#bff7ee",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+
+  downloadTitle: {
+    margin: "9px 0 0",
+    fontSize: "clamp(24px, 7vw, 34px)",
+    lineHeight: 1.1,
+    fontWeight: 950,
+  },
+
+  downloadText: {
+    margin: "10px 0 0",
+    fontSize: 15,
+    lineHeight: 1.65,
+    color: "rgba(230,246,247,0.76)",
+  },
+
+  downloadBtn: {
+    marginTop: 15,
+    display: "inline-flex",
+    padding: "13px 15px",
+    borderRadius: 15,
+    textDecoration: "none",
+    fontSize: 14,
+    fontWeight: 950,
+    color: "#001114",
+    background:
+      "linear-gradient(135deg, rgba(45,212,191,1), rgba(56,189,248,1))",
   },
 
   footer: {
