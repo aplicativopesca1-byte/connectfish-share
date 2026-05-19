@@ -41,6 +41,8 @@ type TournamentCapture = {
   teamId: string | null;
   teamName: string;
   species: string;
+  rankingCategory: string;
+  rankingCategoryLabel: string;
   declaredLengthCm: number;
   approvedLengthCm: number | null;
   status: "pending" | "approved" | "rejected";
@@ -56,6 +58,13 @@ type RankingRow = {
   approvedFishCount: number;
   validFish: number[];
 };
+
+const RANKING_FILTERS = [
+  { key: "official", label: "Ranking geral" },
+  { key: "biggest_all", label: "Maior peixe" },
+  { key: "blue", label: "Azul" },
+  { key: "yellow", label: "Amarelo" },
+];
 
 function toIsoStringSafe(value: unknown): string | null {
   if (!value) return null;
@@ -97,7 +106,10 @@ function mapCaptureDoc(
   raw: Record<string, unknown>,
   tournamentId: string
 ): TournamentCapture {
-  const statusRaw = String(raw.status ?? "pending").toLowerCase();
+  const statusRaw = String(
+    raw.status ?? raw.validationStatus ?? "pending"
+  ).toLowerCase();
+
   const status =
     statusRaw === "approved" || statusRaw === "rejected"
       ? statusRaw
@@ -109,11 +121,26 @@ function mapCaptureDoc(
     teamId: raw.teamId ? String(raw.teamId) : null,
     teamName: raw.teamName ? String(raw.teamName) : "Equipe não identificada",
     species: raw.species ? String(raw.species) : "Espécie não informada",
-    declaredLengthCm: Number(raw.declaredLengthCm ?? raw.lengthCm ?? 0) || 0,
+
+    rankingCategory: raw.rankingCategory
+      ? String(raw.rankingCategory)
+      : "general",
+
+    rankingCategoryLabel: raw.rankingCategoryLabel
+      ? String(raw.rankingCategoryLabel)
+      : "Geral",
+
+    declaredLengthCm:
+      Number(raw.declaredLengthCm ?? raw.enteredMeasure ?? raw.lengthCm ?? 0) ||
+      0,
+
     approvedLengthCm:
       raw.approvedLengthCm !== undefined && raw.approvedLengthCm !== null
         ? Number(raw.approvedLengthCm)
+        : raw.officialMeasure !== undefined && raw.officialMeasure !== null
+        ? Number(raw.officialMeasure)
         : null,
+
     status,
     submittedAt: toIsoStringSafe(raw.submittedAt),
   };
@@ -177,6 +204,33 @@ function buildRanking(
   }));
 }
 
+function buildBiggestFishRanking(
+  captures: TournamentCapture[],
+  rankingFilter: string
+): RankingRow[] {
+  const approvedCaptures = captures.filter(
+    (item) =>
+      item.status === "approved" &&
+      (item.approvedLengthCm ?? 0) > 0 &&
+      (rankingFilter === "biggest_all" ||
+        item.rankingCategory === rankingFilter)
+  );
+
+  const ordered = [...approvedCaptures].sort(
+    (a, b) => Number(b.approvedLengthCm || 0) - Number(a.approvedLengthCm || 0)
+  );
+
+  return ordered.map((item, index) => ({
+    teamId: item.teamId || `capture:${item.id}`,
+    teamName: item.teamName,
+    position: index + 1,
+    totalCm: Number(item.approvedLengthCm || 0),
+    bestFishCm: Number(item.approvedLengthCm || 0),
+    approvedFishCount: 1,
+    validFish: [Number(item.approvedLengthCm || 0)],
+  }));
+}
+
 function getStatusLabel(status: string) {
   const normalized = String(status || "").toLowerCase();
 
@@ -226,20 +280,32 @@ export default function TournamentRankingClient({ tournamentId }: Props) {
   const [loading, setLoading] = useState(true);
 
   const [tournamentTitle, setTournamentTitle] = useState("Torneio");
-  const [tournamentLocation, setTournamentLocation] = useState("Local não definido");
+  const [tournamentLocation, setTournamentLocation] =
+    useState("Local não definido");
   const [validFishCount, setValidFishCount] = useState(3);
   const [species, setSpecies] = useState("Espécie não definida");
   const [status, setStatus] = useState("scheduled");
 
   const [captures, setCaptures] = useState<TournamentCapture[]>([]);
+  const [rankingFilter, setRankingFilter] = useState("official");
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
 
   const [error, setError] = useState<string | null>(null);
 
-  const ranking = useMemo(
-    () => buildRanking(captures, validFishCount),
-    [captures, validFishCount]
-  );
+  const ranking = useMemo(() => {
+    if (rankingFilter === "official") {
+      return buildRanking(captures, validFishCount);
+    }
+
+    return buildBiggestFishRanking(captures, rankingFilter);
+  }, [captures, validFishCount, rankingFilter]);
+
+  const activeFilterLabel = useMemo(() => {
+    return (
+      RANKING_FILTERS.find((item) => item.key === rankingFilter)?.label ||
+      "Ranking geral"
+    );
+  }, [rankingFilter]);
 
   const approvedCount = useMemo(
     () => captures.filter((item) => item.status === "approved").length,
@@ -308,7 +374,11 @@ export default function TournamentRankingClient({ tournamentId }: Props) {
     const snapshot = await getDocs(capturesQuery);
 
     const items = snapshot.docs.map((item) =>
-      mapCaptureDoc(item.id, item.data() as Record<string, unknown>, tournamentId)
+      mapCaptureDoc(
+        item.id,
+        item.data() as Record<string, unknown>,
+        tournamentId
+      )
     );
 
     setCaptures(items);
@@ -334,8 +404,8 @@ export default function TournamentRankingClient({ tournamentId }: Props) {
           <div>
             <h1 style={styles.title}>Ranking oficial</h1>
             <p style={styles.subtitle}>
-              Classificação do torneio considerando apenas capturas aprovadas pela
-              organização.
+              Classificação do torneio considerando apenas capturas aprovadas
+              pela organização.
             </p>
           </div>
 
@@ -368,19 +438,56 @@ export default function TournamentRankingClient({ tournamentId }: Props) {
             <div style={styles.badgesWrap}>
               <span style={styles.badgeBlue}>🏆 {tournamentId}</span>
               <span style={styles.badgeGreen}>Ranking oficial</span>
-              <span style={getStatusBadge(status)}>{getStatusLabel(status)}</span>
+              <span style={getStatusBadge(status)}>
+                {getStatusLabel(status)}
+              </span>
             </div>
           </div>
 
           <div style={styles.statsGrid}>
             <StatCard label="Espécie" value={species} />
-            <StatCard label="Peixes válidos" value={`${validFishCount} maiores`} />
+            <StatCard
+              label="Peixes válidos"
+              value={`${validFishCount} maiores`}
+            />
             <StatCard label="Aprovadas" value={String(approvedCount)} />
             <StatCard label="Pendentes" value={String(pendingCount)} />
             <StatCard label="Reprovadas" value={String(rejectedCount)} />
-            <StatCard label="Última atualização" value={formatDateTime(lastUpdate)} />
+            <StatCard
+              label="Última atualização"
+              value={formatDateTime(lastUpdate)}
+            />
           </div>
         </div>
+
+        <section style={styles.card}>
+          <div style={styles.sectionHeader}>
+            <h3 style={styles.sectionTitle}>Filtro do ranking</h3>
+            <p style={styles.sectionSubtitle}>
+              Alterne entre ranking geral, maior peixe e categorias específicas.
+            </p>
+          </div>
+
+          <div style={styles.filterGrid}>
+            {RANKING_FILTERS.map((item) => {
+              const active = rankingFilter === item.key;
+
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setRankingFilter(item.key)}
+                  style={{
+                    ...styles.filterChip,
+                    ...(active ? styles.filterChipActive : {}),
+                  }}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        </section>
 
         {error ? (
           <div style={styles.card}>
@@ -393,13 +500,18 @@ export default function TournamentRankingClient({ tournamentId }: Props) {
             <div style={styles.sectionHeader}>
               <h3 style={styles.sectionTitle}>Pódio atual</h3>
               <p style={styles.sectionSubtitle}>
-                As três melhores equipes no momento com base no critério oficial.
+                {rankingFilter === "official"
+                  ? "As três melhores equipes no momento com base no critério oficial."
+                  : `As três melhores capturas no filtro: ${activeFilterLabel}.`}
               </p>
             </div>
 
             <div style={styles.podiumGrid}>
               {podium.map((row) => (
-                <div key={row.teamId} style={getPodiumCardStyle(row.position)}>
+                <div
+                  key={`${row.teamId}-${row.position}`}
+                  style={getPodiumCardStyle(row.position)}
+                >
                   <div style={styles.podiumTop}>
                     <span style={styles.podiumPlace}>{row.position}º</span>
                     <span style={styles.podiumTotal}>{row.totalCm} cm</span>
@@ -423,8 +535,9 @@ export default function TournamentRankingClient({ tournamentId }: Props) {
           <div style={styles.sectionHeader}>
             <h3 style={styles.sectionTitle}>Classificação completa</h3>
             <p style={styles.sectionSubtitle}>
-              Critério atual: soma dos {validFishCount} maiores peixes aprovados
-              por equipe.
+              {rankingFilter === "official"
+                ? `Critério atual: soma dos ${validFishCount} maiores peixes aprovados por equipe.`
+                : `Critério atual: maior captura aprovada no filtro ${activeFilterLabel}.`}
             </p>
           </div>
 
@@ -432,7 +545,7 @@ export default function TournamentRankingClient({ tournamentId }: Props) {
             <div style={styles.emptyWrap}>
               <div style={styles.emptyEmoji}>🥇</div>
               <p style={styles.muted}>
-                Ainda não há capturas aprovadas para montar o ranking.
+                Ainda não há capturas aprovadas para montar este ranking.
               </p>
             </div>
           ) : (
@@ -451,7 +564,7 @@ export default function TournamentRankingClient({ tournamentId }: Props) {
 
                 <tbody>
                   {ranking.map((row) => (
-                    <tr key={row.teamId}>
+                    <tr key={`${row.teamId}-${row.position}`}>
                       <Td>
                         <span style={getPositionStyle(row.position)}>
                           {row.position}º
@@ -696,6 +809,26 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 14,
     fontWeight: 600,
     lineHeight: 1.6,
+  },
+  filterGrid: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  filterChip: {
+    border: "1px solid rgba(15,23,42,0.08)",
+    borderRadius: 999,
+    padding: "10px 14px",
+    background: "#FFFFFF",
+    color: "#0F172A",
+    fontSize: 14,
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+  filterChipActive: {
+    border: "1px solid #0B3C5D",
+    background: "#EAF2F7",
+    color: "#0B3C5D",
   },
   podiumGrid: {
     display: "grid",
