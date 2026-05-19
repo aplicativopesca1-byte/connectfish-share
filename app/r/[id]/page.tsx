@@ -127,19 +127,24 @@ async function getReplayData(id: string) {
     };
   }
 
-  let userDoc: any | null = null;
+ let userDoc: any | null = null;
 
+const userId = safeString(
+  post?.userId || post?.uid || post?.ownerId || post?.authorId,
+  ""
+);
+
+if (userId) {
   try {
-    const uid = safeString(post?.userId, "");
+    const u = await db.collection("users").doc(userId).get();
 
-    if (uid) {
-      const u = await db.collection("users").doc(uid).get();
-
-      if (u.exists) {
-        userDoc = u.data() || null;
-      }
+    if (u.exists) {
+      userDoc = u.data() || null;
     }
-  } catch {}
+  } catch {
+    userDoc = null;
+  }
+}
 
   let createdAt = new Date();
 

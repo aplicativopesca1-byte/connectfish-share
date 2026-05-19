@@ -130,17 +130,24 @@ async function getShareData(id: string): Promise<ShareData> {
     };
   }
 
-  let userDoc: any | null = null;
-  const userId = safeString(post?.userId, "");
+let userDoc: any | null = null;
 
-  if (userId) {
-    try {
-      const u = await db.collection("users").doc(userId).get();
-      if (u.exists) userDoc = u.data() || null;
-    } catch {
-      userDoc = null;
+const userId = safeString(
+  post?.userId || post?.uid || post?.ownerId || post?.authorId,
+  ""
+);
+
+if (userId) {
+  try {
+    const u = await db.collection("users").doc(userId).get();
+
+    if (u.exists) {
+      userDoc = u.data() || null;
     }
+  } catch {
+    userDoc = null;
   }
+}
 
   let dateObj = new Date();
 
@@ -533,7 +540,7 @@ const styles: Record<string, CSSProperties> = {
     textDecoration: "none",
     fontSize: 14,
     fontWeight: 950,
-    color: "rgba(230,246,247,0.88)",
+    color: "rgba(247, 230, 230, 0.88)",
     background: "rgba(255,255,255,0.06)",
     border: "1px solid rgba(255,255,255,0.12)",
   },
